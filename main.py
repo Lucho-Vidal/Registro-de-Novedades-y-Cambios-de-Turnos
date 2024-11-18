@@ -85,7 +85,6 @@ class FormularioExcelApp:
         Cambia a la vista especificada. Si no se proporciona 'target_view',
         alterna entre las vistas según el estado actual.
         """
-        print(f"Vista actual: {self.current_view}, Vista objetivo: {target_view}")  # Para depuración
 
         # Ocultar todas las vistas
         self.form_frame.grid_forget()
@@ -799,7 +798,7 @@ class FormularioExcelApp:
     def mostrar_error_cambios(self, mensaje):
         """Mostrar mensaje de error."""
         error_label = ttk.Label(self.form_cambios_frame, text=mensaje, foreground="red")
-        error_label.grid(row=11, column=0, columnspan=7, pady=5, sticky="w")
+        error_label.grid(row=15, column=0, columnspan=7, pady=5, sticky="w")
 
 # Crear la ventana principal de Tkinter
 if __name__ == "__main__":
