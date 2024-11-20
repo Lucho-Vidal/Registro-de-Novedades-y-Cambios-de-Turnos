@@ -9,6 +9,8 @@ from ttkbootstrap.widgets import Entry
 from datetime import datetime, timedelta
 import openpyxl
 import os
+import time
+import threading
 
 class FormularioExcelApp:
     def __init__(self, root):
@@ -18,6 +20,10 @@ class FormularioExcelApp:
         # root.state('zoomed')
         # Configuración del archivo de Excel
         
+        # Crear el Label para mostrar mensajes de carga
+        self.labelCarga = tk.Label(self.root, text="Cargando Excel...")
+        self.labelCarga.grid(row=1, column=0, padx=10, pady=0, sticky="w")
+
         self.leer_archivo_base()
         self.theme_file = 'theme'
         self.theme = self.cargar_tema()
@@ -25,13 +31,10 @@ class FormularioExcelApp:
         # Verificar si el archivo existe; si no, crearlo
         if not os.path.exists(self.excel_file):
             self.crear_archivo_excel()
-
-        # Cargar el libro de Excel y las hojas
-        self.wb = openpyxl.load_workbook(self.excel_file)
-        self.sheet_base = self.wb["BASE"]
-        self.sheet_novedades = self.wb["NOVEDADES"]
-        self.sheet_tipo_novedad = self.wb["TipoNovedad"]
-        self.sheet_cambio_turnos = self.wb["Cambio de Turnos"]
+        
+        self.current_view = 'table'
+        self.cargar_excel()
+        
         
         # Cargar opciones de tipo de novedad
         self.tipo_novedades = []
@@ -116,6 +119,64 @@ class FormularioExcelApp:
         self.root.grid_columnconfigure(0, weight=1)
         
         self.crear_tabla_novedades()
+    def cargar_excel(self):
+        try:
+            print(f"Abriendo archivo Excel: {self.excel_file}")
+            self.labelCarga.config(text="Actualizando....")
+            self.wb = openpyxl.load_workbook(self.excel_file)
+            self.sheet_base = self.wb["BASE"]
+            self.sheet_novedades = self.wb["NOVEDADES"]
+            self.sheet_tipo_novedad = self.wb["TipoNovedad"]
+            self.sheet_cambio_turnos = self.wb["Cambio de Turnos"]
+
+            self.actualizar_tabla()
+            if(self.current_view == 'table'):
+                print("Novedades actualizadas correctamente.")
+                self.labelCarga.config(text="Novedades actualizadas correctamente.")
+            elif(self.current_view == 'table_cambios'):
+                print("Cambios de turnos actualizados correctamente.")
+                self.labelCarga.config(text="Cambios de turnos actualizados correctamente.")
+        except FileNotFoundError:
+            print("El archivo Excel no se encontró.")
+            self.labelCarga.config(text="Archivo Excel no encontrado.")
+        except Exception as e:
+            print(f"Error abriendo o cargando el archivo Excel: {e}")
+            self.labelCarga.config(text="Error al cargar el archivo Excel.")
+    
+    def continuar_con_siguiente_tarea(self):
+        print("Continuando con la siguiente tarea...")
+
+    # Función para actualizar la tabla con datos (ejemplo usando Listbox)
+    def actualizar_tabla(self):
+        if self.sheet_novedades  and self.current_view == 'table':
+            # Limpiar la tabla antes de actualizar
+            for item in self.tabla_novedades.get_children():  # Iterar sobre los ítems existentes
+                self.tabla_novedades.delete(item)  # Eliminar cada ítem
+            # Leer las primeras filas de la hoja de "BASE" y mostrarlas en la tabla
+            for row in self.sheet_novedades.iter_rows(min_row=2, values_only=True):  # min_row=2 para omitir encabezados
+                # Reemplazar valores None por "-"
+                row_data = ["-" if celda is None else celda for celda in row]
+                self.tabla_novedades.insert("", "end", values=row_data)  # Insertar los datos en la tabla
+        
+        if self.sheet_cambio_turnos and self.current_view == "table_cambios":
+            for item in self.table_cambios.get_children():  # Iterar sobre los ítems existentes
+                self.table_cambios.delete(item)  # Eliminar cada ítem
+            for row in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):  # min_row=2 para omitir encabezados
+                # Reemplazar valores None por "-"
+                row_data = ["-" if celda is None else celda for celda in row]
+                self.table_cambios.insert("", "end", values=row_data) 
+
+    # Función que ejecuta la tarea periódica
+    def ejecutar_periodicamente(self):
+        while True:
+            self.cargar_excel()  # Ejecutar la lectura del archivo
+            self.continuar_con_siguiente_tarea()  # Continuar con las siguientes tareas
+            time.sleep(30)  # Esperar 30 segundos antes de ejecutar nuevamente
+
+    # Llamar a la actualización de la tabla de manera segura en el hilo principal
+    def actualizar_tabla_en_hilo_principal(self):
+        self.root.after(0, self.actualizar_tabla)  # Usar root.after() para llamar la actualización
+
     def leer_archivo_base(self):
         try:
             with open("path_base", "r", encoding="utf-8") as file:
@@ -160,7 +221,6 @@ class FormularioExcelApp:
         except Exception as e:
             print(f"Error al cargar el tema: {e}")
             return "flatly"  # Tema por defecto en caso de error
-    
     def toggle_view(self, target_view=None):
         """
         Cambia a la vista especificada. Si no se proporciona 'target_view',
@@ -194,6 +254,7 @@ class FormularioExcelApp:
         for row in self.sheet_tipo_novedad.iter_rows(min_row=2, values_only=True):
             tipo_novedad = row[0]  # Suponemos que los tipos de novedad están en la primera columna
             self.tipo_novedades.append(tipo_novedad)
+
     def crear_archivo_excel(self):
         """Crea un archivo Excel con encabezados si no existe"""
         wb = openpyxl.Workbook()
@@ -246,29 +307,17 @@ class FormularioExcelApp:
             "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
             "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
         ]
-        # Crear un título en la vista del formulario
+
+        # Título y botones
         ttk.Label(self.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="nw")
-        
-        # Botón para ir al formulario
         ttk.Button(self.table_frame, text="Ver cambios de turno", command=lambda: self.toggle_view("table_cambios")).grid(row=0, column=2, pady=10, padx=10, sticky="e")
         ttk.Button(self.table_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=3, pady=10, padx=10, sticky="w")
         ttk.Button(self.table_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=4, pady=10, padx=10, sticky="w")
 
-
-        # Crear el Treeview dentro de un marco contenedor para el scroll 
+        # Contenedor del Treeview 
         self.tree_frame = ttk.Frame(self.table_frame, width=1100, height=550)
         self.tree_frame.grid(row=1, column=0, columnspan=5, sticky="nsew")
         self.tree_frame.grid_propagate(False)
-
-        # Configurar el grid del contenedor (self.table_frame) para que permita la expansión
-        self.table_frame.grid_rowconfigure(1, weight=1)  # Fila 1 (donde está el tree_frame) se expande
-        self.table_frame.grid_columnconfigure(0, weight=1)  # Configurar la primera columna para que se expanda
-        self.table_frame.grid_columnconfigure(1, weight=1)  # Configurar la segunda columna
-        self.table_frame.grid_columnconfigure(2, weight=1)  # Configurar la tercera columna
-
-        # Configurar el grid de self.table_frame para permitir expansión
-        self.table_frame.grid_rowconfigure(1, weight=1)  # Fila de la tabla se expande
-        self.table_frame.grid_columnconfigure(0, weight=1)  # Permitir expansión horizontal
 
         # Configurar el grid de tree_frame para que el Treeview ocupe todo el espacio
         self.tree_frame.grid_rowconfigure(0, weight=1)  # Fila 0 del tree_frame se expande
@@ -284,23 +333,24 @@ class FormularioExcelApp:
             self.tabla_novedades.heading(col, text=col)
             self.tabla_novedades.column(col, width=ancho)
 
-        # Crear y configurar la barra de scroll vertical
+        # Scrollbar
         scrollbar_vertical = ttk.Scrollbar(self.tree_frame, orient="vertical", command=self.tabla_novedades.yview)
         scrollbar_vertical.grid(row=0, column=1, sticky="ns")
-
-        # Crear y configurar la barra de scroll horizontal
         scrollbar_horizontal = ttk.Scrollbar(self.tree_frame, orient="horizontal", command=self.tabla_novedades.xview)
         scrollbar_horizontal.grid(row=1, column=0, sticky="ew")
-
         # Configurar el Treeview para usar las barras de scroll
         self.tabla_novedades.configure(yscrollcommand=scrollbar_vertical.set, xscrollcommand=scrollbar_horizontal.set)
 
-        # Cargar los datos de `self.sheet_novedades` en la tabla
-        for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):  # min_row=2 para omitir encabezados
-            # Reemplazar valores None por "-"
-            fila_procesada = ["-" if celda is None else celda for celda in fila]
-            self.tabla_novedades.insert("", "end", values=fila_procesada)
-
+        # Cargar datos
+        try:
+            if self.sheet_novedades:
+                for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):
+                    fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    self.tabla_novedades.insert("", "end", values=fila_procesada)
+            else:
+                print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
+        except Exception as e:
+            print(f"Error al cargar los datos en el Treeview: {e}")
         
     def crear_tabla_cambios(self):
         
@@ -309,15 +359,13 @@ class FormularioExcelApp:
             "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2", 
             "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
         ]
-        # Crear un título en la vista del formulario
+        # Título y botones
         ttk.Label(self.table_cambios_frame, text="Registro de cambios de turnos", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="nw")
-        
-        # Botón para ir al formulario
         ttk.Button(self.table_cambios_frame, text="Ver novedades", command=lambda: self.toggle_view("table")).grid(row=0, column=2, pady=10,padx=1, sticky="e")
         ttk.Button(self.table_cambios_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=3, pady=10, padx=1, sticky="e")
         ttk.Button(self.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=4, pady=10,padx=1,  sticky="e")
         
-        # Crear el Treeview dentro de un marco contenedor para el scroll 
+        # Contenedor del Treeview  
         self.tree_frame = ttk.Frame(self.table_cambios_frame, width=1100, height=550)
         self.tree_frame.grid(row=1, column=0, columnspan=5, sticky="nsew")
         self.tree_frame.grid_propagate(False)
@@ -327,33 +375,34 @@ class FormularioExcelApp:
         self.tree_frame.grid_columnconfigure(0, weight=1)
 
         # Crear el Treeview
-        self.tabla_novedades = ttk.Treeview(self.tree_frame, columns=columnas, show="headings", height=38)
-        self.tabla_novedades.grid(row=0, column=0, sticky="nsew")
+        self.table_cambios = ttk.Treeview(self.tree_frame, columns=columnas, show="headings", height=38)
+        self.table_cambios.grid(row=0, column=0, sticky="nsew")
 
         # Establecer encabezados y columnas con anchuras
         anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 60, 150, 150, 80, 60, 80, 120, 120, 120, 120]
         for col, ancho in zip(columnas, anchuras):
-            self.tabla_novedades.heading(col, text=col)
-            self.tabla_novedades.column(col, width=ancho, anchor='center')
+            self.table_cambios.heading(col, text=col)
+            self.table_cambios.column(col, width=ancho, anchor='center', stretch=True)
 
-        # Crear y configurar la barra de scroll vertical
-        scrollbar_vertical = ttk.Scrollbar(self.tree_frame, orient="vertical", command=self.tabla_novedades.yview)
+        # Scrollbar
+        scrollbar_vertical = ttk.Scrollbar(self.tree_frame, orient="vertical", command=self.table_cambios.yview)
         scrollbar_vertical.grid(row=0, column=1, sticky="ns")
-
-        # Crear y configurar la barra de scroll horizontal
-        scrollbar_horizontal = ttk.Scrollbar(self.tree_frame, orient="horizontal", command=self.tabla_novedades.xview)
+        scrollbar_horizontal = ttk.Scrollbar(self.tree_frame, orient="horizontal", command=self.table_cambios.xview)
         scrollbar_horizontal.grid(row=1, column=0, sticky="ew")
 
         # Configurar el Treeview para usar las barras de scroll
-        self.tabla_novedades.configure(yscrollcommand=scrollbar_vertical.set, xscrollcommand=scrollbar_horizontal.set)
-
-        # Cargar los datos de `self.sheet_cambio_turnos` en la tabla
-        for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):  # min_row=2 para omitir encabezados
-            fila_procesada = ["-" if celda is None else celda for celda in fila]
-            self.tabla_novedades.insert("", "end", values=fila_procesada)
-
-    
-
+        self.table_cambios.configure(yscrollcommand=scrollbar_vertical.set, xscrollcommand=scrollbar_horizontal.set)
+        # Cargar datos
+        try:
+            if self.sheet_cambio_turnos:
+                for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
+                    fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    self.table_cambios.insert("", "end", values=fila_procesada)
+            else:
+                print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
+        except Exception as e:
+            print(f"Error al cargar los datos en el Treeview: {e}")
+        
     def mostrar_formulario_novedades(self):
         
         ttk.Label(self.form_frame, text="Formulario de novedades", font=("Helvetica", 20, "bold")).grid(row=0, column=0,columnspan=3, pady=10, padx=10, sticky="nw")
@@ -437,7 +486,6 @@ class FormularioExcelApp:
 
         
     def mostrar_formulario_cambios(self):
-
         ttk.Label(self.form_cambios_frame, text="Formulario de cambios de turnos", font=("Helvetica", 20, "bold")).grid(row=0, column=0,columnspan=3, pady=10, padx=10, sticky="nw")
 
         # Nivel 1: LEGAJO SAP
@@ -670,6 +718,7 @@ class FormularioExcelApp:
 
     def guardar_datos_novedades(self):
         """Guardar los datos del formulario en el archivo Excel"""
+        self.cargar_excel()
         self.fecha_inicio_novedad_var.set(self.fecha_inicio_novedad_entry.entry.get())
         self.fecha_fin_novedad_var.set(self.fecha_fin_novedad_entry.entry.get())
         self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
@@ -732,6 +781,7 @@ class FormularioExcelApp:
     
     def guardar_datos_cambios(self):
         """Guardar los datos del formulario en el archivo Excel"""
+        self.cargar_excel()
         self.fecha_cambio_turno_var.set(self.fecha_cambio_turno_entry.entry.get())
         self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
 
@@ -894,4 +944,10 @@ class FormularioExcelApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = FormularioExcelApp(root)
+    # Crear un hilo para ejecutar la tarea periódica sin bloquear la interfaz
+    hilo_periodico = threading.Thread(target=app.ejecutar_periodicamente)
+    hilo_periodico.daemon = True  # Esto permite que el hilo se cierre cuando la aplicación principal termine
+    hilo_periodico.start()
+
+    # Iniciar el bucle principal de Tkinter
     root.mainloop()
