@@ -1,26 +1,26 @@
 import tkinter as tk
 from tkinter import ttk
-from tkinter import messagebox,scrolledtext  
+from tkinter import messagebox,scrolledtext 
+from tkinter import filedialog 
 from datetime import datetime
 from ttkbootstrap import DateEntry
 from ttkbootstrap import Style
+from ttkbootstrap.widgets import Entry
+from datetime import datetime, timedelta
 import openpyxl
 import os
 
 class FormularioExcelApp:
     def __init__(self, root):
         self.root = root
-        self.root.geometry('1110x620')  # Ajuste inicial de la ventana
+        self.root.geometry('1110x650')  # Ajuste inicial de la ventana
         self.root.title("Registro de Novedades y Cambios de turnos TK")
         # root.state('zoomed')
         # Configuración del archivo de Excel
-        try:
-            with open("path_base", "r", encoding="utf-8") as file:
-                self.excel_file = file.read().strip()
-                self.excel_file = self.excel_file.replace("\\", "\\\\")  # Reemplazar '\' por '\\'
-        except Exception as e:
-            print(f"Error leyendo el archivo: {e}")
-            self.excel_file = r'PLANILLA NOVEDADES PERSONAL ABORDO.xlsx'
+        
+        self.leer_archivo_base()
+        self.theme_file = 'theme'
+        self.theme = self.cargar_tema()
 
         # Verificar si el archivo existe; si no, crearlo
         if not os.path.exists(self.excel_file):
@@ -38,9 +38,46 @@ class FormularioExcelApp:
         self.cargarTipoNovedades()
         
         # Aplicar el estilo ttkbootstrap
-        style = Style()
-        style.theme_use('superhero')
+        self.style = Style()
+        self.style.theme_use(self.theme)  # Tema inicial
+        # Obtener temas disponibles (puedes definir manualmente los temas si es necesario)
+        if hasattr(self.style, "theme_names"):
+            self.temas = self.style.theme_names()
+        else:
+            # Lista predeterminada de temas en ttkbootstrap
+            self.temas = [
+                "cosmo", "litera", "minty", "pulse", "quartz",
+                "flatly", "journal", "solar", "cerculean",
+                "darkly", "sandstone", "superhero", "morph"
+            ]
         
+        # Configurar el menú principal
+        self.menu_bar = tk.Menu(self.root)
+        self.root.config(menu=self.menu_bar)
+
+        # Menú Archivo
+        archivo_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Archivo", menu=archivo_menu)
+
+        # Opción para seleccionar archivo
+        archivo_menu.add_command(label="Seleccionar archivo", command=self.seleccionar_archivo)
+        
+        # Menú "Opciones"
+        self.opciones_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Opciones", menu=self.opciones_menu)
+        
+        # Submenú "Seleccionar Tema"
+        self.temas_menu = tk.Menu(self.opciones_menu, tearoff=0)
+        self.opciones_menu.add_cascade(label="Seleccionar Tema", menu=self.temas_menu)
+        
+        # Agregar temas al submenú
+        for tema in self.temas:
+            self.temas_menu.add_command(label=tema, command=lambda t=tema: self.cambiar_tema(t))
+        
+        # Etiqueta de ejemplo para visualizar el tema
+        self.label = tk.Label(self.root, text=f"Tema actual: {self.theme}", font=("Arial", 8))
+        self.label.grid(row=1, column=0, padx=10, pady=0, sticky="e")
+
         # Variables del formulario
         self.legajo_var = tk.StringVar()
         self.apellidos_nombres_var = tk.StringVar()
@@ -79,7 +116,51 @@ class FormularioExcelApp:
         self.root.grid_columnconfigure(0, weight=1)
         
         self.crear_tabla_novedades()
+    def leer_archivo_base(self):
+        try:
+            with open("path_base", "r", encoding="utf-8") as file:
+                self.excel_file = file.read().strip()
+                self.excel_file = self.excel_file.replace("\\", "\\\\")  # Reemplazar '\' por '\\'
+        except Exception as e:
+            print(f"Error leyendo el archivo: {e}")
+            self.excel_file = r'PLANILLA NOVEDADES PERSONAL ABORDO.xlsx'
+    def seleccionar_archivo(self):
+        """Abre el explorador de archivos y guarda la ruta seleccionada en un archivo."""
+        # Abrir el cuadro de diálogo para seleccionar archivo
+        archivo_seleccionado = filedialog.askopenfilename(title="Seleccionar archivo", filetypes=[("Excel", "*.xlsx*")])
 
+        if archivo_seleccionado:  # Si se seleccionó un archivo
+            try:
+                # Guardar la ruta en el archivo 'path_base'
+                with open("path_base", "w", encoding="utf-8") as f:
+                    f.write(archivo_seleccionado)
+                print(f"Ruta guardada: {archivo_seleccionado}")
+            except Exception as e:
+                print(f"Error al guardar la ruta: {e}")
+    def cambiar_tema(self, nuevo_tema):
+        """Cambiar el tema y guardarlo en un archivo"""
+        try:
+            self.style.theme_use(nuevo_tema)
+            self.theme = nuevo_tema
+            with open(self.theme_file, "w", encoding="utf-8") as file:
+                file.write(nuevo_tema)
+            self.label.config(text=f"Tema actual: {self.theme}")
+            print(f"Tema cambiado a: {nuevo_tema}")
+        except Exception as e:
+            print(f"Error al cambiar el tema: {e}")
+
+    def cargar_tema(self):
+        """Cargar el tema almacenado en el archivo"""
+        try:
+            with open(self.theme_file, "r", encoding="utf-8") as file:
+                return file.read().strip()  # Leer y limpiar espacios
+        except FileNotFoundError:
+            # Si no existe el archivo, devolver un tema por defecto
+            return "flatly"
+        except Exception as e:
+            print(f"Error al cargar el tema: {e}")
+            return "flatly"  # Tema por defecto en caso de error
+    
     def toggle_view(self, target_view=None):
         """
         Cambia a la vista especificada. Si no se proporciona 'target_view',
@@ -113,46 +194,51 @@ class FormularioExcelApp:
         for row in self.sheet_tipo_novedad.iter_rows(min_row=2, values_only=True):
             tipo_novedad = row[0]  # Suponemos que los tipos de novedad están en la primera columna
             self.tipo_novedades.append(tipo_novedad)
-
     def crear_archivo_excel(self):
         """Crea un archivo Excel con encabezados si no existe"""
         wb = openpyxl.Workbook()
+        
         # Crear la hoja "BASE" y agregar encabezados
         sheet_base = wb.create_sheet(title="BASE")  # Crea la hoja "BASE"
         encabezados_base = [
-            "LEGAJO SAP", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", "TURNOS", "FRANCO"
+            "LEGAJO","APELLIDOS Y NOMBRES", "ESPECIALIDAD",
+            "DOTACION", "TURNOS","FRANCO"
         ]
         sheet_base.append(encabezados_base)  # Agregar los encabezados a la hoja "BASE"
-        
         # Crear la hoja "NOVEDADES" y agregar encabezados
         sheet_novedades = wb.create_sheet(title="NOVEDADES")  # Crea la hoja "NOVEDADES"
+
         encabezados_novedades = [
-            "LEGAJO SAP", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", "TURNOS", "FRANCO", 
-            "NOVEDAD", "Fecha de Inicio Novedad","Fecha de Inicio Novedad", "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones"
+            "ID","Fecha y hora","LEGAJO ", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
+            "DOTACION", "TURNOS","FRANCO", 
+            "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
+            "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones"
         ]
         sheet_novedades.append(encabezados_novedades)  # Agregar los encabezados a la hoja "NOVEDADES"
         
-        # Crear la hoja "NOVEDADES" y agregar encabezados
-        sheet_novedades = wb.create_sheet(title="TipoNovedad")  # Crea la hoja "NOVEDADES"
-        encabezados_novedades = ["Enfermo"]
-        sheet_novedades.append(encabezados_novedades)  # Agregar los encabezados a la hoja "NOVEDADES"
+        # Crear la hoja "TipoNovedad" y agregar encabezados
+        sheet_tiponovedad = wb.create_sheet(title="TipoNovedad")  # Crea la hoja "TipoNovedad"
+        encabezados_tiponovedad = ["Enfermo"]
+        sheet_tiponovedad.append(encabezados_tiponovedad)  # Agregar los encabezados a la hoja "TipoNovedad"
         
         # Crear la hoja "Cambio de Turnos" y agregar encabezados
-        sheet_Cambio_de_Turnos = wb.create_sheet(title="Cambio de Turnos")  # Crea la hoja "NOVEDADES"
-        encabezados_novedades = [
-            "ID","LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", "TURNOS", "FRANCO", 
-            "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2", "TURNOS2", "FRANCO2", 
-            "Fecha de Cambio de Turno", "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones"
+        sheet_cambio_turnos = wb.create_sheet(title="Cambio de Turnos")  # Crea la hoja "Cambio de Turnos"
+
+        encabezados_cambio_turnos = [
+            "ID","Fecha y hora", "LEGAJO", "APELLIDOS Y NOMBRES", 
+            "ESPECIALIDAD", "DOTACION", "TURNOS", "FRANCO", 
+            "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2",
+            "DOTACION2", "TURNOS2","FRANCO2", 
+            "Fecha de Cambio de Turno","REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones"
         ]
-        
-        sheet_novedades.append(sheet_Cambio_de_Turnos)  # Agregar los encabezados a la hoja "NOVEDADES"
+        sheet_cambio_turnos.append(encabezados_cambio_turnos)  # Agregar los encabezados a la hoja "Cambio de Turnos"
         
         # Eliminar la hoja predeterminada (por defecto, openpyxl crea una hoja vacía llamada "Sheet")
         del wb["Sheet"]
         
         # Guardar el archivo
         wb.save(self.excel_file)
-        print(f"Archivo creado: {self.excel_file}")
+        print(f"Archivo creado:{self.excel_file}")
         
     def crear_tabla_novedades(self):
         columnas = [
@@ -319,13 +405,12 @@ class FormularioExcelApp:
         ttk.Label(self.form_frame, text="   Fecha de Inicio Novedad").grid(row=5, column=3, sticky="w")
         ttk.Label(self.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=5, column=3, sticky="w")
         # Crear DateEntry con estilo ttkbootstrap
-        self.fecha_inicio_novedad_entry = DateEntry(self.form_frame,dateformat='%d/%m/%Y')
+        self.fecha_inicio_novedad_entry = DateEntry(self.form_frame,dateformat='%d/%m/%Y',bootstyle="danger")
         self.fecha_inicio_novedad_entry.grid(row=6, column=3, sticky="w", pady=5)       
-        
+
         ttk.Label(self.form_frame, text="Fecha de Fin Novedad").grid(row=5, column=4, sticky="w")
-        # ttk.Label(self.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=4, column=3, sticky="w")
         # Crear DateEntry con estilo ttkbootstrap
-        self.fecha_fin_novedad_entry = DateEntry(self.form_frame,dateformat='%d/%m/%Y')
+        self.fecha_fin_novedad_entry = DateEntry(self.form_frame,dateformat='%d/%m/%Y',bootstyle="success")
         self.fecha_fin_novedad_entry.grid(row=6, column=4, sticky="w", pady=5) 
         
         # Nivel 4: REFERENCIA ESTACIÓN, SUPERVISOR
@@ -348,7 +433,7 @@ class FormularioExcelApp:
         ttk.Button(self.form_frame, text="Guardar Novedad", command=self.guardar_datos_novedades).grid(row=11, column=3, columnspan=2, pady=10)
 
         # Botón para cerrar el formulario y regresar a la tabla
-        ttk.Button(self.form_frame, text="Cerrar", command=self.toggle_view).grid(row=11, column=4, columnspan=2, pady=10)
+        ttk.Button(self.form_frame, text="Cerrar", command=lambda: (self.limpiar_formulario_novedades(), self.toggle_view())).grid(row=11, column=4, columnspan=2, pady=10)
 
         
     def mostrar_formulario_cambios(self):
@@ -366,7 +451,6 @@ class FormularioExcelApp:
         ttk.Button(self.form_cambios_frame, text="Buscar Personal", command=lambda: self.mostrar_modal(1)).grid(row=2, column=1, pady=10, padx=10)
 
         # Nivel 2: APELLIDOS Y NOMBRES, ESPECIALIDAD, DOTACION, TURNOS, FRANCO
-
         # Apellidos y Nombres
         ttk.Label(self.form_cambios_frame, text="  Apellido y Nombre").grid(row=3, column=0, sticky="w", padx=5)
         ttk.Label(self.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=3, column=0, sticky="w")
@@ -434,8 +518,8 @@ class FormularioExcelApp:
         ttk.Label(self.form_cambios_frame, text="   Fecha de cambio de turno").grid(row=9, column=0, sticky="w")
         ttk.Label(self.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=9, column=0, sticky="w")
         # Crear DateEntry con estilo ttkbootstrap
-        self.fecha_cambio_turno_entry = DateEntry(self.form_cambios_frame,dateformat='%d/%m/%Y')
-        self.fecha_cambio_turno_entry.grid(row=10, column=0, columnspan=2, sticky="w", pady=5)       
+        self.fecha_cambio_turno_entry = DateEntry(self.form_cambios_frame,dateformat='%d/%m/%Y',startdate=datetime.today()+timedelta(days=+1))
+        self.fecha_cambio_turno_entry.grid(row=10, column=0, columnspan=2, sticky="w", pady=5)
         
         # Nivel 6: REFERENCIA ESTACIÓN, SUPERVISOR
         ttk.Label(self.form_cambios_frame, text="   REFERENCIA ESTACIÓN").grid(row=11, column=0, sticky="w")
@@ -457,18 +541,24 @@ class FormularioExcelApp:
         ttk.Button(self.form_cambios_frame, text="Guardar cambio de turno", command=self.guardar_datos_cambios).grid(row=15, column=2, columnspan=2, pady=10)
 
         # Botón para cerrar el formulario y regresar a la tabla
-        ttk.Button(self.form_cambios_frame, text="Cerrar", command=lambda: self.toggle_view("table_cambios")).grid(row=15, column=3, columnspan=2, pady=10)
-
-        # self.form_cambios_frame.grid(row=1, column=0, padx=10, pady=10)  # Mostrar formulario
+        ttk.Button(self.form_cambios_frame, text="Cerrar", command=lambda: (self.limpiar_formulario_novedades(), self.toggle_view("table_cambios"))).grid(row=15, column=3, columnspan=2, pady=10)
             
     def mostrar_modal(self,boton=1):
         """Mostrar el modal con el Treeview y filtro"""
         # Crear una ventana secundaria (modal)
         modal = tk.Toplevel(self.root)
         modal.title("Seleccionar Legajo")
+        modal.geometry("1250x330")
         
         # Crear un campo de entrada para filtrar por apellido
-        tk.Label(modal, text="Filtrar por Apellido:").grid(row=0, column=0, padx=10, pady=5)
+        tk.Label(modal, text="Filtrar por apellido o nombre:").grid(row=0, column=0, padx=10, pady=5)
+        # Crear el Entry con ttkbootstrap
+        apellido_filter = Entry(
+            modal,
+            # textvariable=apellido_filter_var,
+            width=80,  # Aumentar el ancho del campo
+            bootstyle="info",  # Estilo del tema
+        )
         apellido_filter_var = tk.StringVar()
         apellido_filter = tk.Entry(modal, textvariable=apellido_filter_var)
         apellido_filter.grid(row=0, column=1, padx=10, pady=5)
@@ -584,13 +674,11 @@ class FormularioExcelApp:
         self.fecha_fin_novedad_var.set(self.fecha_fin_novedad_entry.entry.get())
         self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
 
-        # Obtener el último ID en la columna 1
         # Obtener el último ID válido en la columna 1, omitiendo el encabezado
-        last_id = None
-        for row in self.sheet_novedades.iter_rows(min_row=2, max_col=1, values_only=True):
-            if row[0] and isinstance(row[0], int):  # Verifica que es un ID numérico
-                last_id = row[0]
-        
+        last_id = max(
+            (row[0] for row in self.sheet_novedades.iter_rows(min_row=2, max_col=1, values_only=True) if isinstance(row[0], int)),
+            default=0
+        )
         # Incrementar el ID en 1
         new_id = int(last_id) + 1 if last_id else 1
         
@@ -631,7 +719,8 @@ class FormularioExcelApp:
                 self.limpiar_formulario_novedades()
                 self.toggle_view()
                 print("Datos guardados correctamente.")
-
+            except PermissionError:
+                messagebox.showerror("Error", "No se pudo guardar el archivo porque está abierto en otro programa. Por favor, cierre el archivo y vuelva a intentarlo.")
             except Exception as e:
                 # Mensaje de error si ocurre un problema
                 messagebox.showerror("Error", f"No se pudieron guardar los datos: {str(e)} Por favor, intente de nuevo y si el problema persiste avise al administrador")
@@ -645,17 +734,16 @@ class FormularioExcelApp:
         """Guardar los datos del formulario en el archivo Excel"""
         self.fecha_cambio_turno_var.set(self.fecha_cambio_turno_entry.entry.get())
         self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
-        
-        # Obtener el último ID en la columna 1
-        # Obtener el último ID válido en la columna 1, omitiendo el encabezado
-        last_id = None
-        for row in self.sheet_cambio_turnos.iter_rows(min_row=2, max_col=1, values_only=True):
-            if row[0] and isinstance(row[0], int):  # Verifica que es un ID numérico
-                last_id = row[0]
-        
+
+        # Obtener el último ID válido en la columna 1, omitiendo el encabezado    
+        last_id = max(
+            (row[0] for row in self.sheet_cambio_turnos.iter_rows(min_row=2, max_col=1, values_only=True) if isinstance(row[0], int)),
+            default=0
+        )
+
         # Incrementar el ID en 1
         new_id = int(last_id) + 1 if last_id else 1
-        
+
         # Obtener la fecha y hora actual en el formato especificado
         current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
         
@@ -697,9 +785,11 @@ class FormularioExcelApp:
                 self.limpiar_formulario_cambios()
                 self.toggle_view("table_cambios")
                 print("Datos guardados correctamente.")
-
+            except PermissionError:
+                messagebox.showerror("Error", "No se pudo guardar el archivo porque está abierto en otro programa. Por favor, cierre el archivo y vuelva a intentarlo.")
             except Exception as e:
                 # Mensaje de error si ocurre un problema
+
                 messagebox.showerror("Error", f"No se pudieron guardar los datos: {str(e)} Por favor, intente de nuevo y si el problema persiste avise al administrador")
                 print(f"Error al guardar los datos: {e}")
         else:

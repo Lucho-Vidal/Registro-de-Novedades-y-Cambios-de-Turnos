@@ -1,0 +1,4 @@
+*.xlsx
+main.spec
+build/
+*.docx
