@@ -7,20 +7,26 @@ from ttkbootstrap import DateEntry
 from ttkbootstrap import Style
 from ttkbootstrap.widgets import Entry
 from datetime import datetime, timedelta
+from tkinter.scrolledtext import ScrolledText
 import openpyxl
 import os
 import time
 import threading
+import ctypes
+import math
 
 class FormularioExcelApp:
     def __init__(self, root):
         self.root = root
         self.root.geometry('1110x650')  # Ajuste inicial de la ventana
+        root.state('zoomed')
         self.root.title("Registro de Novedades y Cambios de turnos TK")
-        # root.state('zoomed')
-        # Configuración del archivo de Excel
-        
-        # Crear el Label para mostrar mensajes de carga
+        user32 = ctypes.windll.user32
+        user32.SetProcessDPIAware()
+        self.WIDTH, self.HEIGHT  = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+        self.WIDTH = math.floor(self.WIDTH * 0.99)
+        self.HEIGHT = math.floor(self.HEIGHT * 0.78)
+
         self.labelCarga = tk.Label(self.root, text="Cargando Excel...")
         self.labelCarga.grid(row=1, column=0, padx=10, pady=0, sticky="w")
 
@@ -59,11 +65,12 @@ class FormularioExcelApp:
         self.root.config(menu=self.menu_bar)
 
         # Menú Archivo
-        archivo_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.menu_bar.add_cascade(label="Archivo", menu=archivo_menu)
+        self.archivo_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Archivo", menu=self.archivo_menu)
 
         # Opción para seleccionar archivo
-        archivo_menu.add_command(label="Seleccionar archivo", command=self.seleccionar_archivo)
+        self.archivo_menu.add_command(label="Seleccionar archivo", command=self.seleccionar_archivo)
+        # self.archivo_menu.add_command(label="Maximizar", command=self.cambiar_tamanio_ventana)
         
         # Menú "Opciones"
         self.opciones_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -80,6 +87,7 @@ class FormularioExcelApp:
         # Etiqueta de ejemplo para visualizar el tema
         self.label = tk.Label(self.root, text=f"Tema actual: {self.theme}", font=("Arial", 8))
         self.label.grid(row=1, column=0, padx=10, pady=0, sticky="e")
+        
 
         # Variables del formulario
         self.legajo_var = tk.StringVar()
@@ -119,6 +127,7 @@ class FormularioExcelApp:
         self.root.grid_columnconfigure(0, weight=1)
         
         self.crear_tabla_novedades()
+
     def cargar_excel(self):
         try:
             print(f"Abriendo archivo Excel: {self.excel_file}")
@@ -143,15 +152,15 @@ class FormularioExcelApp:
             print(f"Error abriendo o cargando el archivo Excel: {e}")
             self.labelCarga.config(text="Error al cargar el archivo Excel.")
     
-    def continuar_con_siguiente_tarea(self):
-        print("Continuando con la siguiente tarea...")
-
     # Función para actualizar la tabla con datos (ejemplo usando Listbox)
     def actualizar_tabla(self):
+        if not (self.apellido_filter_var.get() == "Buscar por nombre") or not (self.dotacion_filter_var.get() == "Todas"):
+            return
         if self.sheet_novedades  and self.current_view == 'table':
             # Limpiar la tabla antes de actualizar
-            for item in self.tabla_novedades.get_children():  # Iterar sobre los ítems existentes
-                self.tabla_novedades.delete(item)  # Eliminar cada ítem
+            self.tabla_novedades.delete(*self.tabla_novedades.get_children())
+            # for item in self.tabla_novedades.get_children():  # Iterar sobre los ítems existentes
+            #     self.tabla_novedades.delete(item)  # Eliminar cada ítem
             # Leer las primeras filas de la hoja de "BASE" y mostrarlas en la tabla
             for row in self.sheet_novedades.iter_rows(min_row=2, values_only=True):  # min_row=2 para omitir encabezados
                 # Reemplazar valores None por "-"
@@ -170,12 +179,7 @@ class FormularioExcelApp:
     def ejecutar_periodicamente(self):
         while True:
             self.cargar_excel()  # Ejecutar la lectura del archivo
-            self.continuar_con_siguiente_tarea()  # Continuar con las siguientes tareas
-            time.sleep(30)  # Esperar 30 segundos antes de ejecutar nuevamente
-
-    # Llamar a la actualización de la tabla de manera segura en el hilo principal
-    def actualizar_tabla_en_hilo_principal(self):
-        self.root.after(0, self.actualizar_tabla)  # Usar root.after() para llamar la actualización
+            time.sleep(60)
 
     def leer_archivo_base(self):
         try:
@@ -185,6 +189,7 @@ class FormularioExcelApp:
         except Exception as e:
             print(f"Error leyendo el archivo: {e}")
             self.excel_file = r'PLANILLA NOVEDADES PERSONAL ABORDO.xlsx'
+
     def seleccionar_archivo(self):
         """Abre el explorador de archivos y guarda la ruta seleccionada en un archivo."""
         # Abrir el cuadro de diálogo para seleccionar archivo
@@ -196,8 +201,12 @@ class FormularioExcelApp:
                 with open("path_base", "w", encoding="utf-8") as f:
                     f.write(archivo_seleccionado)
                 print(f"Ruta guardada: {archivo_seleccionado}")
+                self.excel_file = archivo_seleccionado
+                self.cargar_excel()
+                self.actualizar_tabla()
             except Exception as e:
                 print(f"Error al guardar la ruta: {e}")
+
     def cambiar_tema(self, nuevo_tema):
         """Cambiar el tema y guardarlo en un archivo"""
         try:
@@ -301,22 +310,129 @@ class FormularioExcelApp:
         wb.save(self.excel_file)
         print(f"Archivo creado:{self.excel_file}")
         
+    def cargar_datos_completos_novedades(self):
+        try:
+            # Limpiar la tabla antes de cargar datos
+            self.tabla_novedades.delete(*self.tabla_novedades.get_children())
+            if self.sheet_novedades:
+                for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):
+                    # Reemplazar None por "-"
+                    fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    self.tabla_novedades.insert("", "end", values=fila_procesada)
+            else:
+                print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
+        except Exception as e:
+            print(f"Error al cargar los datos en el Treeview: {e}")
+
+    # Filtrar datos según el texto ingresado
+    def filtrar_datos_novedades(self, nombre_filtro,dotacion_filtro):
+        try:
+            # Limpiar la tabla antes de cargar datos filtrados
+            self.tabla_novedades.delete(*self.tabla_novedades.get_children())
+            if self.sheet_novedades:
+                for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):
+                    fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    if dotacion_filtro == "Todas" and nombre_filtro == "Buscar por nombre":
+                        self.cargar_datos_completos_novedades()
+                    elif dotacion_filtro == "Todas":
+                        if nombre_filtro.lower() in str(fila_procesada[3]).lower():
+                            self.tabla_novedades.insert("", "end", values=fila_procesada)
+                    elif nombre_filtro == "Buscar por nombre":
+                        if dotacion_filtro.lower() in str(fila_procesada[5]).lower():
+                            self.tabla_novedades.insert("", "end", values=fila_procesada)
+                    else:
+                        if nombre_filtro.lower() in str(fila_procesada[3]).lower() and dotacion_filtro.lower() in str(fila_procesada[5]).lower():
+                            self.tabla_novedades.insert("", "end", values=fila_procesada)
+        except Exception as e:
+            print(f"Error al filtrar los datos en el Treeview: {e}")
+            
+    def mostrar_modal_detalle_novedades(self,novedad):
+        """Mostrar el modal con el Treeview y filtro"""
+        # Crear una ventana secundaria (modal)
+        modal = tk.Toplevel(self.root)
+        modal.title("Detalle de novedad")
+        modal.geometry("560x500")
+        columnas = [
+            "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
+            "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", 
+            "Fecha de Fin Novedad", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
+        ]
+        
+        ttk.Label(modal, text="Detalle de la novedad", font=("Helvetica", 22, "bold")).grid(row=0, column=0, columnspan=2, pady=10, padx=10, sticky="we")
+
+        for idx, (columna, valor) in enumerate(zip(columnas, novedad), start=1):
+            ttk.Label(modal, text=(columna+":").capitalize()).grid(row=idx, column=0, pady=2, padx=10, sticky="w")
+            if columna == "Observaciones":
+                # Usar un ScrolledText para "Observaciones"
+                text_area = ScrolledText(modal, wrap=tk.WORD, height=5, width=60)
+                text_area.insert("1.0", valor)
+                text_area.config(state="disabled")  # Deshabilitar edición
+                text_area.grid(row=idx, column=1, pady=2, padx=10, sticky="w")
+            else:
+                ttk.Label(modal, text=valor).grid(row=idx, column=1, pady=2, padx=10, sticky="w")
+        
+        # Botón de cerrar el modal
+        tk.Button(modal, text="Cerrar", command=modal.destroy).grid(row=15, column=0, columnspan=2, pady=10, padx=10)        
+        
     def crear_tabla_novedades(self):
+        def on_focus_in(event):
+            if apellido_filter.get() == "Buscar por nombre":
+                apellido_filter.delete(0, tk.END)
+                apellido_filter.config(fg="black")
+
+        def on_focus_out(event):
+            if apellido_filter.get() == "":
+                apellido_filter.insert(0, "Buscar por nombre")
+                apellido_filter.config(fg="grey")   
+        def on_double_click(event):
+            # Obtener el Treeview que disparó el evento
+            treeview = event.widget
+            # Obtener el identificador del ítem seleccionado
+            selected_item = treeview.selection()
+
+            if selected_item:  # Verificar que haya una selección
+                # Obtener los valores asociados al ítem seleccionado
+                item_values = treeview.item(selected_item[0], "values")
+                # print(item_values)  # Imprime los valores de la fila seleccionada
+                self.mostrar_modal_detalle_novedades(item_values)
+            else:
+                print("No se seleccionó ningún elemento.")
+            
         columnas = [
             "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
             "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
             "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
         ]
-
+        self.apellido_filter_var = tk.StringVar()
+        self.dotacion_filter_var = tk.StringVar()
+        lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]
+        # Detectar cambios en el input
+        self.apellido_filter_var.trace_add("write", lambda *args: self.filtrar_datos_novedades(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
+        self.dotacion_filter_var.trace_add("write", lambda *args: self.filtrar_datos_novedades(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
+        
         # Título y botones
-        ttk.Label(self.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="nw")
-        ttk.Button(self.table_frame, text="Ver cambios de turno", command=lambda: self.toggle_view("table_cambios")).grid(row=0, column=2, pady=10, padx=10, sticky="e")
-        ttk.Button(self.table_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=3, pady=10, padx=10, sticky="w")
-        ttk.Button(self.table_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=4, pady=10, padx=10, sticky="w")
+        ttk.Label(self.table_frame, text="Registro de novedades                  ", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
+        #Filter nombre o apellido
+        ttk.Button(self.table_frame, text="Ver cambios de turno", command=lambda: self.toggle_view("table_cambios")).grid(row=0, column=1, pady=10, padx=10, sticky="e")
+        apellido_filter = tk.Entry(self.table_frame, textvariable=self.apellido_filter_var, font=("Helvetica",10))
+        apellido_filter.grid(row=0, column=2,sticky="e", pady=10, padx=10,ipady=5,ipadx=10)
+        #Filter dotacion
+        dotacion_filter = ttk.Combobox(self.table_frame, textvariable=self.dotacion_filter_var, values=lst_dotaciones, width=10)
+        dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
+        
+        ttk.Button(self.table_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=4, pady=10, padx=2, sticky="e")
+        ttk.Button(self.table_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=5, pady=10, padx=10, sticky="e")
 
+        apellido_filter.insert(0, "Buscar por nombre")
+        dotacion_filter.insert(0, "Todas")
+        apellido_filter.config(fg="grey")
+        apellido_filter.bind("<FocusIn>", on_focus_in)
+        apellido_filter.bind("<FocusOut>", on_focus_out)
+        
         # Contenedor del Treeview 
-        self.tree_frame = ttk.Frame(self.table_frame, width=1100, height=550)
-        self.tree_frame.grid(row=1, column=0, columnspan=5, sticky="nsew")
+        self.tree_frame = ttk.Frame(self.table_frame, width=self.WIDTH, height=self.HEIGHT)
+        # self.tree_frame = ttk.Frame(self.table_frame, width=1100, height=550)
+        self.tree_frame.grid(row=1, column=0, columnspan=6, sticky="nsew")
         self.tree_frame.grid_propagate(False)
 
         # Configurar el grid de tree_frame para que el Treeview ocupe todo el espacio
@@ -327,10 +443,11 @@ class FormularioExcelApp:
         self.tabla_novedades = ttk.Treeview(self.tree_frame, columns=columnas, show="headings", height=40)
         self.tabla_novedades.grid(row=0, column=0, sticky="nsew")
 
+        self.tabla_novedades.bind("<Double-1>", on_double_click)
         # Establecer encabezados y anchos de columna
         anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 120, 90, 120, 120, 120]
         for col, ancho in zip(columnas, anchuras):
-            self.tabla_novedades.heading(col, text=col)
+            self.tabla_novedades.heading(col, text=col.capitalize())
             self.tabla_novedades.column(col, width=ancho)
 
         # Scrollbar
@@ -342,16 +459,9 @@ class FormularioExcelApp:
         self.tabla_novedades.configure(yscrollcommand=scrollbar_vertical.set, xscrollcommand=scrollbar_horizontal.set)
 
         # Cargar datos
-        try:
-            if self.sheet_novedades:
-                for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):
-                    fila_procesada = ["-" if celda is None else celda for celda in fila]
-                    self.tabla_novedades.insert("", "end", values=fila_procesada)
-            else:
-                print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
-        except Exception as e:
-            print(f"Error al cargar los datos en el Treeview: {e}")
-        
+        self.cargar_datos_completos_novedades()        
+        # Asociar el evento de doble clic
+
     def crear_tabla_cambios(self):
         
         columnas = [
@@ -360,13 +470,14 @@ class FormularioExcelApp:
             "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
         ]
         # Título y botones
-        ttk.Label(self.table_cambios_frame, text="Registro de cambios de turnos", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="nw")
+        ttk.Label(self.table_cambios_frame, text="Registro de cambios de turnos", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
         ttk.Button(self.table_cambios_frame, text="Ver novedades", command=lambda: self.toggle_view("table")).grid(row=0, column=2, pady=10,padx=1, sticky="e")
         ttk.Button(self.table_cambios_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=3, pady=10, padx=1, sticky="e")
         ttk.Button(self.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=4, pady=10,padx=1,  sticky="e")
-        
+  
         # Contenedor del Treeview  
-        self.tree_frame = ttk.Frame(self.table_cambios_frame, width=1100, height=550)
+        self.tree_frame = ttk.Frame(self.table_cambios_frame, width=self.WIDTH, height=self.HEIGHT)
+        # self.tree_frame = ttk.Frame(self.table_cambios_frame, width=1100, height=550)
         self.tree_frame.grid(row=1, column=0, columnspan=5, sticky="nsew")
         self.tree_frame.grid_propagate(False)
 
@@ -402,7 +513,7 @@ class FormularioExcelApp:
                 print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
         except Exception as e:
             print(f"Error al cargar los datos en el Treeview: {e}")
-        
+    
     def mostrar_formulario_novedades(self):
         
         ttk.Label(self.form_frame, text="Formulario de novedades", font=("Helvetica", 20, "bold")).grid(row=0, column=0,columnspan=3, pady=10, padx=10, sticky="nw")
@@ -596,23 +707,18 @@ class FormularioExcelApp:
         # Crear una ventana secundaria (modal)
         modal = tk.Toplevel(self.root)
         modal.title("Seleccionar Legajo")
-        modal.geometry("1250x330")
+        modal.geometry("1250x500")
         
         # Crear un campo de entrada para filtrar por apellido
         tk.Label(modal, text="Filtrar por apellido o nombre:").grid(row=0, column=0, padx=10, pady=5)
         # Crear el Entry con ttkbootstrap
-        apellido_filter = Entry(
-            modal,
-            # textvariable=apellido_filter_var,
-            width=80,  # Aumentar el ancho del campo
-            bootstyle="info",  # Estilo del tema
-        )
+        # apellido_filter = Entry(modal)
         apellido_filter_var = tk.StringVar()
         apellido_filter = tk.Entry(modal, textvariable=apellido_filter_var)
-        apellido_filter.grid(row=0, column=1, padx=10, pady=5)
+        apellido_filter.grid(row=0, column=1, padx=10, pady=5,ipady=5,ipadx=50)
         
         # Crear el Treeview para mostrar la tabla
-        tree = ttk.Treeview(modal, columns=("legajo", "apellido_nombre", "especialidad", "dotacion", "turnos", "franco"), show="headings")
+        tree = ttk.Treeview(modal, columns=("legajo", "apellido_nombre", "especialidad", "dotacion", "turnos", "franco"), show="headings",height=25)
         tree.heading("legajo", text="LEGAJO SAP")
         tree.heading("apellido_nombre", text="APELLIDOS Y NOMBRES")
         tree.heading("especialidad", text="ESPECIALIDAD")
@@ -695,16 +801,16 @@ class FormularioExcelApp:
                     # Si el legajo SAP coincide, auto completar los campos
                     if campo == 1:
                         self.apellidos_nombres_var.set(row[1])  # Nombre en la segunda columna
-                        self.especialidad_var.set(row[2])  # Especialidad
-                        self.dotacion_var.set(row[3])  # Dotación
-                        self.turnos_var.set(row[4])  # Turnos
-                        self.franco_var.set(row[5])  # Franco
+                        self.turnos_var.set(row[2])  # Turnos
+                        self.franco_var.set(row[3])  # Franco
+                        self.especialidad_var.set(row[4])  # Especialidad
+                        self.dotacion_var.set(row[5])  # Dotación
                     elif campo == 2:
                         self.apellidos_nombres_2_var.set(row[1])  # Nombre en la segunda columna
-                        self.especialidad_2_var.set(row[2])  # Especialidad
-                        self.dotacion_2_var.set(row[3])  # Dotación
-                        self.turnos_2_var.set(row[4])  # Turnos
-                        self.franco_2_var.set(row[5])  # Franco
+                        self.turnos_2_var.set(row[2])  # Turnos
+                        self.franco_2_var.set(row[3])  # Franco
+                        self.especialidad_2_var.set(row[4])  # Especialidad
+                        self.dotacion_2_var.set(row[5])  # Dotación
                     print(f"Legajo encontrado: {legajo_sap}")
                     # self.deshabilitar_campos()  # Deshabilitar los campos después de la búsqueda
                     break  # Salir del bucle una vez encontrado el legajo
@@ -718,7 +824,7 @@ class FormularioExcelApp:
 
     def guardar_datos_novedades(self):
         """Guardar los datos del formulario en el archivo Excel"""
-        self.cargar_excel()
+        # self.cargar_excel()
         self.fecha_inicio_novedad_var.set(self.fecha_inicio_novedad_entry.entry.get())
         self.fecha_fin_novedad_var.set(self.fecha_fin_novedad_entry.entry.get())
         self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
@@ -734,30 +840,28 @@ class FormularioExcelApp:
         # Obtener la fecha y hora actual en el formato especificado
         current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
         
-        nuevo_dato = (
-            new_id,
-            current_datetime,
-            self.legajo_var.get(),
-            self.apellidos_nombres_var.get(),
-            self.especialidad_var.get(),
-            self.dotacion_var.get(),
-            self.turnos_var.get(),
-            self.franco_var.get(),
-            self.novedad_var.get(),
-            self.fecha_inicio_novedad_var.get(),
-            self.fecha_fin_novedad_var.get(),
-            self.referencia_estacion_var.get(),
-            self.supervisor_var.get(),
-            self.observaciones_var.get()
-        )
         if self.validar_campos_requeridos_novedades():
             # Aquí guarda los datos si todo está bien
             # Puedes agregar el código para guardar en el archivo de Excel o donde necesites.
             # Añadir a la hoja de Excel y guardar
             try:
                 # Añadir los nuevos datos a la hoja
-                self.sheet_novedades.append(nuevo_dato)
-
+                self.sheet_novedades.insert_rows(2)
+                self.sheet_novedades['A2'] = new_id
+                self.sheet_novedades['B2'] = current_datetime
+                self.sheet_novedades['C2'] = self.legajo_var.get()
+                self.sheet_novedades['D2'] = self.apellidos_nombres_var.get()
+                self.sheet_novedades['E2'] = self.especialidad_var.get()
+                self.sheet_novedades['F2'] = self.dotacion_var.get()
+                self.sheet_novedades['G2'] = self.turnos_var.get()
+                self.sheet_novedades['H2'] = self.franco_var.get()
+                self.sheet_novedades['I2'] = self.novedad_var.get()
+                self.sheet_novedades['J2'] = self.fecha_inicio_novedad_var.get()
+                self.sheet_novedades['K2'] = self.fecha_fin_novedad_var.get()
+                self.sheet_novedades['L2'] = self.referencia_estacion_var.get()
+                self.sheet_novedades['M2'] = self.supervisor_var.get()
+                self.sheet_novedades['N2'] = self.observaciones_var.get()
+                
                 # Guardar el archivo Excel
                 self.wb.save(self.excel_file)
 
@@ -781,7 +885,7 @@ class FormularioExcelApp:
     
     def guardar_datos_cambios(self):
         """Guardar los datos del formulario en el archivo Excel"""
-        self.cargar_excel()
+        # self.cargar_excel()
         self.fecha_cambio_turno_var.set(self.fecha_cambio_turno_entry.entry.get())
         self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
 
@@ -797,33 +901,31 @@ class FormularioExcelApp:
         # Obtener la fecha y hora actual en el formato especificado
         current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
         
-        nuevo_dato = (
-            new_id,
-            current_datetime,
-            self.legajo_var.get(),
-            self.apellidos_nombres_var.get(),
-            self.especialidad_var.get(),
-            self.dotacion_var.get(),
-            self.turnos_var.get(),
-            self.franco_var.get(),
-            self.legajo_2_var.get(),
-            self.apellidos_nombres_2_var.get(),
-            self.especialidad_2_var.get(),
-            self.dotacion_2_var.get(),
-            self.turnos_2_var.get(),
-            self.franco_2_var.get(),
-            self.fecha_cambio_turno_var.get(),
-            self.referencia_estacion_var.get(),
-            self.supervisor_var.get(),
-            self.observaciones_var.get()
-        )
         if self.validar_campos_requeridos_cambios():
             # Aquí guarda los datos si todo está bien
             # Puedes agregar el código para guardar en el archivo de Excel o donde necesites.
             # Añadir a la hoja de Excel y guardar
             try:
                 # Añadir los nuevos datos a la hoja
-                self.sheet_cambio_turnos.append(nuevo_dato)
+                self.sheet_cambio_turnos.insert_rows(2)
+                self.sheet_cambio_turnos['A2'] = new_id
+                self.sheet_cambio_turnos['B2'] = current_datetime
+                self.sheet_cambio_turnos['C2'] = self.legajo_var.get()
+                self.sheet_cambio_turnos['D2'] = self.apellidos_nombres_var.get()
+                self.sheet_cambio_turnos['E2'] = self.especialidad_var.get()
+                self.sheet_cambio_turnos['F2'] = self.dotacion_var.get()
+                self.sheet_cambio_turnos['G2'] = self.turnos_var.get()
+                self.sheet_cambio_turnos['H2'] = self.franco_var.get()
+                self.sheet_cambio_turnos['I2'] = self.legajo_2_var.get()
+                self.sheet_cambio_turnos['J2'] = self.apellidos_nombres_2_var.get()
+                self.sheet_cambio_turnos['K2'] = self.especialidad_2_var.get()
+                self.sheet_cambio_turnos['L2'] = self.dotacion_2_var.get()
+                self.sheet_cambio_turnos['M2'] = self.turnos_2_var.get()
+                self.sheet_cambio_turnos['N2'] = self.franco_2_var.get()
+                self.sheet_cambio_turnos['O2'] = self.fecha_cambio_turno_var.get()
+                self.sheet_cambio_turnos['P2'] = self.referencia_estacion_var.get()
+                self.sheet_cambio_turnos['Q2'] = self.supervisor_var.get()
+                self.sheet_cambio_turnos['R2'] = self.observaciones_var.get()
 
                 # Guardar el archivo Excel
                 self.wb.save(self.excel_file)
