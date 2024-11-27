@@ -178,8 +178,8 @@ class FormularioExcelApp:
     # Función que ejecuta la tarea periódica
     def ejecutar_periodicamente(self):
         while True:
-            self.cargar_excel()  # Ejecutar la lectura del archivo
             time.sleep(60)
+            self.cargar_excel()  # Ejecutar la lectura del archivo
 
     def leer_archivo_base(self):
         try:
@@ -323,7 +323,18 @@ class FormularioExcelApp:
                 print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
         except Exception as e:
             print(f"Error al cargar los datos en el Treeview: {e}")
-
+    def cargar_datos_completos_cambios(self):
+        try:
+            self.tabla_novedades.delete(*self.tabla_novedades.get_children())
+            if self.sheet_cambio_turnos:
+                for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
+                    fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    self.table_cambios.insert("", "end", values=fila_procesada)
+            else:
+                print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
+        except Exception as e:
+            print(f"Error al cargar los datos en el Treeview: {e}")
+        
     # Filtrar datos según el texto ingresado
     def filtrar_datos_novedades(self, nombre_filtro,dotacion_filtro):
         try:
@@ -344,21 +355,40 @@ class FormularioExcelApp:
                         if nombre_filtro.lower() in str(fila_procesada[3]).lower() and dotacion_filtro.lower() in str(fila_procesada[5]).lower():
                             self.tabla_novedades.insert("", "end", values=fila_procesada)
         except Exception as e:
-            print(f"Error al filtrar los datos en el Treeview: {e}")
-            
-    def mostrar_modal_detalle_novedades(self,novedad):
+            print(f"Error al filtrar los datos en el Treeview novedades: {e}")
+    def filtrar_datos_cambios(self, nombre_filtro,dotacion_filtro):
+        try:
+            # Limpiar la tabla antes de cargar datos filtrados
+            self.table_cambios.delete(*self.table_cambios.get_children())
+            if self.sheet_cambio_turnos:
+                for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
+                    fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    if dotacion_filtro == "Todas" and nombre_filtro == "Buscar por nombre":
+                        self.cargar_datos_completos_cambios()
+                    elif dotacion_filtro == "Todas":
+                        if nombre_filtro.lower() in str(fila_procesada[3]).lower():
+                            self.table_cambios.insert("", "end", values=fila_procesada)
+                    elif nombre_filtro == "Buscar por nombre":
+                        if dotacion_filtro.lower() in str(fila_procesada[5]).lower():
+                            self.table_cambios.insert("", "end", values=fila_procesada)
+                    else:
+                        if nombre_filtro.lower() in str(fila_procesada[3]).lower() and dotacion_filtro.lower() in str(fila_procesada[5]).lower():
+                            self.table_cambios.insert("", "end", values=fila_procesada)
+        except Exception as e:
+            print(f"Error al filtrar los datos en el Treeview cambios: {e}")        
+    def mostrar_modal_detalle(self,novedad,columnas, vista):
         """Mostrar el modal con el Treeview y filtro"""
         # Crear una ventana secundaria (modal)
         modal = tk.Toplevel(self.root)
-        modal.title("Detalle de novedad")
-        modal.geometry("560x500")
-        columnas = [
-            "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
-            "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", 
-            "Fecha de Fin Novedad", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
-        ]
+        modal.title(f"Detalle de {vista}")
+        if vista == "novedad":
+            modal.geometry("560x500")
+            rowButtonCerrar = 15
+        else:
+            modal.geometry("600x600")
+            rowButtonCerrar = 20
         
-        ttk.Label(modal, text="Detalle de la novedad", font=("Helvetica", 22, "bold")).grid(row=0, column=0, columnspan=2, pady=10, padx=10, sticky="we")
+        ttk.Label(modal, text=f"Detalle de {vista}", font=("Helvetica", 22, "bold")).grid(row=0, column=0, columnspan=2, pady=10, padx=10, sticky="we")
 
         for idx, (columna, valor) in enumerate(zip(columnas, novedad), start=1):
             ttk.Label(modal, text=(columna+":").capitalize()).grid(row=idx, column=0, pady=2, padx=10, sticky="w")
@@ -372,8 +402,8 @@ class FormularioExcelApp:
                 ttk.Label(modal, text=valor).grid(row=idx, column=1, pady=2, padx=10, sticky="w")
         
         # Botón de cerrar el modal
-        tk.Button(modal, text="Cerrar", command=modal.destroy).grid(row=15, column=0, columnspan=2, pady=10, padx=10)        
-        
+        tk.Button(modal, text="Cerrar", command=modal.destroy).grid(row=rowButtonCerrar, column=0, columnspan=2, pady=10, padx=10)        
+    
     def crear_tabla_novedades(self):
         def on_focus_in(event):
             if apellido_filter.get() == "Buscar por nombre":
@@ -394,7 +424,7 @@ class FormularioExcelApp:
                 # Obtener los valores asociados al ítem seleccionado
                 item_values = treeview.item(selected_item[0], "values")
                 # print(item_values)  # Imprime los valores de la fila seleccionada
-                self.mostrar_modal_detalle_novedades(item_values)
+                self.mostrar_modal_detalle(item_values,columnas,"novedad")
             else:
                 print("No se seleccionó ningún elemento.")
             
@@ -406,14 +436,11 @@ class FormularioExcelApp:
         self.apellido_filter_var = tk.StringVar()
         self.dotacion_filter_var = tk.StringVar()
         lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]
-        # Detectar cambios en el input
-        self.apellido_filter_var.trace_add("write", lambda *args: self.filtrar_datos_novedades(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
-        self.dotacion_filter_var.trace_add("write", lambda *args: self.filtrar_datos_novedades(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
         
         # Título y botones
         ttk.Label(self.table_frame, text="Registro de novedades                  ", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
-        #Filter nombre o apellido
         ttk.Button(self.table_frame, text="Ver cambios de turno", command=lambda: self.toggle_view("table_cambios")).grid(row=0, column=1, pady=10, padx=10, sticky="e")
+        #Filter nombre o apellido
         apellido_filter = tk.Entry(self.table_frame, textvariable=self.apellido_filter_var, font=("Helvetica",10))
         apellido_filter.grid(row=0, column=2,sticky="e", pady=10, padx=10,ipady=5,ipadx=10)
         #Filter dotacion
@@ -428,6 +455,10 @@ class FormularioExcelApp:
         apellido_filter.config(fg="grey")
         apellido_filter.bind("<FocusIn>", on_focus_in)
         apellido_filter.bind("<FocusOut>", on_focus_out)
+        
+        # Detectar cambios en el input
+        self.apellido_filter_var.trace_add("write", lambda *args: self.filtrar_datos_novedades(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
+        self.dotacion_filter_var.trace_add("write", lambda *args: self.filtrar_datos_novedades(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
         
         # Contenedor del Treeview 
         self.tree_frame = ttk.Frame(self.table_frame, width=self.WIDTH, height=self.HEIGHT)
@@ -463,22 +494,64 @@ class FormularioExcelApp:
         # Asociar el evento de doble clic
 
     def crear_tabla_cambios(self):
+        def on_focus_in(event):
+            if apellido_filter.get() == "Buscar por nombre":
+                apellido_filter.delete(0, tk.END)
+                apellido_filter.config(fg="black")
+
+        def on_focus_out(event):
+            if apellido_filter.get() == "":
+                apellido_filter.insert(0, "Buscar por nombre")
+                apellido_filter.config(fg="grey")   
+        def on_double_click(event):
+            # Obtener el Treeview que disparó el evento
+            treeview = event.widget
+            # Obtener el identificador del ítem seleccionado
+            selected_item = treeview.selection()
+
+            if selected_item:  # Verificar que haya una selección
+                # Obtener los valores asociados al ítem seleccionado
+                item_values = treeview.item(selected_item[0], "values")
+                # print(item_values)  # Imprime los valores de la fila seleccionada
+                self.mostrar_modal_detalle(item_values,columnas,"cambio de turno")
+            else:
+                print("No se seleccionó ningún elemento.")
         
+        #variables
+        self.apellido_filter_var = tk.StringVar()
+        self.dotacion_filter_var = tk.StringVar()
+        lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]    
         columnas = [
             "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", 
             "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2", 
             "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
         ]
+        
+        # Detectar cambios en el input
+        self.apellido_filter_var.trace_add("write", lambda *args: self.filtrar_datos_cambios(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
+        self.dotacion_filter_var.trace_add("write", lambda *args: self.filtrar_datos_cambios(self.apellido_filter_var.get(),self.dotacion_filter_var.get()))
+        
         # Título y botones
         ttk.Label(self.table_cambios_frame, text="Registro de cambios de turnos", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
-        ttk.Button(self.table_cambios_frame, text="Ver novedades", command=lambda: self.toggle_view("table")).grid(row=0, column=2, pady=10,padx=1, sticky="e")
-        ttk.Button(self.table_cambios_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=3, pady=10, padx=1, sticky="e")
-        ttk.Button(self.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=4, pady=10,padx=1,  sticky="e")
-  
+        ttk.Button(self.table_cambios_frame, text="Ver novedades", command=lambda: self.toggle_view("table")).grid(row=0, column=1, pady=10,padx=1, sticky="e")
+        #Filter nombre o apellido
+        apellido_filter = tk.Entry(self.table_cambios_frame, textvariable=self.apellido_filter_var, font=("Helvetica",10))
+        apellido_filter.grid(row=0, column=2,sticky="e", pady=10, padx=10,ipady=5,ipadx=10)
+        #Filter dotacion
+        dotacion_filter = ttk.Combobox(self.table_cambios_frame, textvariable=self.dotacion_filter_var, values=lst_dotaciones, width=10)
+        dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
+        ttk.Button(self.table_cambios_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=4, pady=10, padx=1, sticky="e")
+        ttk.Button(self.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=5, pady=10,padx=1,  sticky="e")
+
+        dotacion_filter.insert(0, "Todas")
+        apellido_filter.insert(0, "Buscar por nombre")
+        apellido_filter.config(fg="grey")
+        apellido_filter.bind("<FocusIn>", on_focus_in)
+        apellido_filter.bind("<FocusOut>", on_focus_out)
+        
         # Contenedor del Treeview  
         self.tree_frame = ttk.Frame(self.table_cambios_frame, width=self.WIDTH, height=self.HEIGHT)
-        # self.tree_frame = ttk.Frame(self.table_cambios_frame, width=1100, height=550)
-        self.tree_frame.grid(row=1, column=0, columnspan=5, sticky="nsew")
+        self.tree_frame.grid(row=1, column=0, columnspan=6, sticky="nsew")
         self.tree_frame.grid_propagate(False)
 
         # Configurar el grid del marco contenedor para que el Treeview se expanda
@@ -489,6 +562,7 @@ class FormularioExcelApp:
         self.table_cambios = ttk.Treeview(self.tree_frame, columns=columnas, show="headings", height=38)
         self.table_cambios.grid(row=0, column=0, sticky="nsew")
 
+        self.table_cambios.bind("<Double-1>", on_double_click)
         # Establecer encabezados y columnas con anchuras
         anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 60, 150, 150, 80, 60, 80, 120, 120, 120, 120]
         for col, ancho in zip(columnas, anchuras):
@@ -504,15 +578,7 @@ class FormularioExcelApp:
         # Configurar el Treeview para usar las barras de scroll
         self.table_cambios.configure(yscrollcommand=scrollbar_vertical.set, xscrollcommand=scrollbar_horizontal.set)
         # Cargar datos
-        try:
-            if self.sheet_cambio_turnos:
-                for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
-                    fila_procesada = ["-" if celda is None else celda for celda in fila]
-                    self.table_cambios.insert("", "end", values=fila_procesada)
-            else:
-                print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
-        except Exception as e:
-            print(f"Error al cargar los datos en el Treeview: {e}")
+        self.cargar_datos_completos_cambios()
     
     def mostrar_formulario_novedades(self):
         
@@ -529,7 +595,6 @@ class FormularioExcelApp:
         ttk.Button(self.form_frame, text="Buscar Personal", command=self.mostrar_modal).grid(row=2, column=1, pady=10, padx=10)
 
         # Nivel 2: APELLIDOS Y NOMBRES, ESPECIALIDAD, DOTACION, TURNOS, FRANCO
-
         # Apellidos y Nombres
         ttk.Label(self.form_frame, text="  Apellido y Nombre").grid(row=3, column=0, sticky="w", padx=5)
         ttk.Label(self.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=3, column=0, sticky="w")
@@ -984,22 +1049,22 @@ class FormularioExcelApp:
    
     def validar_campos_requeridos_novedades(self):
             # Verificar si los campos requeridos están vacíos
-            if not self.legajo_var.get():
+            if not self.legajo_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Legajo' es obligatorio.")
                 return False
-            if not self.apellidos_nombres_var.get():
+            if not self.apellidos_nombres_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Apellido y Nombre' es obligatorio.")
                 return False
-            if not self.novedad_var.get():
+            if not self.novedad_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Tipo de Novedad' es obligatorio.")
                 return False
-            if not self.fecha_inicio_novedad_var.get():
+            if not self.fecha_inicio_novedad_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Fecha de inicio novedad' es obligatorio.")
                 return False
-            if not self.referencia_estacion_var.get():
+            if not self.referencia_estacion_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Referencia Estacion' es obligatorio.")
                 return False
-            if not self.supervisor_var.get():
+            if not self.supervisor_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Supervisor' es obligatorio.")
                 return False
             # Verifica otros campos de la misma forma...
@@ -1008,25 +1073,25 @@ class FormularioExcelApp:
         
     def validar_campos_requeridos_cambios(self):
             # Verificar si los campos requeridos están vacíos
-            if not self.legajo_var.get():
+            if not self.legajo_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Legajo' es obligatorio.")
                 return False
-            if not self.apellidos_nombres_var.get():
+            if not self.apellidos_nombres_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Apellido y Nombre' es obligatorio.")
                 return False
-            if not self.legajo_2_var.get():
+            if not self.legajo_2_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Legajo' es obligatorio.")
                 return False
-            if not self.apellidos_nombres_2_var.get():
+            if not self.apellidos_nombres_2_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Apellido y Nombre' es obligatorio.")
                 return False
-            if not self.fecha_cambio_turno_var.get():
+            if not self.fecha_cambio_turno_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Fecha de cambio de turno' es obligatorio.")
                 return False
-            if not self.referencia_estacion_var.get():
+            if not self.referencia_estacion_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Referencia Estacion' es obligatorio.")
                 return False
-            if not self.supervisor_var.get():
+            if not self.supervisor_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Supervisor' es obligatorio.")
                 return False
             # Verifica otros campos de la misma forma...
