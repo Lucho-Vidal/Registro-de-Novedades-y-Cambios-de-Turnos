@@ -366,13 +366,13 @@ class FormularioExcelApp:
                     if dotacion_filtro == "Todas" and nombre_filtro == "Buscar por nombre":
                         self.cargar_datos_completos_cambios()
                     elif dotacion_filtro == "Todas":
-                        if nombre_filtro.lower() in str(fila_procesada[3]).lower():
+                        if nombre_filtro.lower() in str(fila_procesada[3]).lower() or nombre_filtro.lower() in str(fila_procesada[9]).lower():
                             self.table_cambios.insert("", "end", values=fila_procesada)
                     elif nombre_filtro == "Buscar por nombre":
                         if dotacion_filtro.lower() in str(fila_procesada[5]).lower():
                             self.table_cambios.insert("", "end", values=fila_procesada)
                     else:
-                        if nombre_filtro.lower() in str(fila_procesada[3]).lower() and dotacion_filtro.lower() in str(fila_procesada[5]).lower():
+                        if (nombre_filtro.lower() in str(fila_procesada[3]).lower() or nombre_filtro.lower() in str(fila_procesada[9]).lower()) and dotacion_filtro.lower() in str(fila_procesada[5]).lower():
                             self.table_cambios.insert("", "end", values=fila_procesada)
         except Exception as e:
             print(f"Error al filtrar los datos en el Treeview cambios: {e}")        
@@ -438,7 +438,7 @@ class FormularioExcelApp:
         lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]
         
         # Título y botones
-        ttk.Label(self.table_frame, text="Registro de novedades                  ", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
+        ttk.Label(self.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
         ttk.Button(self.table_frame, text="Ver cambios de turno", command=lambda: self.toggle_view("table_cambios")).grid(row=0, column=1, pady=10, padx=10, sticky="e")
         #Filter nombre o apellido
         apellido_filter = tk.Entry(self.table_frame, textvariable=self.apellido_filter_var, font=("Helvetica",10))
