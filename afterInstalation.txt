@@ -1,0 +1,7 @@
+Al abrir la aplicacion:
+	- Ir a la pestaña superior izquierda "Archivo" -> "Seleccionar Archivo"
+	- Buscar el archivo en la carpeta compartida donde se guardaran los registros.
+	- hacer doble clic
+	- La proxima vez que se ejecute la aplicacion no sera necesario repetir estos pasos.
+Ejemplo:
+	I:\Operaciones\Transporte\PCT\PLANILLA NOVEDADES PERSONAL ABORDO.xlsx

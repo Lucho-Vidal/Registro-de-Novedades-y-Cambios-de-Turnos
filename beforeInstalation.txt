@@ -1,0 +1,35 @@
+Descripción del Programa para Cargar Novedades del Personal de Abordo
+
+El programa desarrollado en Python tiene como objetivo gestionar y cargar novedades
+del personal de abordo. Al iniciarse, presenta una interfaz con dos elementos
+principales: una tabla que muestra las novedades previamente cargadas y un botón
+que redirige al usuario a un formulario para ingresar nuevas novedades.
+
+Funcionalidades:
+	1. Visualización de Novedades Cargadas: Al iniciar el programa, se carga una
+		tabla que muestra las novedades previamente registradas. Esta tabla facilita la
+		consulta rápida de la información ingresada y permite verificar el historial de
+		novedades del personal de abordo.
+	2. Formulario de Carga de Novedades: Al hacer clic en el botón para agregar una
+		nueva novedad, el usuario accede a un formulario que solicita los siguientes
+		datos del personal y de la novedad a cargar:
+		o Legajo del Personal: Se solicita un número de legajo para identificar al
+		miembro del personal. Se incluye un modal de búsqueda para localizar
+		el legajo de manera rápida, donde, al seleccionar un legajo, se
+		completan automáticamente los campos correspondientes a:
+	
+	 Apellido y Nombre
+	 Especialidad
+	 Turno
+	 Dotación
+	 Franco
+	o Tipo de Novedad: Se debe seleccionar el tipo de novedad a cargar,
+		como ausencias, cambios de turno, licencias, entre otros.
+	o Fechas:
+		 Fecha de Inicio: La fecha en que comienza la novedad.
+		 Fecha de Fin: La fecha en que finaliza la novedad.
+	o Referencia de Estación: Estación o ubicación relacionada con la novedad.
+	o Supervisor: Supervisor encargado de tomar la novedad o responsable
+		de la validación de la misma.
+	o Observaciones: Espacio para ingresar detalles adicionales o aclaraciones
+		respecto a la novedad.
