@@ -1,0 +1,27 @@
+Copyright © 2024 Vidal Luciano - Registro de novedades y cambios de turno
+
+Este software está licenciado bajo la Licencia Creative Commons Atribución 4.0 Internacional (CC BY 4.0). 
+
+Esto significa que puedes:
+- Usar, copiar y distribuir este software en cualquier medio o formato.
+- Adaptar, modificar y construir a partir del software para cualquier propósito, incluso comercialmente.
+
+Siempre y cuando:
+1. Proporciones una atribución adecuada, incluyendo:
+   - El nombre del autor original: Vidal Luciano.
+   - Un enlace a la licencia: https://creativecommons.org/licenses/by/4.0/.
+   - Una indicación de si realizaste cambios al software.
+2. No sugieras de ninguna manera que el autor original respalda tus modificaciones o el uso del software.
+
+Puedes encontrar el código fuente del proyecto y más información en el siguiente repositorio:  
+[GitHub - Registro-de-Novedades-y-Cambios-de-Turnos](https://github.com/Lucho-Vidal/Registro-de-Novedades-y-Cambios-de-Turnos)
+
+**Texto de atribución sugerido**:
+Este software fue desarrollado por Vidal Luciano. Licencia CC BY 4.0: https://creativecommons.org/licenses/by/4.0/.
+
+Una copia de la licencia completa está disponible en el siguiente enlace:  
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+---
+
+**Nota**: Puedes incluir este texto en el archivo `README`, en un archivo `LICENSE.txt` o directamente en los comentarios del código principal.
