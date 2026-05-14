@@ -713,7 +713,7 @@ class FormularioExcelApp:
         # Nivel 3: NOVEDAD, Fecha de Inicio Novedad
         ttk.Label(self.form_frame, text="   Tipo Novedad").grid(row=5, column=0, sticky="w")
         ttk.Label(self.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=5, column=0, sticky="w")
-        self.novedad_entry = ttk.Combobox(self.form_frame, textvariable=self.novedad_var, values=self.tipo_novedades, width=38)
+        self.novedad_entry = ttk.Combobox(self.form_frame, textvariable=self.novedad_var, values=self.tipo_novedades, width=38, state="readonly")
         self.novedad_entry.grid(row=6, column=0, columnspan=2, sticky="w", pady=5)
 
         ttk.Label(self.form_frame, text="   Fecha de Inicio Novedad").grid(row=5, column=3, sticky="w")
@@ -721,11 +721,16 @@ class FormularioExcelApp:
         # Crear DateEntry con estilo ttkbootstrap
         self.fecha_inicio_novedad_entry = DateEntry(self.form_frame,dateformat='%d/%m/%Y',bootstyle="danger")
         self.fecha_inicio_novedad_entry.grid(row=6, column=3, sticky="w", pady=5)       
+        self.fecha_inicio_novedad_entry.entry.bind("<Key>", lambda event: "break")
 
         ttk.Label(self.form_frame, text="Fecha de Fin Novedad").grid(row=5, column=4, sticky="w")
         # Crear DateEntry con estilo ttkbootstrap
         self.fecha_fin_novedad_entry = DateEntry(self.form_frame,dateformat='%d/%m/%Y',bootstyle="success")
         self.fecha_fin_novedad_entry.grid(row=6, column=4, sticky="w", pady=5) 
+        self.fecha_fin_novedad_entry.entry.bind("<Key>", lambda event: "break")
+        self.fecha_fin_novedad_entry.entry.delete(0, tk.END)
+        self.fecha_fin_novedad_var.set("")
+        ttk.Button(self.form_frame, text="Limpiar", command=self.limpiar_fecha_fin_novedad).grid(row=6, column=5, sticky="w", padx=5)
         
         # Nivel 4: REFERENCIA ESTACIÓN, SUPERVISOR
         ttk.Label(self.form_frame, text="   REFERENCIA ESTACIÓN").grid(row=7, column=0, sticky="w")
@@ -833,6 +838,7 @@ class FormularioExcelApp:
         # Crear DateEntry con estilo ttkbootstrap
         self.fecha_cambio_turno_entry = DateEntry(self.form_cambios_frame,dateformat='%d/%m/%Y',startdate=datetime.today()+timedelta(days=+1))
         self.fecha_cambio_turno_entry.grid(row=10, column=0, columnspan=2, sticky="w", pady=5)
+        self.fecha_cambio_turno_entry.entry.bind("<Key>", lambda event: "break")
         
         # Nivel 6: REFERENCIA ESTACIÓN, SUPERVISOR
         ttk.Label(self.form_cambios_frame, text="   REFERENCIA ESTACIÓN").grid(row=11, column=0, sticky="w")
@@ -1141,6 +1147,13 @@ class FormularioExcelApp:
         self.supervisor_var.set('')
         self.observaciones_var.set('')
         self.observaciones_text.delete("1.0", "end")
+        if hasattr(self, "fecha_fin_novedad_entry"):
+            self.fecha_fin_novedad_entry.entry.delete(0, tk.END)
+
+    def limpiar_fecha_fin_novedad(self):
+        if hasattr(self, "fecha_fin_novedad_entry"):
+            self.fecha_fin_novedad_entry.entry.delete(0, tk.END)
+            self.fecha_fin_novedad_var.set("")
 
     
     def limpiar_formulario_cambios(self):
@@ -1161,6 +1174,17 @@ class FormularioExcelApp:
         self.supervisor_var.set('')
         self.observaciones_var.set('') 
         self.observaciones_text.delete("1.0", "end")
+
+    def parsear_fecha(self, valor, nombre_campo, obligatorio=False):
+        valor = str(valor or "").strip()
+        if not valor:
+            if obligatorio:
+                raise ValueError(f"El campo '{nombre_campo}' es obligatorio.")
+            return None
+        try:
+            return datetime.strptime(valor, "%d/%m/%Y")
+        except ValueError:
+            raise ValueError(f"El campo '{nombre_campo}' debe tener formato DD/MM/AAAA.")
    
     def validar_campos_requeridos_novedades(self):
             # Verificar si los campos requeridos están vacíos
@@ -1173,8 +1197,8 @@ class FormularioExcelApp:
             if not self.novedad_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Tipo de Novedad' es obligatorio.")
                 return False
-            if not self.fecha_inicio_novedad_var.get().strip():
-                self.mostrar_error_novedades("El campo 'Fecha de inicio novedad' es obligatorio.")
+            if self.novedad_var.get().strip() not in self.tipo_novedades:
+                self.mostrar_error_novedades("Seleccione un valor valido en 'Tipo de Novedad'.")
                 return False
             if not self.referencia_estacion_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Referencia Estacion' es obligatorio.")
@@ -1182,7 +1206,17 @@ class FormularioExcelApp:
             if not self.supervisor_var.get().strip():
                 self.mostrar_error_novedades("El campo 'Supervisor' es obligatorio.")
                 return False
-            # Verifica otros campos de la misma forma...
+
+            try:
+                fecha_inicio = self.parsear_fecha(self.fecha_inicio_novedad_entry.entry.get(), "Fecha de inicio novedad", obligatorio=True)
+                fecha_fin = self.parsear_fecha(self.fecha_fin_novedad_entry.entry.get(), "Fecha de fin novedad", obligatorio=False)
+            except ValueError as e:
+                self.mostrar_error_novedades(str(e))
+                return False
+
+            if fecha_fin and fecha_fin < fecha_inicio:
+                self.mostrar_error_novedades("'Fecha de Fin Novedad' no puede ser anterior a 'Fecha de Inicio Novedad'.")
+                return False
 
             return True
         
@@ -1209,7 +1243,12 @@ class FormularioExcelApp:
             if not self.supervisor_var.get().strip():
                 self.mostrar_error_cambios("El campo 'Supervisor' es obligatorio.")
                 return False
-            # Verifica otros campos de la misma forma...
+
+            try:
+                self.parsear_fecha(self.fecha_cambio_turno_entry.entry.get(), "Fecha de cambio de turno", obligatorio=True)
+            except ValueError as e:
+                self.mostrar_error_cambios(str(e))
+                return False
 
             return True
     def mostrar_error_novedades(self, mensaje):
