@@ -13,6 +13,14 @@ import math
 import unicodedata
 import getpass
 
+SHEET_BASE = "BASE"
+SHEET_NOVEDADES = "NOVEDADES"
+SHEET_TIPO_NOVEDAD = "TipoNovedad"
+SHEET_CAMBIO_TURNOS = "Cambio de Turnos"
+COL_USUARIO_WINDOWS = "USUARIO WINDOWS"
+PLACEHOLDER_BUSCAR_NOMBRE = "Buscar por nombre"
+DOTACIONES = ["Todas", "PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"]
+
 class FormularioExcelApp:
     def __init__(self, root):
         self.root = root
@@ -175,7 +183,7 @@ class FormularioExcelApp:
         except Exception:
             return os.environ.get("USERNAME", "")
 
-    def asegurar_columna_usuario(self, sheet, titulo="USUARIO WINDOWS"):
+    def asegurar_columna_usuario(self, sheet, titulo=COL_USUARIO_WINDOWS):
         encabezados = [cell.value for cell in sheet[1]]
         if titulo in encabezados:
             return encabezados.index(titulo) + 1
@@ -192,10 +200,10 @@ class FormularioExcelApp:
             print(f"Abriendo archivo Excel: {self.excel_file}")
             self.labelCarga.config(text="Actualizando....")
             self.wb = openpyxl.load_workbook(self.excel_file)
-            self.sheet_base = self.wb["BASE"]
-            self.sheet_novedades = self.wb["NOVEDADES"]
-            self.sheet_tipo_novedad = self.wb["TipoNovedad"]
-            self.sheet_cambio_turnos = self.wb["Cambio de Turnos"]
+            self.sheet_base = self.wb[SHEET_BASE]
+            self.sheet_novedades = self.wb[SHEET_NOVEDADES]
+            self.sheet_tipo_novedad = self.wb[SHEET_TIPO_NOVEDAD]
+            self.sheet_cambio_turnos = self.wb[SHEET_CAMBIO_TURNOS]
             self.excel_last_mtime = mtime_actual
             self.actualizar_cache_base()
 
@@ -222,7 +230,7 @@ class FormularioExcelApp:
         if self.sheet_novedades and self.current_view == 'table' and hasattr(self, "tabla_novedades"):
             if not hasattr(self, "apellido_filter_novedades_var") or not hasattr(self, "dotacion_filter_novedades_var"):
                 return
-            if self.apellido_filter_novedades_var.get() != "Buscar por nombre" or self.dotacion_filter_novedades_var.get() != "Todas":
+            if self.apellido_filter_novedades_var.get() != PLACEHOLDER_BUSCAR_NOMBRE or self.dotacion_filter_novedades_var.get() != "Todas":
                 return
             # Limpiar la tabla antes de actualizar
             self.tabla_novedades.delete(*self.tabla_novedades.get_children())
@@ -241,7 +249,7 @@ class FormularioExcelApp:
         if self.sheet_cambio_turnos and self.current_view == "table_cambios" and hasattr(self, "table_cambios"):
             if not hasattr(self, "apellido_filter_cambios_var") or not hasattr(self, "dotacion_filter_cambios_var"):
                 return
-            if self.apellido_filter_cambios_var.get() != "Buscar por nombre" or self.dotacion_filter_cambios_var.get() != "Todas":
+            if self.apellido_filter_cambios_var.get() != PLACEHOLDER_BUSCAR_NOMBRE or self.dotacion_filter_cambios_var.get() != "Todas":
                 return
             total = 0
             for item in self.table_cambios.get_children():  # Iterar sobre los ítems existentes
@@ -358,37 +366,37 @@ class FormularioExcelApp:
         wb = openpyxl.Workbook()
         
         # Crear la hoja "BASE" y agregar encabezados
-        sheet_base = wb.create_sheet(title="BASE")  # Crea la hoja "BASE"
+        sheet_base = wb.create_sheet(title=SHEET_BASE)  # Crea la hoja "BASE"
         encabezados_base = [
             "LEGAJO","APELLIDOS Y NOMBRES", "ESPECIALIDAD",
             "DOTACION", "TURNOS","FRANCO"
         ]
         sheet_base.append(encabezados_base)  # Agregar los encabezados a la hoja "BASE"
         # Crear la hoja "NOVEDADES" y agregar encabezados
-        sheet_novedades = wb.create_sheet(title="NOVEDADES")  # Crea la hoja "NOVEDADES"
+        sheet_novedades = wb.create_sheet(title=SHEET_NOVEDADES)  # Crea la hoja "NOVEDADES"
 
         encabezados_novedades = [
             "ID","Fecha y hora","LEGAJO ", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
             "DOTACION", "TURNOS","FRANCO", 
             "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
-            "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+            "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", COL_USUARIO_WINDOWS
         ]
         sheet_novedades.append(encabezados_novedades)  # Agregar los encabezados a la hoja "NOVEDADES"
         
         # Crear la hoja "TipoNovedad" y agregar encabezados
-        sheet_tiponovedad = wb.create_sheet(title="TipoNovedad")  # Crea la hoja "TipoNovedad"
+        sheet_tiponovedad = wb.create_sheet(title=SHEET_TIPO_NOVEDAD)  # Crea la hoja "TipoNovedad"
         encabezados_tiponovedad = ["Enfermo"]
         sheet_tiponovedad.append(encabezados_tiponovedad)  # Agregar los encabezados a la hoja "TipoNovedad"
         
         # Crear la hoja "Cambio de Turnos" y agregar encabezados
-        sheet_cambio_turnos = wb.create_sheet(title="Cambio de Turnos")  # Crea la hoja "Cambio de Turnos"
+        sheet_cambio_turnos = wb.create_sheet(title=SHEET_CAMBIO_TURNOS)  # Crea la hoja "Cambio de Turnos"
 
         encabezados_cambio_turnos = [
             "ID","Fecha y hora", "LEGAJO", "APELLIDOS Y NOMBRES", 
             "ESPECIALIDAD", "DOTACION", "TURNOS", "FRANCO", 
             "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2",
             "DOTACION2", "TURNOS2","FRANCO2", 
-            "Fecha de Cambio de Turno","REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+            "Fecha de Cambio de Turno","REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", COL_USUARIO_WINDOWS
         ]
         sheet_cambio_turnos.append(encabezados_cambio_turnos)  # Agregar los encabezados a la hoja "Cambio de Turnos"
         
@@ -437,7 +445,7 @@ class FormularioExcelApp:
     # Filtrar datos según el texto ingresado
     def filtrar_datos_novedades(self, nombre_filtro,dotacion_filtro):
         try:
-            if dotacion_filtro == "Todas" and nombre_filtro == "Buscar por nombre":
+            if dotacion_filtro == "Todas" and nombre_filtro == PLACEHOLDER_BUSCAR_NOMBRE:
                 self.cargar_datos_completos_novedades()
                 return
 
@@ -458,7 +466,7 @@ class FormularioExcelApp:
                         if nombre_filtro_norm in nombre_fila_norm:
                             self.tabla_novedades.insert("", "end", values=fila_procesada)
                             total += 1
-                    elif nombre_filtro == "Buscar por nombre":
+                    elif nombre_filtro == PLACEHOLDER_BUSCAR_NOMBRE:
                         if dotacion_filtro_norm in dotacion_fila_norm:
                             self.tabla_novedades.insert("", "end", values=fila_procesada)
                             total += 1
@@ -482,7 +490,7 @@ class FormularioExcelApp:
 
     def filtrar_datos_cambios(self, nombre_filtro,dotacion_filtro):
         try:
-            if dotacion_filtro == "Todas" and nombre_filtro == "Buscar por nombre":
+            if dotacion_filtro == "Todas" and nombre_filtro == PLACEHOLDER_BUSCAR_NOMBRE:
                 self.cargar_datos_completos_cambios()
                 return
 
@@ -504,7 +512,7 @@ class FormularioExcelApp:
                         if nombre_filtro_norm in nombre_1_norm or nombre_filtro_norm in nombre_2_norm:
                             self.table_cambios.insert("", "end", values=fila_procesada)
                             total += 1
-                    elif nombre_filtro == "Buscar por nombre":
+                    elif nombre_filtro == PLACEHOLDER_BUSCAR_NOMBRE:
                         if dotacion_filtro_norm in dotacion_norm:
                             self.table_cambios.insert("", "end", values=fila_procesada)
                             total += 1
@@ -556,13 +564,13 @@ class FormularioExcelApp:
     
     def crear_tabla_novedades(self):
         def on_focus_in(event):
-            if apellido_filter.get() == "Buscar por nombre":
+            if apellido_filter.get() == PLACEHOLDER_BUSCAR_NOMBRE:
                 apellido_filter.delete(0, tk.END)
                 apellido_filter.config(fg="black")
 
         def on_focus_out(event):
             if apellido_filter.get() == "":
-                apellido_filter.insert(0, "Buscar por nombre")
+                apellido_filter.insert(0, PLACEHOLDER_BUSCAR_NOMBRE)
                 apellido_filter.config(fg="grey")   
         def on_double_click(event):
             # Obtener el Treeview que disparó el evento
@@ -585,7 +593,7 @@ class FormularioExcelApp:
         ]
         self.apellido_filter_novedades_var = tk.StringVar()
         self.dotacion_filter_novedades_var = tk.StringVar()
-        lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]
+        lst_dotaciones = DOTACIONES
         
         # Título y botones
         ttk.Label(self.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
@@ -602,7 +610,7 @@ class FormularioExcelApp:
         ttk.Button(self.table_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=5, pady=10, padx=2, sticky="e")
         ttk.Button(self.table_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=6, pady=10, padx=10, sticky="e")
 
-        apellido_filter.insert(0, "Buscar por nombre")
+        apellido_filter.insert(0, PLACEHOLDER_BUSCAR_NOMBRE)
         dotacion_filter.insert(0, "Todas")
         apellido_filter.config(fg="grey")
         apellido_filter.bind("<FocusIn>", on_focus_in)
@@ -648,13 +656,13 @@ class FormularioExcelApp:
 
     def crear_tabla_cambios(self):
         def on_focus_in(event):
-            if apellido_filter.get() == "Buscar por nombre":
+            if apellido_filter.get() == PLACEHOLDER_BUSCAR_NOMBRE:
                 apellido_filter.delete(0, tk.END)
                 apellido_filter.config(fg="black")
 
         def on_focus_out(event):
             if apellido_filter.get() == "":
-                apellido_filter.insert(0, "Buscar por nombre")
+                apellido_filter.insert(0, PLACEHOLDER_BUSCAR_NOMBRE)
                 apellido_filter.config(fg="grey")   
         def on_double_click(event):
             # Obtener el Treeview que disparó el evento
@@ -673,7 +681,7 @@ class FormularioExcelApp:
         #variables
         self.apellido_filter_cambios_var = tk.StringVar()
         self.dotacion_filter_cambios_var = tk.StringVar()
-        lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]    
+        lst_dotaciones = DOTACIONES
         columnas = [
             "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", 
             "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2", 
@@ -699,7 +707,7 @@ class FormularioExcelApp:
         ttk.Button(self.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=6, pady=10,padx=1,  sticky="e")
 
         dotacion_filter.insert(0, "Todas")
-        apellido_filter.insert(0, "Buscar por nombre")
+        apellido_filter.insert(0, PLACEHOLDER_BUSCAR_NOMBRE)
         apellido_filter.config(fg="grey")
         apellido_filter.bind("<FocusIn>", on_focus_in)
         apellido_filter.bind("<FocusOut>", on_focus_out)
@@ -1109,7 +1117,7 @@ class FormularioExcelApp:
             # Puedes agregar el código para guardar en el archivo de Excel o donde necesites.
             # Añadir a la hoja de Excel y guardar
             try:
-                new_id = self.obtener_nuevo_id_con_sincronizacion("NOVEDADES")
+                new_id = self.obtener_nuevo_id_con_sincronizacion(SHEET_NOVEDADES)
                 current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
                 usuario_windows = self.obtener_usuario_windows()
                 col_usuario = self.asegurar_columna_usuario(self.sheet_novedades)
@@ -1165,7 +1173,7 @@ class FormularioExcelApp:
             # Puedes agregar el código para guardar en el archivo de Excel o donde necesites.
             # Añadir a la hoja de Excel y guardar
             try:
-                new_id = self.obtener_nuevo_id_con_sincronizacion("Cambio de Turnos")
+                new_id = self.obtener_nuevo_id_con_sincronizacion(SHEET_CAMBIO_TURNOS)
                 current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
                 usuario_windows = self.obtener_usuario_windows()
                 col_usuario = self.asegurar_columna_usuario(self.sheet_cambio_turnos)
