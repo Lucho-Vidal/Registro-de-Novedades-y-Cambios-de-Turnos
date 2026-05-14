@@ -6,12 +6,19 @@ from ttkbootstrap import DateEntry
 from ttkbootstrap import Style
 from datetime import datetime, timedelta
 from tkinter.scrolledtext import ScrolledText
-import openpyxl
 import os
 import ctypes
 import math
 import unicodedata
-import getpass
+from excel_store import (
+    get_workbook_mtime,
+    load_workbook_if_needed,
+    build_base_cache,
+    get_windows_user,
+    ensure_user_column,
+    get_last_id,
+    create_default_workbook,
+)
 
 SHEET_BASE = "BASE"
 SHEET_NOVEDADES = "NOVEDADES"
@@ -148,23 +155,10 @@ class FormularioExcelApp:
         self.root.after(60000, self.refrescar_excel_periodicamente)
 
     def obtener_mtime_excel(self):
-        try:
-            return os.path.getmtime(self.excel_file)
-        except OSError:
-            return None
+        return get_workbook_mtime(self.excel_file)
 
     def actualizar_cache_base(self):
-        self.base_rows = []
-        self.base_index = {}
-        for row in self.sheet_base.iter_rows(min_row=2, values_only=True):
-            if not row:
-                continue
-            self.base_rows.append(row)
-            try:
-                legajo = int(row[0])
-                self.base_index[legajo] = row
-            except (TypeError, ValueError):
-                continue
+        self.base_rows, self.base_index = build_base_cache(self.sheet_base)
 
     def normalizar_texto(self, valor):
         texto = unicodedata.normalize("NFKD", str(valor or ""))
@@ -179,28 +173,24 @@ class FormularioExcelApp:
         label.config(text=f"{texto}{sufijo}")
 
     def obtener_usuario_windows(self):
-        try:
-            return getpass.getuser()
-        except Exception:
-            return os.environ.get("USERNAME", "")
+        return get_windows_user()
 
     def asegurar_columna_usuario(self, sheet, titulo=COL_USUARIO_WINDOWS):
-        encabezados = [cell.value for cell in sheet[1]]
-        if titulo in encabezados:
-            return encabezados.index(titulo) + 1
-        columna_nueva = sheet.max_column + 1
-        sheet.cell(row=1, column=columna_nueva, value=titulo)
-        return columna_nueva
+        return ensure_user_column(sheet, titulo)
 
     def cargar_excel(self, solo_si_cambio=False):
         try:
-            mtime_actual = self.obtener_mtime_excel()
-            if solo_si_cambio and self.excel_last_mtime is not None and mtime_actual == self.excel_last_mtime:
+            wb, mtime_actual, changed = load_workbook_if_needed(
+                self.excel_file,
+                self.excel_last_mtime,
+                only_if_changed=solo_si_cambio,
+            )
+            if not changed:
                 return False
 
             print(f"Abriendo archivo Excel: {self.excel_file}")
             self.labelCarga.config(text="Actualizando....")
-            self.wb = openpyxl.load_workbook(self.excel_file)
+            self.wb = wb
             self.sheet_base = self.wb[SHEET_BASE]
             self.sheet_novedades = self.wb[SHEET_NOVEDADES]
             self.sheet_tipo_novedad = self.wb[SHEET_TIPO_NOVEDAD]
@@ -382,48 +372,14 @@ class FormularioExcelApp:
 
     def crear_archivo_excel(self):
         """Crea un archivo Excel con encabezados si no existe"""
-        wb = openpyxl.Workbook()
-        
-        # Crear la hoja "BASE" y agregar encabezados
-        sheet_base = wb.create_sheet(title=SHEET_BASE)  # Crea la hoja "BASE"
-        encabezados_base = [
-            "LEGAJO","APELLIDOS Y NOMBRES", "ESPECIALIDAD",
-            "DOTACION", "TURNOS","FRANCO"
-        ]
-        sheet_base.append(encabezados_base)  # Agregar los encabezados a la hoja "BASE"
-        # Crear la hoja "NOVEDADES" y agregar encabezados
-        sheet_novedades = wb.create_sheet(title=SHEET_NOVEDADES)  # Crea la hoja "NOVEDADES"
-
-        encabezados_novedades = [
-            "ID","Fecha y hora","LEGAJO ", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
-            "DOTACION", "TURNOS","FRANCO", 
-            "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
-            "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", COL_USUARIO_WINDOWS
-        ]
-        sheet_novedades.append(encabezados_novedades)  # Agregar los encabezados a la hoja "NOVEDADES"
-        
-        # Crear la hoja "TipoNovedad" y agregar encabezados
-        sheet_tiponovedad = wb.create_sheet(title=SHEET_TIPO_NOVEDAD)  # Crea la hoja "TipoNovedad"
-        encabezados_tiponovedad = ["Enfermo"]
-        sheet_tiponovedad.append(encabezados_tiponovedad)  # Agregar los encabezados a la hoja "TipoNovedad"
-        
-        # Crear la hoja "Cambio de Turnos" y agregar encabezados
-        sheet_cambio_turnos = wb.create_sheet(title=SHEET_CAMBIO_TURNOS)  # Crea la hoja "Cambio de Turnos"
-
-        encabezados_cambio_turnos = [
-            "ID","Fecha y hora", "LEGAJO", "APELLIDOS Y NOMBRES", 
-            "ESPECIALIDAD", "DOTACION", "TURNOS", "FRANCO", 
-            "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2",
-            "DOTACION2", "TURNOS2","FRANCO2", 
-            "Fecha de Cambio de Turno","REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", COL_USUARIO_WINDOWS
-        ]
-        sheet_cambio_turnos.append(encabezados_cambio_turnos)  # Agregar los encabezados a la hoja "Cambio de Turnos"
-        
-        # Eliminar la hoja predeterminada (por defecto, openpyxl crea una hoja vacía llamada "Sheet")
-        del wb["Sheet"]
-        
-        # Guardar el archivo
-        wb.save(self.excel_file)
+        create_default_workbook(
+            self.excel_file,
+            SHEET_BASE,
+            SHEET_NOVEDADES,
+            SHEET_TIPO_NOVEDAD,
+            SHEET_CAMBIO_TURNOS,
+            COL_USUARIO_WINDOWS,
+        )
         print(f"Archivo creado:{self.excel_file}")
         
     def cargar_datos_completos_novedades(self):
@@ -1104,10 +1060,7 @@ class FormularioExcelApp:
             messagebox.showerror("Error de entrada", "Por favor, ingrese un número de legajo válido.")
 
     def obtener_ultimo_id(self, sheet):
-        return max(
-            (row[0] for row in sheet.iter_rows(min_row=2, max_col=1, values_only=True) if isinstance(row[0], int)),
-            default=0
-        )
+        return get_last_id(sheet)
 
     def obtener_nuevo_id_con_sincronizacion(self, nombre_hoja):
         hoja_local = self.wb[nombre_hoja]
