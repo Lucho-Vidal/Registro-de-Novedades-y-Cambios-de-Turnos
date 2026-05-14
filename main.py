@@ -160,6 +160,13 @@ class FormularioExcelApp:
         texto = "".join(c for c in texto if not unicodedata.combining(c))
         return " ".join(texto.lower().split())
 
+    def actualizar_contador_resultados(self, label, cantidad, sufijo=""):
+        if cantidad == 1:
+            texto = "1 resultado"
+        else:
+            texto = f"{cantidad} resultados"
+        label.config(text=f"{texto}{sufijo}")
+
     def cargar_excel(self, solo_si_cambio=False):
         try:
             mtime_actual = self.obtener_mtime_excel()
@@ -368,24 +375,34 @@ class FormularioExcelApp:
         try:
             # Limpiar la tabla antes de cargar datos
             self.tabla_novedades.delete(*self.tabla_novedades.get_children())
+            total = 0
             if self.sheet_novedades:
                 for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):
                     # Reemplazar None por "-"
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
                     self.tabla_novedades.insert("", "end", values=fila_procesada)
+                    total += 1
             else:
                 print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
+
+            if hasattr(self, "resultados_novedades_label"):
+                self.actualizar_contador_resultados(self.resultados_novedades_label, total)
         except Exception as e:
             print(f"Error al cargar los datos en el Treeview: {e}")
     def cargar_datos_completos_cambios(self):
         try:
             self.table_cambios.delete(*self.table_cambios.get_children())
+            total = 0
             if self.sheet_cambio_turnos:
                 for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
                     self.table_cambios.insert("", "end", values=fila_procesada)
+                    total += 1
             else:
                 print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
+
+            if hasattr(self, "resultados_cambios_label"):
+                self.actualizar_contador_resultados(self.resultados_cambios_label, total)
         except Exception as e:
             print(f"Error al cargar los datos en el Treeview: {e}")
         
@@ -401,6 +418,7 @@ class FormularioExcelApp:
 
             # Limpiar la tabla antes de cargar datos filtrados
             self.tabla_novedades.delete(*self.tabla_novedades.get_children())
+            total = 0
             if self.sheet_novedades:
                 for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
@@ -409,12 +427,18 @@ class FormularioExcelApp:
                     if dotacion_filtro == "Todas":
                         if nombre_filtro_norm in nombre_fila_norm:
                             self.tabla_novedades.insert("", "end", values=fila_procesada)
+                            total += 1
                     elif nombre_filtro == "Buscar por nombre":
                         if dotacion_filtro_norm in dotacion_fila_norm:
                             self.tabla_novedades.insert("", "end", values=fila_procesada)
+                            total += 1
                     else:
                         if nombre_filtro_norm in nombre_fila_norm and dotacion_filtro_norm in dotacion_fila_norm:
                             self.tabla_novedades.insert("", "end", values=fila_procesada)
+                            total += 1
+
+            if hasattr(self, "resultados_novedades_label"):
+                self.actualizar_contador_resultados(self.resultados_novedades_label, total)
         except Exception as e:
             print(f"Error al filtrar los datos en el Treeview novedades: {e}")
 
@@ -437,6 +461,7 @@ class FormularioExcelApp:
 
             # Limpiar la tabla antes de cargar datos filtrados
             self.table_cambios.delete(*self.table_cambios.get_children())
+            total = 0
             if self.sheet_cambio_turnos:
                 for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
@@ -446,12 +471,18 @@ class FormularioExcelApp:
                     if dotacion_filtro == "Todas":
                         if nombre_filtro_norm in nombre_1_norm or nombre_filtro_norm in nombre_2_norm:
                             self.table_cambios.insert("", "end", values=fila_procesada)
+                            total += 1
                     elif nombre_filtro == "Buscar por nombre":
                         if dotacion_filtro_norm in dotacion_norm:
                             self.table_cambios.insert("", "end", values=fila_procesada)
+                            total += 1
                     else:
                         if (nombre_filtro_norm in nombre_1_norm or nombre_filtro_norm in nombre_2_norm) and dotacion_filtro_norm in dotacion_norm:
                             self.table_cambios.insert("", "end", values=fila_procesada)
+                            total += 1
+
+            if hasattr(self, "resultados_cambios_label"):
+                self.actualizar_contador_resultados(self.resultados_cambios_label, total)
         except Exception as e:
             print(f"Error al filtrar los datos en el Treeview cambios: {e}")        
 
@@ -533,9 +564,11 @@ class FormularioExcelApp:
         #Filter dotacion
         dotacion_filter = ttk.Combobox(self.table_frame, textvariable=self.dotacion_filter_var, values=lst_dotaciones, width=10)
         dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
+        self.resultados_novedades_label = ttk.Label(self.table_frame, text="0 resultados", font=("Helvetica", 9))
+        self.resultados_novedades_label.grid(row=0, column=4, sticky="w", padx=8)
         
-        ttk.Button(self.table_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=4, pady=10, padx=2, sticky="e")
-        ttk.Button(self.table_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=5, pady=10, padx=10, sticky="e")
+        ttk.Button(self.table_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=5, pady=10, padx=2, sticky="e")
+        ttk.Button(self.table_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=6, pady=10, padx=10, sticky="e")
 
         apellido_filter.insert(0, "Buscar por nombre")
         dotacion_filter.insert(0, "Todas")
@@ -550,7 +583,7 @@ class FormularioExcelApp:
         # Contenedor del Treeview 
         self.tree_frame = ttk.Frame(self.table_frame, width=self.WIDTH, height=self.HEIGHT)
         # self.tree_frame = ttk.Frame(self.table_frame, width=1100, height=550)
-        self.tree_frame.grid(row=1, column=0, columnspan=6, sticky="nsew")
+        self.tree_frame.grid(row=1, column=0, columnspan=7, sticky="nsew")
         self.tree_frame.grid_propagate(False)
 
         # Configurar el grid de tree_frame para que el Treeview ocupe todo el espacio
@@ -628,8 +661,10 @@ class FormularioExcelApp:
         #Filter dotacion
         dotacion_filter = ttk.Combobox(self.table_cambios_frame, textvariable=self.dotacion_filter_var, values=lst_dotaciones, width=10)
         dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
-        ttk.Button(self.table_cambios_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=4, pady=10, padx=1, sticky="e")
-        ttk.Button(self.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=5, pady=10,padx=1,  sticky="e")
+        self.resultados_cambios_label = ttk.Label(self.table_cambios_frame, text="0 resultados", font=("Helvetica", 9))
+        self.resultados_cambios_label.grid(row=0, column=4, sticky="w", padx=8)
+        ttk.Button(self.table_cambios_frame, text="Nueva novedad", command=lambda: self.toggle_view("form")).grid(row=0, column=5, pady=10, padx=1, sticky="e")
+        ttk.Button(self.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.toggle_view("form_cambios")).grid(row=0, column=6, pady=10,padx=1,  sticky="e")
 
         dotacion_filter.insert(0, "Todas")
         apellido_filter.insert(0, "Buscar por nombre")
@@ -639,7 +674,7 @@ class FormularioExcelApp:
         
         # Contenedor del Treeview  
         self.tree_frame = ttk.Frame(self.table_cambios_frame, width=self.WIDTH, height=self.HEIGHT)
-        self.tree_frame.grid(row=1, column=0, columnspan=6, sticky="nsew")
+        self.tree_frame.grid(row=1, column=0, columnspan=7, sticky="nsew")
         self.tree_frame.grid_propagate(False)
 
         # Configurar el grid del marco contenedor para que el Treeview se expanda
@@ -896,6 +931,8 @@ class FormularioExcelApp:
         apellido_filter_var = tk.StringVar()
         apellido_filter = tk.Entry(modal, textvariable=apellido_filter_var)
         apellido_filter.grid(row=0, column=1, padx=10, pady=5,ipady=5,ipadx=50)
+        modal_resultados_label = ttk.Label(modal, text="0 resultados")
+        modal_resultados_label.grid(row=0, column=2, padx=10, pady=5, sticky="w")
         
         # Crear el Treeview para mostrar la tabla
         tree = ttk.Treeview(modal, columns=("legajo", "apellido_nombre", "especialidad", "dotacion", "turnos", "franco"), show="headings",height=25)
@@ -914,9 +951,12 @@ class FormularioExcelApp:
                 tree.delete(row)
 
             filtro = self.normalizar_texto(apellido_filter_var.get())
+            total = 0
             for registro in registros_busqueda:
                 if not filtro or filtro in registro["nombre_norm"] or filtro in registro["legajo_norm"]:
                     tree.insert("", "end", values=registro["values"])
+                    total += 1
+            self.actualizar_contador_resultados(modal_resultados_label, total)
 
         # Función para llenar la tabla con debounce
         def cargar_tabla():
