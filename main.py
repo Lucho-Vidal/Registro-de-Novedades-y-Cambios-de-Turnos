@@ -62,6 +62,7 @@ class FormularioExcelApp:
         # Aplicar el estilo ttkbootstrap
         self.style = Style()
         self.style.theme_use(self.theme)  # Tema inicial
+        self.configurar_estilos_formularios()
         # Obtener temas disponibles (puedes definir manualmente los temas si es necesario)
         if hasattr(self.style, "theme_names"):
             self.temas = self.style.theme_names()
@@ -296,6 +297,7 @@ class FormularioExcelApp:
         """Cambiar el tema y guardarlo en un archivo"""
         try:
             self.style.theme_use(nuevo_tema)
+            self.configurar_estilos_formularios()
             self.theme = nuevo_tema
             with open(self.theme_file, "w", encoding="utf-8") as file:
                 file.write(nuevo_tema)
@@ -303,6 +305,23 @@ class FormularioExcelApp:
             print(f"Tema cambiado a: {nuevo_tema}")
         except Exception as e:
             print(f"Error al cambiar el tema: {e}")
+
+    def configurar_estilos_formularios(self):
+        temas_oscuros = {"darkly", "superhero", "solar"}
+        tema_actual = self.style.theme_use()
+        if tema_actual in temas_oscuros:
+            fg = "#f4f4f4"
+            bg = "#2b2f36"
+        else:
+            fg = "#111111"
+            bg = "#ffffff"
+
+        self.style.configure("Readonly.TEntry", foreground=fg, fieldbackground=bg)
+        self.style.map(
+            "Readonly.TEntry",
+            foreground=[("readonly", fg)],
+            fieldbackground=[("readonly", bg)]
+        )
 
     def cargar_tema(self):
         """Cargar el tema almacenado en el archivo"""
@@ -762,27 +781,27 @@ class FormularioExcelApp:
         # Apellidos y Nombres
         ttk.Label(self.form_frame, text="  Apellido y Nombre").grid(row=3, column=0, sticky="w", padx=5)
         ttk.Label(self.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=3, column=0, sticky="w")
-        self.apellidos_nombres_entry = ttk.Entry(self.form_frame, textvariable=self.apellidos_nombres_var, state='disabled', width=40)
+        self.apellidos_nombres_entry = ttk.Entry(self.form_frame, textvariable=self.apellidos_nombres_var, state='readonly', style='Readonly.TEntry', width=40)
         self.apellidos_nombres_entry.grid(row=4, column=0, sticky="w", pady=5)
 
         # Especialidad
         ttk.Label(self.form_frame, text="Especialidad").grid(row=3, column=1, sticky="w", padx=5)
-        self.especialidad_entry = ttk.Entry(self.form_frame, textvariable=self.especialidad_var, state='disabled', width=20)
+        self.especialidad_entry = ttk.Entry(self.form_frame, textvariable=self.especialidad_var, state='readonly', style='Readonly.TEntry', width=20)
         self.especialidad_entry.grid(row=4, column=1, sticky="w", pady=5, padx=8)
 
         # Dotación
         ttk.Label(self.form_frame, text="Dotación").grid(row=3, column=2, sticky="w", padx=5)
-        self.dotacion_entry = ttk.Entry(self.form_frame, textvariable=self.dotacion_var, state='disabled', width=20)
+        self.dotacion_entry = ttk.Entry(self.form_frame, textvariable=self.dotacion_var, state='readonly', style='Readonly.TEntry', width=20)
         self.dotacion_entry.grid(row=4, column=2, sticky="w", pady=5, padx=8)
 
         # Turnos
         ttk.Label(self.form_frame, text="Turno").grid(row=3, column=3, sticky="w", padx=5)
-        self.turnos_entry = ttk.Entry(self.form_frame, textvariable=self.turnos_var, state='disabled', width=40)
+        self.turnos_entry = ttk.Entry(self.form_frame, textvariable=self.turnos_var, state='readonly', style='Readonly.TEntry', width=40)
         self.turnos_entry.grid(row=4, column=3, sticky="w", pady=5, padx=8)
 
         # Franco
         ttk.Label(self.form_frame, text="Franco").grid(row=3, column=4, sticky="w", padx=5)
-        self.franco_entry = ttk.Entry(self.form_frame, textvariable=self.franco_var, state='disabled', width=20)
+        self.franco_entry = ttk.Entry(self.form_frame, textvariable=self.franco_var, state='readonly', style='Readonly.TEntry', width=20)
         self.franco_entry.grid(row=4, column=4, sticky="w", pady=5, padx=8)
 
         # Nivel 3: NOVEDAD, Fecha de Inicio Novedad
@@ -847,27 +866,27 @@ class FormularioExcelApp:
         # Apellidos y Nombres
         ttk.Label(self.form_cambios_frame, text="  Apellido y Nombre").grid(row=3, column=0, sticky="w", padx=5)
         ttk.Label(self.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=3, column=0, sticky="w")
-        self.apellidos_nombres_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.apellidos_nombres_var, state='disabled', width=40)
+        self.apellidos_nombres_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.apellidos_nombres_var, state='readonly', style='Readonly.TEntry', width=40)
         self.apellidos_nombres_entry.grid(row=4, column=0,columnspan = 2, sticky="w", pady=5)
 
         # Especialidad
         ttk.Label(self.form_cambios_frame, text="Especialidad").grid(row=3, column=2, sticky="w", padx=5)
-        self.especialidad_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.especialidad_var, state='disabled', width=20)
+        self.especialidad_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.especialidad_var, state='readonly', style='Readonly.TEntry', width=20)
         self.especialidad_entry.grid(row=4, column=2, sticky="w", pady=5, padx=8)
 
         # Dotación
         ttk.Label(self.form_cambios_frame, text="Dotación").grid(row=3, column=3, sticky="w", padx=5)
-        self.dotacion_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.dotacion_var, state='disabled', width=20)
+        self.dotacion_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.dotacion_var, state='readonly', style='Readonly.TEntry', width=20)
         self.dotacion_entry.grid(row=4, column=3, sticky="w", pady=5, padx=8)
 
         # Turnos
         ttk.Label(self.form_cambios_frame, text="Turno").grid(row=3, column=4, sticky="w", padx=5)
-        self.turnos_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.turnos_var, state='disabled', width=40)
+        self.turnos_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.turnos_var, state='readonly', style='Readonly.TEntry', width=40)
         self.turnos_entry.grid(row=4, column=4, columnspan= 2 , sticky="w", pady=5, padx=8)
 
         # Franco
         ttk.Label(self.form_cambios_frame, text="Franco").grid(row=3, column=6, sticky="w", padx=5)
-        self.franco_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.franco_var, state='disabled', width=20)
+        self.franco_entry = ttk.Entry(self.form_cambios_frame, textvariable=self.franco_var, state='readonly', style='Readonly.TEntry', width=20)
         self.franco_entry.grid(row=4, column=6, sticky="w", pady=5, padx=8)
         #--------------------------------------------------------------------------------
         # Nivel 3: LEGAJO 2
@@ -884,27 +903,27 @@ class FormularioExcelApp:
         # Apellidos y Nombres2
         ttk.Label(self.form_cambios_frame, text="  Apellido y Nombre 2").grid(row=7, column=0, sticky="w", padx=5)
         ttk.Label(self.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=7, column=0, sticky="w")
-        self.apellidos_nombres_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.apellidos_nombres_2_var, state='disabled', width=40)
+        self.apellidos_nombres_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.apellidos_nombres_2_var, state='readonly', style='Readonly.TEntry', width=40)
         self.apellidos_nombres_entry_2.grid(row=8, column=0,columnspan = 2, sticky="w", pady=5)
 
         # Especialidad2
         ttk.Label(self.form_cambios_frame, text="Especialidad 2").grid(row=7, column=2, sticky="w", padx=5)
-        self.especialidad_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.especialidad_2_var, state='disabled', width=20)
+        self.especialidad_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.especialidad_2_var, state='readonly', style='Readonly.TEntry', width=20)
         self.especialidad_entry_2.grid(row=8, column=2, sticky="w", pady=5, padx=8)
 
         # Dotación2
         ttk.Label(self.form_cambios_frame, text="Dotación 2").grid(row=7, column=3, sticky="w", padx=5)
-        self.dotacion_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.dotacion_2_var, state='disabled', width=20)
+        self.dotacion_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.dotacion_2_var, state='readonly', style='Readonly.TEntry', width=20)
         self.dotacion_entry_2.grid(row=8, column=3, sticky="w", pady=5, padx=8)
 
         # Turnos2
         ttk.Label(self.form_cambios_frame, text="Turno 2").grid(row=7, column=4, sticky="w", padx=5)
-        self.turnos_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.turnos_2_var, state='disabled', width=40)
+        self.turnos_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.turnos_2_var, state='readonly', style='Readonly.TEntry', width=40)
         self.turnos_entry_2.grid(row=8, column=4, columnspan= 2 , sticky="w", pady=5, padx=8)
 
         # Franco2
         ttk.Label(self.form_cambios_frame, text="Franco 2").grid(row=7, column=6, sticky="w", padx=5)
-        self.franco_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.franco_2_var, state='disabled', width=20)
+        self.franco_entry_2 = ttk.Entry(self.form_cambios_frame, textvariable=self.franco_2_var, state='readonly', style='Readonly.TEntry', width=20)
         self.franco_entry_2.grid(row=8, column=6, sticky="w", pady=5, padx=8)
         
         # Nivel 5: Fecha de cambio de turno
