@@ -4,7 +4,6 @@ from tkinter import messagebox,scrolledtext
 from tkinter import filedialog 
 from ttkbootstrap import DateEntry
 from ttkbootstrap import Style
-from ttkbootstrap.widgets import Entry
 from datetime import datetime, timedelta
 from tkinter.scrolledtext import ScrolledText
 import openpyxl
@@ -12,6 +11,7 @@ import os
 import ctypes
 import math
 import unicodedata
+import getpass
 
 class FormularioExcelApp:
     def __init__(self, root):
@@ -36,6 +36,8 @@ class FormularioExcelApp:
         self.base_index = {}
         self.filtro_after_novedades = None
         self.filtro_after_cambios = None
+        self.error_novedades_label = None
+        self.error_cambios_label = None
 
         # Verificar si el archivo existe; si no, crearlo
         if not os.path.exists(self.excel_file):
@@ -167,6 +169,20 @@ class FormularioExcelApp:
             texto = f"{cantidad} resultados"
         label.config(text=f"{texto}{sufijo}")
 
+    def obtener_usuario_windows(self):
+        try:
+            return getpass.getuser()
+        except Exception:
+            return os.environ.get("USERNAME", "")
+
+    def asegurar_columna_usuario(self, sheet, titulo="USUARIO WINDOWS"):
+        encabezados = [cell.value for cell in sheet[1]]
+        if titulo in encabezados:
+            return encabezados.index(titulo) + 1
+        columna_nueva = sheet.max_column + 1
+        sheet.cell(row=1, column=columna_nueva, value=titulo)
+        return columna_nueva
+
     def cargar_excel(self, solo_si_cambio=False):
         try:
             mtime_actual = self.obtener_mtime_excel()
@@ -203,13 +219,14 @@ class FormularioExcelApp:
     
     # Función para actualizar la tabla con datos (ejemplo usando Listbox)
     def actualizar_tabla(self):
-        if not hasattr(self, "apellido_filter_var") or not hasattr(self, "dotacion_filter_var"):
-            return
-        if self.apellido_filter_var.get() != "Buscar por nombre" or self.dotacion_filter_var.get() != "Todas":
-            return
         if self.sheet_novedades and self.current_view == 'table' and hasattr(self, "tabla_novedades"):
+            if not hasattr(self, "apellido_filter_novedades_var") or not hasattr(self, "dotacion_filter_novedades_var"):
+                return
+            if self.apellido_filter_novedades_var.get() != "Buscar por nombre" or self.dotacion_filter_novedades_var.get() != "Todas":
+                return
             # Limpiar la tabla antes de actualizar
             self.tabla_novedades.delete(*self.tabla_novedades.get_children())
+            total = 0
             # for item in self.tabla_novedades.get_children():  # Iterar sobre los ítems existentes
             #     self.tabla_novedades.delete(item)  # Eliminar cada ítem
             # Leer las primeras filas de la hoja de "BASE" y mostrarlas en la tabla
@@ -217,14 +234,25 @@ class FormularioExcelApp:
                 # Reemplazar valores None por "-"
                 row_data = ["-" if celda is None else celda for celda in row]
                 self.tabla_novedades.insert("", "end", values=row_data)  # Insertar los datos en la tabla
+                total += 1
+            if hasattr(self, "resultados_novedades_label"):
+                self.actualizar_contador_resultados(self.resultados_novedades_label, total)
         
         if self.sheet_cambio_turnos and self.current_view == "table_cambios" and hasattr(self, "table_cambios"):
+            if not hasattr(self, "apellido_filter_cambios_var") or not hasattr(self, "dotacion_filter_cambios_var"):
+                return
+            if self.apellido_filter_cambios_var.get() != "Buscar por nombre" or self.dotacion_filter_cambios_var.get() != "Todas":
+                return
+            total = 0
             for item in self.table_cambios.get_children():  # Iterar sobre los ítems existentes
                 self.table_cambios.delete(item)  # Eliminar cada ítem
             for row in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):  # min_row=2 para omitir encabezados
                 # Reemplazar valores None por "-"
                 row_data = ["-" if celda is None else celda for celda in row]
-                self.table_cambios.insert("", "end", values=row_data) 
+                self.table_cambios.insert("", "end", values=row_data)
+                total += 1
+            if hasattr(self, "resultados_cambios_label"):
+                self.actualizar_contador_resultados(self.resultados_cambios_label, total)
 
     def refrescar_excel_periodicamente(self):
         self.cargar_excel(solo_si_cambio=True)
@@ -343,7 +371,7 @@ class FormularioExcelApp:
             "ID","Fecha y hora","LEGAJO ", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
             "DOTACION", "TURNOS","FRANCO", 
             "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
-            "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones"
+            "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
         ]
         sheet_novedades.append(encabezados_novedades)  # Agregar los encabezados a la hoja "NOVEDADES"
         
@@ -360,7 +388,7 @@ class FormularioExcelApp:
             "ESPECIALIDAD", "DOTACION", "TURNOS", "FRANCO", 
             "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2",
             "DOTACION2", "TURNOS2","FRANCO2", 
-            "Fecha de Cambio de Turno","REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones"
+            "Fecha de Cambio de Turno","REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
         ]
         sheet_cambio_turnos.append(encabezados_cambio_turnos)  # Agregar los encabezados a la hoja "Cambio de Turnos"
         
@@ -422,6 +450,8 @@ class FormularioExcelApp:
             if self.sheet_novedades:
                 for fila in self.sheet_novedades.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    if len(fila_procesada) <= 5:
+                        continue
                     nombre_fila_norm = self.normalizar_texto(fila_procesada[3])
                     dotacion_fila_norm = self.normalizar_texto(fila_procesada[5])
                     if dotacion_filtro == "Todas":
@@ -447,7 +477,7 @@ class FormularioExcelApp:
             self.root.after_cancel(self.filtro_after_novedades)
         self.filtro_after_novedades = self.root.after(
             250,
-            lambda: self.filtrar_datos_novedades(self.apellido_filter_var.get(), self.dotacion_filter_var.get())
+            lambda: self.filtrar_datos_novedades(self.apellido_filter_novedades_var.get(), self.dotacion_filter_novedades_var.get())
         )
 
     def filtrar_datos_cambios(self, nombre_filtro,dotacion_filtro):
@@ -465,6 +495,8 @@ class FormularioExcelApp:
             if self.sheet_cambio_turnos:
                 for fila in self.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
+                    if len(fila_procesada) <= 9:
+                        continue
                     nombre_1_norm = self.normalizar_texto(fila_procesada[3])
                     nombre_2_norm = self.normalizar_texto(fila_procesada[9])
                     dotacion_norm = self.normalizar_texto(fila_procesada[5])
@@ -491,7 +523,7 @@ class FormularioExcelApp:
             self.root.after_cancel(self.filtro_after_cambios)
         self.filtro_after_cambios = self.root.after(
             250,
-            lambda: self.filtrar_datos_cambios(self.apellido_filter_var.get(), self.dotacion_filter_var.get())
+            lambda: self.filtrar_datos_cambios(self.apellido_filter_cambios_var.get(), self.dotacion_filter_cambios_var.get())
         )
 
     def mostrar_modal_detalle(self,novedad,columnas, vista):
@@ -549,20 +581,20 @@ class FormularioExcelApp:
         columnas = [
             "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
             "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
-            "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
+            "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
         ]
-        self.apellido_filter_var = tk.StringVar()
-        self.dotacion_filter_var = tk.StringVar()
+        self.apellido_filter_novedades_var = tk.StringVar()
+        self.dotacion_filter_novedades_var = tk.StringVar()
         lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]
         
         # Título y botones
         ttk.Label(self.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
         ttk.Button(self.table_frame, text="Ver cambios de turno", command=lambda: self.toggle_view("table_cambios")).grid(row=0, column=1, pady=10, padx=10, sticky="e")
         #Filter nombre o apellido
-        apellido_filter = tk.Entry(self.table_frame, textvariable=self.apellido_filter_var, font=("Helvetica",10))
+        apellido_filter = tk.Entry(self.table_frame, textvariable=self.apellido_filter_novedades_var, font=("Helvetica",10))
         apellido_filter.grid(row=0, column=2,sticky="e", pady=10, padx=10,ipady=5,ipadx=10)
         #Filter dotacion
-        dotacion_filter = ttk.Combobox(self.table_frame, textvariable=self.dotacion_filter_var, values=lst_dotaciones, width=10)
+        dotacion_filter = ttk.Combobox(self.table_frame, textvariable=self.dotacion_filter_novedades_var, values=lst_dotaciones, width=10)
         dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
         self.resultados_novedades_label = ttk.Label(self.table_frame, text="0 resultados", font=("Helvetica", 9))
         self.resultados_novedades_label.grid(row=0, column=4, sticky="w", padx=8)
@@ -577,8 +609,8 @@ class FormularioExcelApp:
         apellido_filter.bind("<FocusOut>", on_focus_out)
         
         # Detectar cambios en el input
-        self.apellido_filter_var.trace_add("write", lambda *args: self.programar_filtrado_novedades())
-        self.dotacion_filter_var.trace_add("write", lambda *args: self.programar_filtrado_novedades())
+        self.apellido_filter_novedades_var.trace_add("write", lambda *args: self.programar_filtrado_novedades())
+        self.dotacion_filter_novedades_var.trace_add("write", lambda *args: self.programar_filtrado_novedades())
         
         # Contenedor del Treeview 
         self.tree_frame = ttk.Frame(self.table_frame, width=self.WIDTH, height=self.HEIGHT)
@@ -596,7 +628,7 @@ class FormularioExcelApp:
 
         self.tabla_novedades.bind("<Double-1>", on_double_click)
         # Establecer encabezados y anchos de columna
-        anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 120, 90, 120, 120, 120]
+        anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 120, 90, 120, 120, 120, 140, 120]
         for col, ancho in zip(columnas, anchuras):
             self.tabla_novedades.heading(col, text=col.capitalize())
             self.tabla_novedades.column(col, width=ancho)
@@ -639,27 +671,27 @@ class FormularioExcelApp:
                 print("No se seleccionó ningún elemento.")
         
         #variables
-        self.apellido_filter_var = tk.StringVar()
-        self.dotacion_filter_var = tk.StringVar()
+        self.apellido_filter_cambios_var = tk.StringVar()
+        self.dotacion_filter_cambios_var = tk.StringVar()
         lst_dotaciones = ["Todas","PC","LLV","TY","LP","OA","K5","RE","CÑ","AK"]    
         columnas = [
             "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", 
             "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2", 
-            "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones"
+            "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
         ]
         
         # Detectar cambios en el input
-        self.apellido_filter_var.trace_add("write", lambda *args: self.programar_filtrado_cambios())
-        self.dotacion_filter_var.trace_add("write", lambda *args: self.programar_filtrado_cambios())
+        self.apellido_filter_cambios_var.trace_add("write", lambda *args: self.programar_filtrado_cambios())
+        self.dotacion_filter_cambios_var.trace_add("write", lambda *args: self.programar_filtrado_cambios())
         
         # Título y botones
         ttk.Label(self.table_cambios_frame, text="Registro de cambios de turnos", font=("Helvetica", 20, "bold")).grid(row=0, column=0, pady=10, padx=10, sticky="w")
         ttk.Button(self.table_cambios_frame, text="Ver novedades", command=lambda: self.toggle_view("table")).grid(row=0, column=1, pady=10,padx=1, sticky="e")
         #Filter nombre o apellido
-        apellido_filter = tk.Entry(self.table_cambios_frame, textvariable=self.apellido_filter_var, font=("Helvetica",10))
+        apellido_filter = tk.Entry(self.table_cambios_frame, textvariable=self.apellido_filter_cambios_var, font=("Helvetica",10))
         apellido_filter.grid(row=0, column=2,sticky="e", pady=10, padx=10,ipady=5,ipadx=10)
         #Filter dotacion
-        dotacion_filter = ttk.Combobox(self.table_cambios_frame, textvariable=self.dotacion_filter_var, values=lst_dotaciones, width=10)
+        dotacion_filter = ttk.Combobox(self.table_cambios_frame, textvariable=self.dotacion_filter_cambios_var, values=lst_dotaciones, width=10)
         dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
         self.resultados_cambios_label = ttk.Label(self.table_cambios_frame, text="0 resultados", font=("Helvetica", 9))
         self.resultados_cambios_label.grid(row=0, column=4, sticky="w", padx=8)
@@ -687,7 +719,7 @@ class FormularioExcelApp:
 
         self.table_cambios.bind("<Double-1>", on_double_click)
         # Establecer encabezados y columnas con anchuras
-        anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 60, 150, 150, 80, 60, 80, 120, 120, 120, 120]
+        anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 60, 150, 150, 80, 60, 80, 120, 120, 120, 120, 140]
         for col, ancho in zip(columnas, anchuras):
             self.table_cambios.heading(col, text=col)
             self.table_cambios.column(col, width=ancho, anchor='center', stretch=True)
@@ -780,8 +812,8 @@ class FormularioExcelApp:
 
         # Nivel 5: Observaciones
         ttk.Label(self.form_frame, text="Observaciones").grid(row=9, column=0, sticky="w")
-        self.observaciones_text = scrolledtext.ScrolledText(self.form_frame, wrap=tk.WORD, height=12,width=180)
-        self.observaciones_text.grid(row=10, column=0, columnspan=7, pady=5, sticky="w")
+        self.observaciones_novedades_text = scrolledtext.ScrolledText(self.form_frame, wrap=tk.WORD, height=12,width=180)
+        self.observaciones_novedades_text.grid(row=10, column=0, columnspan=7, pady=5, sticky="w")
 
         # Botón de Guardar Datos en el formulario
         ttk.Button(self.form_frame, text="Guardar Novedad", command=self.guardar_datos_novedades).grid(row=11, column=3, columnspan=2, pady=10)
@@ -888,8 +920,8 @@ class FormularioExcelApp:
 
         # Nivel 7: Observaciones
         ttk.Label(self.form_cambios_frame, text="Observaciones").grid(row=13, column=0, sticky="w")
-        self.observaciones_text = scrolledtext.ScrolledText(self.form_cambios_frame, wrap=tk.WORD, height=1,width=170)
-        self.observaciones_text.grid(row=14, column=0, columnspan=7, pady=5, sticky="w")
+        self.observaciones_cambios_text = scrolledtext.ScrolledText(self.form_cambios_frame, wrap=tk.WORD, height=1,width=170)
+        self.observaciones_cambios_text.grid(row=14, column=0, columnspan=7, pady=5, sticky="w")
 
         # Botón de Guardar Datos en el formulario
         ttk.Button(self.form_cambios_frame, text="Guardar cambio de turno", command=self.guardar_datos_cambios).grid(row=15, column=2, columnspan=2, pady=10)
@@ -1053,7 +1085,9 @@ class FormularioExcelApp:
     def obtener_nuevo_id_con_sincronizacion(self, nombre_hoja):
         hoja_local = self.wb[nombre_hoja]
         ultimo_id_local = self.obtener_ultimo_id(hoja_local)
-        self.cargar_excel(solo_si_cambio=True)
+        recarga_ok = self.cargar_excel(solo_si_cambio=True)
+        if recarga_ok is False and self.obtener_mtime_excel() != self.excel_last_mtime:
+            raise RuntimeError("No se pudo sincronizar el archivo antes de guardar. Intente nuevamente.")
         hoja_actualizada = self.wb[nombre_hoja]
         ultimo_id_actual = self.obtener_ultimo_id(hoja_actualizada)
 
@@ -1068,7 +1102,7 @@ class FormularioExcelApp:
         # self.cargar_excel()
         self.fecha_inicio_novedad_var.set(self.fecha_inicio_novedad_entry.entry.get())
         self.fecha_fin_novedad_var.set(self.fecha_fin_novedad_entry.entry.get())
-        self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
+        self.observaciones_var.set(self.observaciones_novedades_text.get("1.0", "end-1c"))
         
         if self.validar_campos_requeridos_novedades():
             # Aquí guarda los datos si todo está bien
@@ -1077,6 +1111,8 @@ class FormularioExcelApp:
             try:
                 new_id = self.obtener_nuevo_id_con_sincronizacion("NOVEDADES")
                 current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
+                usuario_windows = self.obtener_usuario_windows()
+                col_usuario = self.asegurar_columna_usuario(self.sheet_novedades)
 
                 # Añadir los nuevos datos a la hoja
                 self.sheet_novedades.insert_rows(2)
@@ -1094,6 +1130,7 @@ class FormularioExcelApp:
                 self.sheet_novedades['L2'] = self.referencia_estacion_var.get()
                 self.sheet_novedades['M2'] = self.supervisor_var.get()
                 self.sheet_novedades['N2'] = self.observaciones_var.get()
+                self.sheet_novedades.cell(row=2, column=col_usuario, value=usuario_windows)
                 
                 # Guardar el archivo Excel
                 self.wb.save(self.excel_file)
@@ -1121,7 +1158,7 @@ class FormularioExcelApp:
         """Guardar los datos del formulario en el archivo Excel"""
         # self.cargar_excel()
         self.fecha_cambio_turno_var.set(self.fecha_cambio_turno_entry.entry.get())
-        self.observaciones_var.set(self.observaciones_text.get("1.0", "end-1c"))
+        self.observaciones_var.set(self.observaciones_cambios_text.get("1.0", "end-1c"))
         
         if self.validar_campos_requeridos_cambios():
             # Aquí guarda los datos si todo está bien
@@ -1130,6 +1167,8 @@ class FormularioExcelApp:
             try:
                 new_id = self.obtener_nuevo_id_con_sincronizacion("Cambio de Turnos")
                 current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
+                usuario_windows = self.obtener_usuario_windows()
+                col_usuario = self.asegurar_columna_usuario(self.sheet_cambio_turnos)
 
                 # Añadir los nuevos datos a la hoja
                 self.sheet_cambio_turnos.insert_rows(2)
@@ -1151,6 +1190,7 @@ class FormularioExcelApp:
                 self.sheet_cambio_turnos['P2'] = self.referencia_estacion_var.get()
                 self.sheet_cambio_turnos['Q2'] = self.supervisor_var.get()
                 self.sheet_cambio_turnos['R2'] = self.observaciones_var.get()
+                self.sheet_cambio_turnos.cell(row=2, column=col_usuario, value=usuario_windows)
 
                 # Guardar el archivo Excel
                 self.wb.save(self.excel_file)
@@ -1186,9 +1226,12 @@ class FormularioExcelApp:
         self.referencia_estacion_var.set('')
         self.supervisor_var.set('')
         self.observaciones_var.set('')
-        self.observaciones_text.delete("1.0", "end")
+        if hasattr(self, "observaciones_novedades_text"):
+            self.observaciones_novedades_text.delete("1.0", "end")
         if hasattr(self, "fecha_fin_novedad_entry"):
             self.fecha_fin_novedad_entry.entry.delete(0, tk.END)
+        if self.error_novedades_label is not None:
+            self.error_novedades_label.config(text="")
 
     def limpiar_fecha_fin_novedad(self):
         if hasattr(self, "fecha_fin_novedad_entry"):
@@ -1213,7 +1256,10 @@ class FormularioExcelApp:
         self.referencia_estacion_var.set('')
         self.supervisor_var.set('')
         self.observaciones_var.set('') 
-        self.observaciones_text.delete("1.0", "end")
+        if hasattr(self, "observaciones_cambios_text"):
+            self.observaciones_cambios_text.delete("1.0", "end")
+        if self.error_cambios_label is not None:
+            self.error_cambios_label.config(text="")
 
     def parsear_fecha(self, valor, nombre_campo, obligatorio=False):
         valor = str(valor or "").strip()
@@ -1293,13 +1339,17 @@ class FormularioExcelApp:
             return True
     def mostrar_error_novedades(self, mensaje):
         """Mostrar mensaje de error."""
-        error_label = ttk.Label(self.form_frame, text=mensaje, foreground="red")
-        error_label.grid(row=11, column=0, columnspan=7, pady=5, sticky="w")
+        if self.error_novedades_label is None:
+            self.error_novedades_label = ttk.Label(self.form_frame, foreground="red")
+            self.error_novedades_label.grid(row=11, column=0, columnspan=7, pady=5, sticky="w")
+        self.error_novedades_label.config(text=mensaje)
     
     def mostrar_error_cambios(self, mensaje):
         """Mostrar mensaje de error."""
-        error_label = ttk.Label(self.form_cambios_frame, text=mensaje, foreground="red")
-        error_label.grid(row=15, column=0, columnspan=7, pady=5, sticky="w")
+        if self.error_cambios_label is None:
+            self.error_cambios_label = ttk.Label(self.form_cambios_frame, foreground="red")
+            self.error_cambios_label.grid(row=15, column=0, columnspan=7, pady=5, sticky="w")
+        self.error_cambios_label.config(text=mensaje)
 
 # Crear la ventana principal de Tkinter
 if __name__ == "__main__":
