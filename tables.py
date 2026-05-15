@@ -6,13 +6,55 @@ from tkinter.scrolledtext import ScrolledText
 
 
 class TablesManager:
-    """Gestor de tablas, filtrado y modales de detalle."""
+    """Gestor de tablas, filtrado y modales de detalle.
+    
+    Maneja la creación de tablas Treeview para novedades y cambios de turnos,
+    filtrado con debounce (250ms) por nombre/dotación, carga de datos desde Excel,
+    modales de detalle (vista de registros), y actualización de contadores.
+    
+    Attributes:
+        app: Referencia a la aplicación FormularioExcelApp con acceso a
+             sheet_novedades, sheet_cambio_turnos, etc.
+    
+    Methods:
+        crear_tabla_novedades(): Crea Treeview para hoja NOVEDADES.
+        crear_tabla_cambios(): Crea Treeview para hoja Cambio de Turnos.
+        cargar_datos_completos_novedades(): Carga datos sin filtros.
+        cargar_datos_completos_cambios(): Carga datos sin filtros.
+        filtrar_datos_novedades(nombre_filtro, dotacion_filtro): Filtra por criterios.
+        filtrar_datos_cambios(nombre_filtro, dotacion_filtro): Filtra por criterios.
+        mostrar_modal_detalle(novedad, columnas, vista): Muestra detalles de un registro.
+        actualizar_tabla(): Recarga datos (llamado cada 60s).
+    """
     
     def __init__(self, app):
+        """Inicializa el gestor de tablas.
+        
+        Args:
+            app: Instancia de FormularioExcelApp con acceso a workbook, sheets, etc.
+        """
         self.app = app
     
     def actualizar_contador_resultados(self, label, cantidad, sufijo=""):
-        """Actualiza la etiqueta de cantidad de resultados."""
+        """Actualiza la etiqueta de cantidad de resultados.
+        
+        Modifica el texto de un ttk.Label para mostrar cantidad de resultados
+        con pluralización correcta (ej. "1 resultado" vs "3 resultados").
+        
+        Args:
+            label: ttk.Label a actualizar con el texto del contador.
+            cantidad: Número de resultados a mostrar.
+            sufijo: Texto adicional a agregar al final (default="").
+        
+        Returns:
+            None (Modifica label.config()).
+        
+        Example:
+            >>> actualizar_contador_resultados(label, 5)
+            # Label ahora muestra "5 resultados"
+            >>> actualizar_contador_resultados(label, 1, " - Filtrado")
+            # Label ahora muestra "1 resultado - Filtrado"
+        """
         if cantidad == 1:
             texto = "1 resultado"
         else:
@@ -20,7 +62,27 @@ class TablesManager:
         label.config(text=f"{texto}{sufijo}")
     
     def mostrar_modal_detalle(self, novedad, columnas, vista):
-        """Muestra un modal con los detalles de un registro."""
+        """Muestra un modal con los detalles de un registro.
+        
+        Crea un modal (Toplevel) que presenta todos los campos de una novedad
+        o cambio de turno. El campo "Observaciones" se muestra como ScrolledText
+        de lectura (read-only), otros campos como Labels.
+        
+        Args:
+            novedad: Tupla o lista con valores del registro (en orden de columnas).
+            columnas: Lista de nombres de columnas. Ejemplo: ["ID", "Fecha", ..., "Observaciones"].
+            vista: Tipo de registro ("novedad" o "cambio" - usado para título y tamaño modal).
+        
+        Returns:
+            None (Crea y muestra modal).
+        
+        Example:
+            >>> mostrar_modal_detalle(
+            ...     ("1", "15/06/2025", "...", "Licencia aprobada"),
+            ...     ["ID", "Fecha", ..., "Observaciones"],
+            ...     "novedad"
+            ... )
+        """
         modal = tk.Toplevel(self.app.root)
         modal.title(f"Detalle de {vista}")
         if vista == "novedad":
@@ -51,7 +113,19 @@ class TablesManager:
         )
     
     def cargar_datos_completos_novedades(self):
-        """Carga todos los datos de novedades en la tabla."""
+        """Carga todos los datos de novedades en la tabla sin filtros.
+        
+        Lee todas las filas (desde row 2 en adelante) de la hoja NOVEDADES,
+        normaliza valores None a "-", inserta en Treeview, y actualiza contador.
+        
+        Returns:
+            None (Modifica tabla_novedades y resultados_novedades_label).
+        
+        Side Effects:
+            - Limpia tabla_novedades
+            - Inserta filas desde sheet_novedades
+            - Actualiza contador de resultados
+        """
         try:
             self.app.tabla_novedades.delete(*self.app.tabla_novedades.get_children())
             total = 0
@@ -69,7 +143,19 @@ class TablesManager:
             print(f"Error al cargar los datos en el Treeview: {e}")
 
     def cargar_datos_completos_cambios(self):
-        """Carga todos los datos de cambios de turnos en la tabla."""
+        """Carga todos los datos de cambios de turnos en la tabla sin filtros.
+        
+        Lee todas las filas (desde row 2 en adelante) de la hoja Cambio de Turnos,
+        normaliza valores None a "-", inserta en Treeview, y actualiza contador.
+        
+        Returns:
+            None (Modifica table_cambios y resultados_cambios_label).
+        
+        Side Effects:
+            - Limpia table_cambios
+            - Inserta filas desde sheet_cambio_turnos
+            - Actualiza contador de resultados
+        """
         try:
             self.app.table_cambios.delete(*self.app.table_cambios.get_children())
             total = 0
@@ -87,7 +173,29 @@ class TablesManager:
             print(f"Error al cargar los datos en el Treeview: {e}")
     
     def filtrar_datos_novedades(self, nombre_filtro, dotacion_filtro):
-        """Filtra los datos de novedades según nombre y dotación."""
+        """Filtra los datos de novedades según nombre y dotación.
+        
+        Busca coincidencias en la columna Apellidos y Nombres (índice 3) y
+        Dotación (índice 5). Utiliza búsqueda case-insensitive y sin acentos
+        (normalización unicode). Si ambos filtros están en valores por defecto,
+        carga datos completos.
+        
+        Args:
+            nombre_filtro: Cadena de búsqueda por apellido/nombre.
+            dotacion_filtro: Dotación a filtrar ("Todas" = sin filtro).
+        
+        Returns:
+            None (Modifica tabla_novedades).
+        
+        Side Effects:
+            - Limpia tabla_novedades
+            - Inserta filas filtradas desde sheet_novedades
+            - Actualiza contador de resultados
+        
+        Example:
+            >>> filtrar_datos_novedades("García", "A")
+            # Muestra solo novedades de empleados con "García" y dotación "A"
+        """
         try:
             if dotacion_filtro == "Todas" and nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
                 self.cargar_datos_completos_novedades()
@@ -124,7 +232,18 @@ class TablesManager:
             print(f"Error al filtrar los datos en el Treeview novedades: {e}")
 
     def programar_filtrado_novedades(self):
-        """Programa el filtrado de novedades con debounce de 250ms."""
+        """Programa el filtrado de novedades con debounce de 250ms.
+        
+        Cancela cualquier filtrado pendiente y agenda uno nuevo con delay 250ms.
+        Esto evita filtrar a cada pulsación de tecla, mejorando rendimiento.
+        
+        Returns:
+            None (Modifica app.filtro_after_novedades).
+        
+        Side Effects:
+            - Cancela task anterior si existe
+            - Programa nueva tarea en root.after()
+        """
         if self.app.filtro_after_novedades:
             self.app.root.after_cancel(self.app.filtro_after_novedades)
         self.app.filtro_after_novedades = self.app.root.after(
@@ -136,7 +255,28 @@ class TablesManager:
         )
 
     def filtrar_datos_cambios(self, nombre_filtro, dotacion_filtro):
-        """Filtra los datos de cambios de turnos según nombre y dotación."""
+        """Filtra los datos de cambios de turnos según nombre y dotación.
+        
+        Busca coincidencias en cualquiera de los dos empleados (apellidos índices 3 y 9).
+        Utiliza búsqueda case-insensitive y sin acentos (normalización unicode).
+        Si ambos filtros están en valores por defecto, carga datos completos.
+        
+        Args:
+            nombre_filtro: Cadena de búsqueda por apellido/nombre de empleados.
+            dotacion_filtro: Dotación a filtrar ("Todas" = sin filtro).
+        
+        Returns:
+            None (Modifica table_cambios).
+        
+        Side Effects:
+            - Limpia table_cambios
+            - Inserta filas filtradas desde sheet_cambio_turnos
+            - Actualiza contador de resultados
+        
+        Example:
+            >>> filtrar_datos_cambios("García", "A")
+            # Muestra solo cambios donde García está en cualquier empleado y dotación es "A"
+        """
         try:
             if dotacion_filtro == "Todas" and nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
                 self.cargar_datos_completos_cambios()

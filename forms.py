@@ -8,13 +8,58 @@ import validators
 
 
 class FormsManager:
-    """Gestor de formularios, guardado de datos y búsqueda de legajos."""
+    """Gestor de formularios, guardado de datos y búsqueda de legajos.
+    
+    Maneja la presentación de formularios de novedades y cambios de turnos,
+    búsqueda de personal por legajo (con modal filtrable), validación,
+    guardado en Excel y manejo de errores.
+    
+    Attributes:
+        app: Referencia a la aplicación FormularioExcelApp que contiene
+             ui, excel_store, base_rows, base_index, etc.
+    
+    Methods:
+        mostrar_modal(boton): Muestra modal para seleccionar legajo.
+        buscar_legajo(campo): Abre modal de búsqueda en campo específico.
+        mostrar_formulario_novedades(): Crea y muestra formulario de novedades.
+        mostrar_formulario_cambios(): Crea y muestra formulario de cambios de turnos.
+        guardar_datos_novedades(): Valida y guarda novedad en Excel.
+        guardar_datos_cambios(): Valida y guarda cambio de turno en Excel.
+        limpiar_formulario_novedades(): Limpia campos del formulario de novedades.
+        limpiar_formulario_cambios(): Limpia campos del formulario de cambios.
+        mostrar_error_novedades(mensaje): Muestra messagebox de error.
+        mostrar_error_cambios(mensaje): Muestra messagebox de error.
+    """
     
     def __init__(self, app):
+        """Inicializa el gestor de formularios.
+        
+        Args:
+            app: Instancia de FormularioExcelApp con acceso a root, base_rows, etc.
+        """
         self.app = app
     
     def mostrar_modal(self, boton=1):
-        """Muestra un modal para seleccionar personal por legajo."""
+        """Muestra un modal para seleccionar personal por legajo.
+        
+        Presenta un árbol filtrable con todos los empleados de la base (legajo,
+        apellidos, especialidad, dotación, turnos, franco). Permite búsqueda por
+        apellido/nombre/legajo con filtro debounced (250ms). Al hacer doble clic,
+        rellena los campos del formulario activo (novedades o cambios).
+        
+        Args:
+            boton: Identificador del campo de destino (1=Legajo 1, 2=Legajo 2).
+        
+        Returns:
+            None (Modifica campos de la aplicación al seleccionar).
+        
+        Raises:
+            (No levanta excepciones; errores de datos manejados silenciosamente).
+        
+        Example:
+            >>> self.mostrar_modal(boton=1)
+            # Muestra modal y llena Legajo 1 al seleccionar
+        """
         modal = tk.Toplevel(self.app.root)
         modal.title("Seleccionar Legajo")
         modal.geometry("1250x500")
@@ -115,7 +160,20 @@ class FormsManager:
         tk.Button(modal, text="Cerrar", command=modal.destroy).grid(row=2, column=0, columnspan=2, pady=10)
 
     def buscar_legajo(self, campo=1):
-        """Busca un legajo en BASE y autocompleta los campos del formulario."""
+        """Busca un legajo en BASE y autocompleta los campos del formulario.
+        
+        Busca el legajo en el índice en memoria (base_index), y si existe,
+        rellena automáticamente apellido, especialidad, dotación, turnos y franco.
+        
+        Args:
+            campo: Campo a completar (1=Legajo 1, 2=Legajo 2 en cambios de turno).
+        
+        Returns:
+            None (Modifica StringVars de la aplicación).
+        
+        Raises:
+            ValueError: Si el legajo no es un número válido (mostrado en messagebox).
+        """
         try:
             if campo == 1:
                 legajo = int(self.app.legajo_var.get().strip())
@@ -197,7 +255,25 @@ class FormsManager:
             self.app.error_cambios_label.config(text="")
 
     def guardar_datos_novedades(self):
-        """Valida y guarda una novedad en el Excel."""
+        """Valida y guarda una novedad en el Excel.
+        
+        Ejecuta validación mediante validators.validar_campos_requeridos_novedades(),
+        genera un ID único, captura timestamp y usuario Windows, inserta fila en
+        NOVEDADES (posición 2, latest-first), y guarda workbook. Si hay error
+        de permisos (archivo abierto), muestra messagebox de error.
+        
+        Returns:
+            None (Modifica Excel, limpia formulario, muestra messagebox).
+        
+        Raises:
+            PermissionError: (Capturado internamente si Excel está abierto).
+        
+        Side Effects:
+            - Inserta fila en sheet_novedades en posición 2
+            - Guarda workbook en disco
+            - Limpia formulario y recarga vistas de datos
+            - Muestra messagebox de éxito o error
+        """
         self.app.fecha_inicio_novedad_var.set(self.app.fecha_inicio_novedad_entry.entry.get())
         self.app.fecha_fin_novedad_var.set(self.app.fecha_fin_novedad_entry.entry.get())
         self.app.observaciones_var.set(self.app.observaciones_novedades_text.get("1.0", "end-1c"))
@@ -231,7 +307,8 @@ class FormsManager:
                 self.app.sheet_novedades['L2'] = self.app.referencia_estacion_var.get()
                 self.app.sheet_novedades['M2'] = self.app.supervisor_var.get()
                 self.app.sheet_novedades['N2'] = self.app.observaciones_var.get()
-                self.app.sheet_novedades.cell(row=2, column=col_usuario, value=usuario_windows)
+                self.app.sheet_novedades['O2'] = usuario_windows
+                # self.app.sheet_novedades.cell(row=2, column=col_usuario, value=usuario_windows)
                 
                 self.app.wb.save(self.app.excel_file)
                 self.app.excel_last_mtime = self.app.obtener_mtime_excel()
@@ -251,7 +328,25 @@ class FormsManager:
             self.mostrar_error_novedades(mensaje_error)
 
     def guardar_datos_cambios(self):
-        """Valida y guarda un cambio de turno en el Excel."""
+        """Valida y guarda un cambio de turno en el Excel.
+        
+        Ejecuta validación mediante validators.validar_campos_requeridos_cambios(),
+        genera un ID único, captura timestamp y usuario Windows, inserta fila en
+        Cambio de Turnos (posición 2, latest-first), y guarda workbook. Si hay error
+        de permisos (archivo abierto), muestra messagebox de error.
+        
+        Returns:
+            None (Modifica Excel, limpia formulario, muestra messagebox).
+        
+        Raises:
+            PermissionError: (Capturado internamente si Excel está abierto).
+        
+        Side Effects:
+            - Inserta fila en sheet_cambio_turnos en posición 2
+            - Guarda workbook en disco
+            - Limpia formulario y recarga vistas de datos
+            - Muestra messagebox de éxito o error
+        """
         self.app.fecha_cambio_turno_var.set(self.app.fecha_cambio_turno_entry.entry.get())
         self.app.observaciones_var.set(self.app.observaciones_cambios_text.get("1.0", "end-1c"))
         
@@ -287,7 +382,7 @@ class FormsManager:
                 self.app.sheet_cambio_turnos['P2'] = self.app.referencia_estacion_var.get()
                 self.app.sheet_cambio_turnos['Q2'] = self.app.supervisor_var.get()
                 self.app.sheet_cambio_turnos['R2'] = self.app.observaciones_var.get()
-                self.app.sheet_cambio_turnos.cell(row=2, column=col_usuario, value=usuario_windows)
+                self.app.sheet_cambio_turnos['S2'] = usuario_windows
 
                 self.app.wb.save(self.app.excel_file)
                 self.app.excel_last_mtime = self.app.obtener_mtime_excel()
