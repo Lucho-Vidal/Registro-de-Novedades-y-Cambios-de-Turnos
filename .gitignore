@@ -1,4 +1,7 @@
 *.xlsx
+*.sqlite
+*.sqlite.lock
 main.spec
 build/
 *.docx
+__pycache__/
