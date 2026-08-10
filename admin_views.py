@@ -232,14 +232,14 @@ class AdminViews:
 
         def refresh():
             tree.delete(*tree.get_children())
-            for row in self.service.listar_dotaciones():
+            for row in self.app.records_service.listar_dotaciones():
                 tree.insert("", "end", values=(row[0], row[1], "Sí" if row[2] else "No"))
 
         def add():
             name = simpledialog.askstring("Dotación", "Nombre:", parent=window)
             if name:
                 try:
-                    self.service.crear_dotacion(name, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.records_service.crear_dotacion(name, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
                     self.app.cargarDotaciones()
                     refresh()
                 except Exception as error:
@@ -253,7 +253,7 @@ class AdminViews:
             name = simpledialog.askstring("Dotación", "Nombre:", initialvalue=values[1], parent=window)
             if name:
                 try:
-                    self.service.actualizar_dotacion(int(values[0]), name, values[2] == "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.records_service.actualizar_dotacion(int(values[0]), name, values[2] == "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
                     self.app.cargarDotaciones()
                     refresh()
                 except Exception as error:
@@ -265,7 +265,7 @@ class AdminViews:
                 return
             values = tree.item(selection[0], "values")
             try:
-                self.service.actualizar_dotacion(int(values[0]), values[1], values[2] != "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                self.app.records_service.actualizar_dotacion(int(values[0]), values[1], values[2] != "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
                 self.app.cargarDotaciones()
                 refresh()
             except Exception as error:
