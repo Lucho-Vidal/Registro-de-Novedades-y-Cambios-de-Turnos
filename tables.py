@@ -1,7 +1,7 @@
 """Lógica de tablas, filtrado y vistas de datos."""
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 
@@ -60,6 +60,28 @@ class TablesManager:
         else:
             texto = f"{cantidad} resultados"
         label.config(text=f"{texto}{sufijo}")
+
+    def ajustar_ancho_columnas(self, tree):
+        """Ajusta cada columna al contenido visible sin repartirlas por igual.
+
+        Se aplica después de cargar o filtrar una tabla. Se mantienen límites
+        razonables para que un texto extenso no vuelva inutilizable la vista;
+        las columnas se pueden recorrer con la barra horizontal.
+        """
+        columnas = list(tree["columns"])
+        for indice, columna in enumerate(columnas):
+            encabezado = str(tree.heading(columna, "text") or columna)
+            maximo = len(encabezado)
+            for item in tree.get_children(""):
+                valores = tree.item(item, "values")
+                if indice < len(valores):
+                    maximo = max(maximo, len(str(valores[indice] or "")))
+
+            # Aproximación de píxeles basada en el ancho medio de los caracteres.
+            ancho = max(45, min(320, maximo * 7 + 24))
+            if columna.strip().upper() == "ID":
+                ancho = min(ancho, 65)
+            tree.column(columna, width=ancho, minwidth=35, stretch=False)
     
     def mostrar_modal_detalle(self, novedad, columnas, vista):
         """Muestra un modal con los detalles de un registro.
@@ -85,12 +107,12 @@ class TablesManager:
         """
         modal = tk.Toplevel(self.app.root)
         modal.title(f"Detalle de {vista}")
+        modal.configure(background=self.app.ui_background)
         if vista == "novedad":
-            modal.geometry("560x500")
-            rowButtonCerrar = 15
+            modal.geometry("620x650")
         else:
-            modal.geometry("600x600")
-            rowButtonCerrar = 20
+            modal.geometry("700x780")
+        row_button = len(columnas) + 1
         
         ttk.Label(modal, text=f"Detalle de {vista}", font=("Helvetica", 22, "bold")).grid(
             row=0, column=0, columnspan=2, pady=10, padx=10, sticky="we"
@@ -104,13 +126,100 @@ class TablesManager:
                 text_area = ScrolledText(modal, wrap=tk.WORD, height=5, width=60)
                 text_area.insert("1.0", valor)
                 text_area.config(state="disabled")
+                text_area.configure(
+                    background=self.app.ui_background,
+                    foreground=self.app.ui_foreground,
+                    insertbackground=self.app.ui_foreground,
+                )
                 text_area.grid(row=idx, column=1, pady=2, padx=10, sticky="w")
             else:
                 ttk.Label(modal, text=valor).grid(row=idx, column=1, pady=2, padx=10, sticky="w")
         
-        tk.Button(modal, text="Cerrar", command=modal.destroy).grid(
-            row=rowButtonCerrar, column=0, columnspan=2, pady=10, padx=10
+        ttk.Button(modal, text="Cerrar", command=modal.destroy).grid(
+            row=row_button, column=0, pady=10, padx=10
         )
+        if vista == "novedad" and self.app.tiene_permiso("novedades.editar"):
+            ttk.Button(modal, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "novedad"))).grid(
+                row=row_button, column=1, pady=10, padx=10
+            )
+        elif vista != "novedad" and self.app.tiene_permiso("cambios_turno.editar"):
+            ttk.Button(modal, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "cambio"))).grid(
+                row=row_button, column=1, pady=10, padx=10
+            )
+
+    def mostrar_editor(self, record_id, record_type):
+        """Edita un registro y registra el antes/después en auditoría."""
+        if record_type == "novedad":
+            row = self.app.records_service.obtener_novedad(record_id)
+            fields = [
+                ("legajo", "Legajo"), ("apellidos_nombres", "Apellidos y nombres"),
+                ("especialidad", "Especialidad"), ("dotacion", "Dotación"), ("turnos", "Turnos"),
+                ("franco", "Franco"), ("novedad", "Tipo de novedad"), ("fecha_inicio", "Fecha inicio"),
+                ("fecha_fin", "Fecha fin"), ("referencia_estacion", "Referencia estación"),
+                ("supervisor", "Supervisor"), ("observaciones", "Observaciones"),
+            ]
+        else:
+            row = self.app.records_service.obtener_cambio(record_id)
+            fields = [
+                ("legajo_1", "Legajo 1"), ("apellidos_nombres_1", "Apellidos y nombres 1"),
+                ("especialidad_1", "Especialidad 1"), ("dotacion_1", "Dotación 1"),
+                ("turnos_1", "Turnos 1"), ("franco_1", "Franco 1"), ("legajo_2", "Legajo 2"),
+                ("apellidos_nombres_2", "Apellidos y nombres 2"), ("especialidad_2", "Especialidad 2"),
+                ("dotacion_2", "Dotación 2"), ("turnos_2", "Turnos 2"), ("franco_2", "Franco 2"),
+                ("fecha_cambio", "Fecha cambio"), ("referencia_estacion", "Referencia estación"),
+                ("supervisor", "Supervisor"), ("observaciones", "Observaciones"),
+            ]
+        if not row:
+            messagebox.showerror("Edición", "El registro ya no existe.", parent=self.app.root)
+            return
+        window = tk.Toplevel(self.app.root)
+        window.title("Editar registro")
+        window.geometry("720x680")
+        self.app.aplicar_tema_ventana(window)
+        variables = {}
+        widgets = {}
+        for index, (field, label) in enumerate(fields):
+            ttk.Label(window, text=label).grid(row=index, column=0, sticky="w", padx=12, pady=4)
+            value = "" if row[field] is None else str(row[field])
+            variable = tk.StringVar(value=value)
+            variables[field] = variable
+            if field == "novedad":
+                widget = ttk.Combobox(window, textvariable=variable, values=self.app.tipo_novedades, width=42)
+            elif field == "observaciones":
+                widget = tk.Text(window, height=4, width=48)
+                widget.insert("1.0", value)
+            else:
+                widget = ttk.Entry(window, textvariable=variable, width=45)
+            widget.grid(row=index, column=1, sticky="ew", padx=12, pady=4)
+            widgets[field] = widget
+
+        def save():
+            data = {}
+            for field, _label in fields:
+                if field == "observaciones":
+                    data[field] = widgets[field].get("1.0", "end-1c")
+                else:
+                    data[field] = variables[field].get().strip()
+            for field in ("legajo", "legajo_1", "legajo_2"):
+                if field in data:
+                    try:
+                        data[field] = int(data[field])
+                    except ValueError:
+                        messagebox.showerror("Edición", f"{field} debe ser numérico.", parent=window)
+                        return
+            try:
+                if record_type == "novedad":
+                    self.app.records_service.actualizar_novedad(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.cargar_datos_completos_novedades()
+                else:
+                    self.app.records_service.actualizar_cambio(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.cargar_datos_completos_cambios()
+                window.destroy()
+            except Exception as error:
+                messagebox.showerror("Edición", str(error), parent=window)
+
+        ttk.Button(window, text="Guardar cambios", command=save).grid(row=len(fields), column=0, columnspan=2, pady=15)
+        self.app.aplicar_tema_ventana(window)
     
     def cargar_datos_completos_novedades(self):
         """Carga todos los datos de novedades en la tabla sin filtros.
@@ -137,6 +246,7 @@ class TablesManager:
             else:
                 print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
 
+            self.ajustar_ancho_columnas(self.app.tabla_novedades)
             if hasattr(self.app, "resultados_novedades_label"):
                 self.actualizar_contador_resultados(self.app.resultados_novedades_label, total)
         except Exception as e:
@@ -167,6 +277,7 @@ class TablesManager:
             else:
                 print("La hoja 'Cambio de Turnos' está vacía o no se pudo cargar.")
 
+            self.ajustar_ancho_columnas(self.app.table_cambios)
             if hasattr(self.app, "resultados_cambios_label"):
                 self.actualizar_contador_resultados(self.app.resultados_cambios_label, total)
         except Exception as e:
@@ -226,6 +337,7 @@ class TablesManager:
                             self.app.tabla_novedades.insert("", "end", values=fila_procesada)
                             total += 1
 
+            self.ajustar_ancho_columnas(self.app.tabla_novedades)
             if hasattr(self.app, "resultados_novedades_label"):
                 self.actualizar_contador_resultados(self.app.resultados_novedades_label, total)
         except Exception as e:
@@ -308,6 +420,7 @@ class TablesManager:
                             self.app.table_cambios.insert("", "end", values=fila_procesada)
                             total += 1
 
+            self.ajustar_ancho_columnas(self.app.table_cambios)
             if hasattr(self.app, "resultados_cambios_label"):
                 self.actualizar_contador_resultados(self.app.resultados_cambios_label, total)
         except Exception as e:
@@ -338,6 +451,7 @@ class TablesManager:
                 row_data = ["-" if celda is None else celda for celda in row]
                 self.app.tabla_novedades.insert("", "end", values=row_data)
                 total += 1
+            self.ajustar_ancho_columnas(self.app.tabla_novedades)
             if hasattr(self.app, "resultados_novedades_label"):
                 self.actualizar_contador_resultados(self.app.resultados_novedades_label, total)
         
@@ -353,6 +467,7 @@ class TablesManager:
                 row_data = ["-" if celda is None else celda for celda in row]
                 self.app.table_cambios.insert("", "end", values=row_data)
                 total += 1
+            self.ajustar_ancho_columnas(self.app.table_cambios)
             if hasattr(self.app, "resultados_cambios_label"):
                 self.actualizar_contador_resultados(self.app.resultados_cambios_label, total)
     
@@ -389,31 +504,35 @@ class TablesManager:
         ttk.Label(self.app.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(
             row=0, column=0, pady=10, padx=10, sticky="w"
         )
-        ttk.Button(
-            self.app.table_frame, text="Ver cambios de turno",
-            command=lambda: self.app.toggle_view("table_cambios")
-        ).grid(row=0, column=1, pady=10, padx=10, sticky="e")
+        if self.app.tiene_permiso("cambios_turno.ver"):
+            ttk.Button(
+                self.app.table_frame, text="Ver cambios de turno",
+                command=lambda: self.app.toggle_view("table_cambios")
+            ).grid(row=0, column=1, pady=10, padx=10, sticky="e")
         
         # Filtro nombre
         apellido_filter = tk.Entry(self.app.table_frame, textvariable=self.app.apellido_filter_novedades_var, font=("Helvetica", 10))
         apellido_filter.grid(row=0, column=2, sticky="e", pady=10, padx=10, ipady=5, ipadx=10)
         
         # Filtro dotación
-        dotacion_filter = ttk.Combobox(
+        self.app.dotacion_filter_novedades = ttk.Combobox(
             self.app.table_frame, textvariable=self.app.dotacion_filter_novedades_var,
-            values=self.app.DOTACIONES, width=10
+            values=self.app.DOTACIONES, width=10, state="normal"
         )
+        dotacion_filter = self.app.dotacion_filter_novedades
         dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
         
         self.app.resultados_novedades_label = ttk.Label(self.app.table_frame, text="0 resultados", font=("Helvetica", 9))
         self.app.resultados_novedades_label.grid(row=0, column=4, sticky="w", padx=8)
         
-        ttk.Button(self.app.table_frame, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).grid(
-            row=0, column=5, pady=10, padx=2, sticky="e"
-        )
-        ttk.Button(self.app.table_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
-            row=0, column=6, pady=10, padx=10, sticky="e"
-        )
+        if self.app.tiene_permiso("novedades.crear"):
+            ttk.Button(self.app.table_frame, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).grid(
+                row=0, column=5, pady=10, padx=2, sticky="e"
+            )
+        if self.app.tiene_permiso("cambios_turno.crear"):
+            ttk.Button(self.app.table_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
+                row=0, column=6, pady=10, padx=10, sticky="e"
+            )
 
         apellido_filter.insert(0, self.app.PLACEHOLDER_BUSCAR_NOMBRE)
         dotacion_filter.insert(0, "Todas")
@@ -442,7 +561,7 @@ class TablesManager:
         anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 120, 90, 120, 120, 120, 140, 120]
         for col, ancho in zip(columnas, anchuras):
             self.app.tabla_novedades.heading(col, text=col.capitalize())
-            self.app.tabla_novedades.column(col, width=ancho)
+            self.app.tabla_novedades.column(col, width=ancho, stretch=False)
 
         # Scrollbars
         scrollbar_vertical = ttk.Scrollbar(self.app.tree_frame, orient="vertical", command=self.app.tabla_novedades.yview)
@@ -492,31 +611,35 @@ class TablesManager:
         ttk.Label(self.app.table_cambios_frame, text="Registro de cambios de turnos", font=("Helvetica", 20, "bold")).grid(
             row=0, column=0, pady=10, padx=10, sticky="w"
         )
-        ttk.Button(
-            self.app.table_cambios_frame, text="Ver novedades",
-            command=lambda: self.app.toggle_view("table")
-        ).grid(row=0, column=1, pady=10, padx=1, sticky="e")
+        if self.app.tiene_permiso("novedades.ver"):
+            ttk.Button(
+                self.app.table_cambios_frame, text="Ver novedades",
+                command=lambda: self.app.toggle_view("table")
+            ).grid(row=0, column=1, pady=10, padx=1, sticky="e")
         
         # Filtro nombre
         apellido_filter = tk.Entry(self.app.table_cambios_frame, textvariable=self.app.apellido_filter_cambios_var, font=("Helvetica", 10))
         apellido_filter.grid(row=0, column=2, sticky="e", pady=10, padx=10, ipady=5, ipadx=10)
         
         # Filtro dotación
-        dotacion_filter = ttk.Combobox(
+        self.app.dotacion_filter_cambios = ttk.Combobox(
             self.app.table_cambios_frame, textvariable=self.app.dotacion_filter_cambios_var,
-            values=self.app.DOTACIONES, width=10
+            values=self.app.DOTACIONES, width=10, state="normal"
         )
+        dotacion_filter = self.app.dotacion_filter_cambios
         dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
         
         self.app.resultados_cambios_label = ttk.Label(self.app.table_cambios_frame, text="0 resultados", font=("Helvetica", 9))
         self.app.resultados_cambios_label.grid(row=0, column=4, sticky="w", padx=8)
         
-        ttk.Button(self.app.table_cambios_frame, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).grid(
-            row=0, column=5, pady=10, padx=1, sticky="e"
-        )
-        ttk.Button(self.app.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
-            row=0, column=6, pady=10, padx=1, sticky="e"
-        )
+        if self.app.tiene_permiso("novedades.crear"):
+            ttk.Button(self.app.table_cambios_frame, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).grid(
+                row=0, column=5, pady=10, padx=1, sticky="e"
+            )
+        if self.app.tiene_permiso("cambios_turno.crear"):
+            ttk.Button(self.app.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
+                row=0, column=6, pady=10, padx=1, sticky="e"
+            )
 
         dotacion_filter.insert(0, "Todas")
         apellido_filter.insert(0, self.app.PLACEHOLDER_BUSCAR_NOMBRE)
@@ -541,7 +664,7 @@ class TablesManager:
         anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 60, 150, 150, 80, 60, 80, 120, 120, 120, 120, 140]
         for col, ancho in zip(columnas, anchuras):
             self.app.table_cambios.heading(col, text=col)
-            self.app.table_cambios.column(col, width=ancho, anchor='center', stretch=True)
+            self.app.table_cambios.column(col, width=ancho, anchor='center', stretch=False)
 
         # Scrollbars
         scrollbar_vertical = ttk.Scrollbar(self.app.tree_frame, orient="vertical", command=self.app.table_cambios.yview)

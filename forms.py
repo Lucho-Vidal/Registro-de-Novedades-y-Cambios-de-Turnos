@@ -5,6 +5,7 @@ from tkinter import ttk, messagebox, scrolledtext
 from ttkbootstrap import DateEntry
 from datetime import datetime, timedelta
 import validators
+from sqlite_store import DatabaseBusyError
 
 
 class FormsManager:
@@ -63,6 +64,7 @@ class FormsManager:
         modal = tk.Toplevel(self.app.root)
         modal.title("Seleccionar Legajo")
         modal.geometry("1250x500")
+        self.app.aplicar_tema_ventana(modal)
         modal.transient(self.app.root)
         modal.grab_set()
         modal.focus_set()
@@ -84,9 +86,9 @@ class FormsManager:
                 "legajo_norm": self.app.normalizar_texto(str(legajo)),
             })
         
-        tk.Label(modal, text="Filtrar por apellido o nombre:").grid(row=0, column=0, padx=10, pady=5)
+        ttk.Label(modal, text="Filtrar por apellido o nombre:").grid(row=0, column=0, padx=10, pady=5)
         apellido_filter_var = tk.StringVar()
-        apellido_filter = tk.Entry(modal, textvariable=apellido_filter_var)
+        apellido_filter = ttk.Entry(modal, textvariable=apellido_filter_var)
         apellido_filter.grid(row=0, column=1, padx=10, pady=5, ipady=5, ipadx=50)
         modal_resultados_label = ttk.Label(modal, text="0 resultados")
         modal_resultados_label.grid(row=0, column=2, padx=10, pady=5, sticky="w")
@@ -157,7 +159,7 @@ class FormsManager:
             modal.destroy()
 
         tree.bind("<Double-1>", on_double_click)
-        tk.Button(modal, text="Cerrar", command=modal.destroy).grid(row=2, column=0, columnspan=2, pady=10)
+        ttk.Button(modal, text="Cerrar", command=modal.destroy).grid(row=2, column=0, columnspan=2, pady=10)
 
     def buscar_legajo(self, campo=1):
         """Busca un legajo en BASE y autocompleta los campos del formulario.
@@ -255,152 +257,75 @@ class FormsManager:
             self.app.error_cambios_label.config(text="")
 
     def guardar_datos_novedades(self):
-        """Valida y guarda una novedad en el Excel.
-        
-        Ejecuta validación mediante validators.validar_campos_requeridos_novedades(),
-        genera un ID único, captura timestamp y usuario Windows, inserta fila en
-        NOVEDADES (posición 2, latest-first), y guarda workbook. Si hay error
-        de permisos (archivo abierto), muestra messagebox de error.
-        
-        Returns:
-            None (Modifica Excel, limpia formulario, muestra messagebox).
-        
-        Raises:
-            PermissionError: (Capturado internamente si Excel está abierto).
-        
-        Side Effects:
-            - Inserta fila en sheet_novedades en posición 2
-            - Guarda workbook en disco
-            - Limpia formulario y recarga vistas de datos
-            - Muestra messagebox de éxito o error
-        """
         self.app.fecha_inicio_novedad_var.set(self.app.fecha_inicio_novedad_entry.entry.get())
         self.app.fecha_fin_novedad_var.set(self.app.fecha_fin_novedad_entry.entry.get())
         self.app.observaciones_var.set(self.app.observaciones_novedades_text.get("1.0", "end-1c"))
-        
         es_valido, mensaje_error = validators.validar_campos_requeridos_novedades(
             self.app.legajo_var, self.app.apellidos_nombres_var, self.app.novedad_var,
             self.app.referencia_estacion_var, self.app.supervisor_var,
             self.app.fecha_inicio_novedad_entry, self.app.fecha_fin_novedad_entry,
             self.app.tipo_novedades
         )
-        
-        if es_valido:
-            try:
-                new_id = self.app.obtener_nuevo_id_con_sincronizacion(self.app.SHEET_NOVEDADES)
-                current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
-                usuario_windows = self.app.obtener_usuario_windows()
-                col_usuario = self.app.asegurar_columna_usuario(self.app.sheet_novedades)
-
-                self.app.sheet_novedades.insert_rows(2)
-                self.app.sheet_novedades['A2'] = new_id
-                self.app.sheet_novedades['B2'] = current_datetime
-                self.app.sheet_novedades['C2'] = self.app.legajo_var.get()
-                self.app.sheet_novedades['D2'] = self.app.apellidos_nombres_var.get()
-                self.app.sheet_novedades['E2'] = self.app.especialidad_var.get()
-                self.app.sheet_novedades['F2'] = self.app.dotacion_var.get()
-                self.app.sheet_novedades['G2'] = self.app.turnos_var.get()
-                self.app.sheet_novedades['H2'] = self.app.franco_var.get()
-                self.app.sheet_novedades['I2'] = self.app.novedad_var.get()
-                self.app.sheet_novedades['J2'] = self.app.fecha_inicio_novedad_var.get()
-                self.app.sheet_novedades['K2'] = self.app.fecha_fin_novedad_var.get()
-                self.app.sheet_novedades['L2'] = self.app.referencia_estacion_var.get()
-                self.app.sheet_novedades['M2'] = self.app.supervisor_var.get()
-                self.app.sheet_novedades['N2'] = self.app.observaciones_var.get()
-                self.app.sheet_novedades['O2'] = usuario_windows
-                # self.app.sheet_novedades.cell(row=2, column=col_usuario, value=usuario_windows)
-                
-                self.app.wb.save(self.app.excel_file)
-                self.app.excel_last_mtime = self.app.obtener_mtime_excel()
-
-                messagebox.showinfo("Guardado", "Los datos han sido guardados correctamente.")
-
-                self.limpiar_formulario_novedades()
-                self.app.toggle_view()
-                print("Datos guardados correctamente.")
-            except PermissionError:
-                messagebox.showerror("Error", "No se pudo guardar el archivo porque está abierto en otro programa. Por favor, cierre el archivo y vuelva a intentarlo.")
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudieron guardar los datos: {str(e)} Por favor, intente de nuevo y si el problema persiste avise al administrador")
-                print(f"Error al guardar los datos: {e}")
-        else:
-            print("Algunos campos son obligatorios y están vacíos.")
+        if not es_valido:
             self.mostrar_error_novedades(mensaje_error)
-
+            return
+        try:
+            record_id = self.app.db_store.insert_novedad((
+                None, datetime.now().strftime("%d/%m/%Y %H:%M"), int(self.app.legajo_var.get().strip()),
+                self.app.apellidos_nombres_var.get(), self.app.especialidad_var.get(),
+                self.app.dotacion_var.get(), self.app.turnos_var.get(), self.app.franco_var.get(),
+                self.app.novedad_var.get(), self.app.fecha_inicio_novedad_var.get(),
+                self.app.fecha_fin_novedad_var.get() or None, self.app.referencia_estacion_var.get(),
+                self.app.supervisor_var.get(), self.app.observaciones_var.get(),
+                self.app.obtener_usuario_windows(), None,
+            ))
+            self.app.records_service.registrar_auditoria(
+                "crear", "novedad", record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                after={"novedad": self.app.novedad_var.get(), "legajo": self.app.legajo_var.get()},
+            )
+            messagebox.showinfo("Guardado", "Los datos han sido guardados correctamente.")
+            self.limpiar_formulario_novedades()
+            self.app.toggle_view()
+        except DatabaseBusyError as error:
+            messagebox.showerror("Base ocupada", str(error))
+        except Exception as error:
+            messagebox.showerror("Error", f"No se pudieron guardar los datos: {error}")
+        return
     def guardar_datos_cambios(self):
-        """Valida y guarda un cambio de turno en el Excel.
-        
-        Ejecuta validación mediante validators.validar_campos_requeridos_cambios(),
-        genera un ID único, captura timestamp y usuario Windows, inserta fila en
-        Cambio de Turnos (posición 2, latest-first), y guarda workbook. Si hay error
-        de permisos (archivo abierto), muestra messagebox de error.
-        
-        Returns:
-            None (Modifica Excel, limpia formulario, muestra messagebox).
-        
-        Raises:
-            PermissionError: (Capturado internamente si Excel está abierto).
-        
-        Side Effects:
-            - Inserta fila en sheet_cambio_turnos en posición 2
-            - Guarda workbook en disco
-            - Limpia formulario y recarga vistas de datos
-            - Muestra messagebox de éxito o error
-        """
         self.app.fecha_cambio_turno_var.set(self.app.fecha_cambio_turno_entry.entry.get())
         self.app.observaciones_var.set(self.app.observaciones_cambios_text.get("1.0", "end-1c"))
-        
         es_valido, mensaje_error = validators.validar_campos_requeridos_cambios(
             self.app.legajo_var, self.app.apellidos_nombres_var, self.app.legajo_2_var,
             self.app.apellidos_nombres_2_var, self.app.fecha_cambio_turno_entry,
             self.app.referencia_estacion_var, self.app.supervisor_var
         )
-        
-        if es_valido:
-            try:
-                new_id = self.app.obtener_nuevo_id_con_sincronizacion(self.app.SHEET_CAMBIO_TURNOS)
-                current_datetime = datetime.now().strftime("%d/%m/%Y %H:%M")
-                usuario_windows = self.app.obtener_usuario_windows()
-                col_usuario = self.app.asegurar_columna_usuario(self.app.sheet_cambio_turnos)
-
-                self.app.sheet_cambio_turnos.insert_rows(2)
-                self.app.sheet_cambio_turnos['A2'] = new_id
-                self.app.sheet_cambio_turnos['B2'] = current_datetime
-                self.app.sheet_cambio_turnos['C2'] = self.app.legajo_var.get()
-                self.app.sheet_cambio_turnos['D2'] = self.app.apellidos_nombres_var.get()
-                self.app.sheet_cambio_turnos['E2'] = self.app.especialidad_var.get()
-                self.app.sheet_cambio_turnos['F2'] = self.app.dotacion_var.get()
-                self.app.sheet_cambio_turnos['G2'] = self.app.turnos_var.get()
-                self.app.sheet_cambio_turnos['H2'] = self.app.franco_var.get()
-                self.app.sheet_cambio_turnos['I2'] = self.app.legajo_2_var.get()
-                self.app.sheet_cambio_turnos['J2'] = self.app.apellidos_nombres_2_var.get()
-                self.app.sheet_cambio_turnos['K2'] = self.app.especialidad_2_var.get()
-                self.app.sheet_cambio_turnos['L2'] = self.app.dotacion_2_var.get()
-                self.app.sheet_cambio_turnos['M2'] = self.app.turnos_2_var.get()
-                self.app.sheet_cambio_turnos['N2'] = self.app.franco_2_var.get()
-                self.app.sheet_cambio_turnos['O2'] = self.app.fecha_cambio_turno_var.get()
-                self.app.sheet_cambio_turnos['P2'] = self.app.referencia_estacion_var.get()
-                self.app.sheet_cambio_turnos['Q2'] = self.app.supervisor_var.get()
-                self.app.sheet_cambio_turnos['R2'] = self.app.observaciones_var.get()
-                self.app.sheet_cambio_turnos['S2'] = usuario_windows
-
-                self.app.wb.save(self.app.excel_file)
-                self.app.excel_last_mtime = self.app.obtener_mtime_excel()
-
-                messagebox.showinfo("Guardado", "Los datos han sido guardados correctamente.")
-
-                self.limpiar_formulario_cambios()
-                self.app.toggle_view("table_cambios")
-                print("Datos guardados correctamente.")
-            except PermissionError:
-                messagebox.showerror("Error", "No se pudo guardar el archivo porque está abierto en otro programa. Por favor, cierre el archivo y vuelva a intentarlo.")
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudieron guardar los datos: {str(e)} Por favor, intente de nuevo y si el problema persiste avise al administrador")
-                print(f"Error al guardar los datos: {e}")
-        else:
-            print("Algunos campos son obligatorios y están vacíos.")
+        if not es_valido:
             self.mostrar_error_cambios(mensaje_error)
-
+            return
+        try:
+            record_id = self.app.db_store.insert_cambio_turno((
+                None, datetime.now().strftime("%d/%m/%Y %H:%M"), int(self.app.legajo_var.get().strip()),
+                self.app.apellidos_nombres_var.get(), self.app.especialidad_var.get(),
+                self.app.dotacion_var.get(), self.app.turnos_var.get(), self.app.franco_var.get(),
+                int(self.app.legajo_2_var.get().strip()), self.app.apellidos_nombres_2_var.get(),
+                self.app.especialidad_2_var.get(), self.app.dotacion_2_var.get(),
+                self.app.turnos_2_var.get(), self.app.franco_2_var.get(),
+                self.app.fecha_cambio_turno_var.get(), self.app.referencia_estacion_var.get(),
+                self.app.supervisor_var.get(), self.app.observaciones_var.get(),
+                self.app.obtener_usuario_windows(), None,
+            ))
+            self.app.records_service.registrar_auditoria(
+                "crear", "cambio_turno", record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                after={"legajo_1": self.app.legajo_var.get(), "legajo_2": self.app.legajo_2_var.get()},
+            )
+            messagebox.showinfo("Guardado", "Los datos han sido guardados correctamente.")
+            self.limpiar_formulario_cambios()
+            self.app.toggle_view("table_cambios")
+        except DatabaseBusyError as error:
+            messagebox.showerror("Base ocupada", str(error))
+        except Exception as error:
+            messagebox.showerror("Error", f"No se pudieron guardar los datos: {error}")
+        return
     def mostrar_error_novedades(self, mensaje):
         """Muestra un mensaje de error en el formulario de novedades."""
         if self.app.error_novedades_label is None:
