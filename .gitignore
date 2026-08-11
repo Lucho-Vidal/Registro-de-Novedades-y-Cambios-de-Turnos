@@ -5,3 +5,8 @@ main.spec
 build/
 *.docx
 __pycache__/
+venv/
+.opencodeignore
+recomendacion.md
+theme
+path_base
