@@ -11,6 +11,8 @@ PERMISOS_BASE = (
     "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "excel.exportar",
     "usuarios.administrar", "roles.administrar", "empleados.importar", "auditoria.ver",
     "dotaciones.administrar",
+    "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
+    "destinatarios_informe.administrar", "sesion.configurar",
 )
 
 
@@ -27,8 +29,8 @@ class AdminViews:
         window.title("Administrar usuarios")
         window.geometry("760x430")
         self.app.aplicar_tema_ventana(window)
-        tree = ttk.Treeview(window, columns=("id", "usuario", "nombre", "activo", "roles"), show="headings")
-        for column, title, width in (("id", "ID", 50), ("usuario", "Usuario", 150), ("nombre", "Nombre", 190), ("activo", "Activo", 70), ("roles", "Roles", 260)):
+        tree = ttk.Treeview(window, columns=("id", "usuario", "nombre", "legajo", "activo", "roles"), show="headings")
+        for column, title, width in (("id", "ID", 50), ("usuario", "Usuario", 150), ("nombre", "Nombre", 190), ("legajo", "Legajo", 80), ("activo", "Activo", 70), ("roles", "Roles", 260)):
             tree.heading(column, text=title)
             tree.column(column, width=width)
         tree.pack(fill="both", expand=True, padx=10, pady=10)
@@ -40,18 +42,19 @@ class AdminViews:
         def refresh():
             tree.delete(*tree.get_children())
             for row in self.service.listar_usuarios():
-                tree.insert("", "end", values=(row[0], row[1], row[2], "Sí" if row[3] else "No", row[4]))
+                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "", "Sí" if row[4] else "No", row[5]))
 
         def new_user():
             username = simpledialog.askstring("Nuevo usuario", "Usuario:", parent=window)
             if not username:
                 return
             nombre = simpledialog.askstring("Nuevo usuario", "Nombre completo:", parent=window) or ""
+            legajo = simpledialog.askstring("Nuevo usuario", "Legajo:", parent=window) or ""
             password = simpledialog.askstring("Nuevo usuario", "Contraseña:", show="*", parent=window)
             if not password:
                 return
             try:
-                self.service.crear_usuario(username, password, nombre)
+                self.service.crear_usuario(username, password, nombre, int(legajo) if legajo else None)
                 refresh()
             except Exception as error:
                 messagebox.showerror("Usuarios", str(error), parent=window)
@@ -63,6 +66,21 @@ class AdminViews:
             password = simpledialog.askstring("Contraseña", "Nueva contraseña:", show="*", parent=window)
             if password:
                 self.service.cambiar_password(user_id, password)
+
+        def edit_user():
+            selection = tree.selection()
+            if not selection:
+                return
+            values = tree.item(selection[0], "values")
+            username = simpledialog.askstring("Usuario", "Usuario:", initialvalue=values[1], parent=window)
+            nombre = simpledialog.askstring("Usuario", "Nombre completo:", initialvalue=values[2], parent=window)
+            legajo = simpledialog.askstring("Usuario", "Legajo:", initialvalue=values[3], parent=window)
+            if username and nombre is not None and legajo is not None:
+                try:
+                    self.service.actualizar_usuario(int(values[0]), username, nombre, int(legajo) if legajo.strip() else None, values[4] == "Sí")
+                    refresh()
+                except Exception as error:
+                    messagebox.showerror("Usuarios", str(error), parent=window)
 
         def toggle_user():
             user_id = selected_id()
@@ -95,6 +113,7 @@ class AdminViews:
         buttons.pack(side="bottom", fill="x", padx=10, pady=8)
         ttk.Button(buttons, text="Nuevo usuario", command=new_user).pack(side="left", padx=3)
         ttk.Button(buttons, text="Cambiar contraseña", command=change_password).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Editar usuario", command=edit_user).pack(side="left", padx=3)
         ttk.Button(buttons, text="Asignar roles", command=assign_roles).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle_user).pack(side="left", padx=3)
         refresh()
@@ -277,6 +296,135 @@ class AdminViews:
         ttk.Button(buttons, text="Editar", command=edit).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle).pack(side="left", padx=3)
         refresh()
+
+    def mostrar_personal_estacion(self):
+        if not self.app.requerir_permiso("personalEstacion.ver"):
+            return
+        window = tk.Toplevel(self.app.root)
+        window.title("Personal de estación")
+        window.geometry("560x360")
+        self.app.aplicar_tema_ventana(window)
+        tree = ttk.Treeview(window, columns=("id", "nombre", "activo"), show="headings")
+        for column, title, width in (("id", "ID", 55), ("nombre", "Nombre", 350), ("activo", "Activo", 80)):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, stretch=column != "id")
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            for row in self.app.records_service.listar_personal_estacion(True):
+                tree.insert("", "end", values=(row[0], row[1], "Sí" if row[2] else "No"))
+
+        def add():
+            if not self.app.requerir_permiso("personalEstacion.crear"):
+                return
+            name = simpledialog.askstring("Personal de estación", "Nombre:", parent=window)
+            if name:
+                try:
+                    self.app.records_service.crear_personal_estacion(name, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.cargarPersonalEstacion()
+                    refresh()
+                except Exception as error:
+                    messagebox.showerror("Personal de estación", str(error), parent=window)
+
+        def toggle():
+            if not self.app.requerir_permiso("personalEstacion.editar"):
+                return
+            selection = tree.selection()
+            if not selection:
+                return
+            values = tree.item(selection[0], "values")
+            try:
+                self.app.records_service.actualizar_personal_estacion(int(values[0]), values[1], values[2] != "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                self.app.cargarPersonalEstacion()
+                refresh()
+            except Exception as error:
+                messagebox.showerror("Personal de estación", str(error), parent=window)
+
+        def edit():
+            if not self.app.requerir_permiso("personalEstacion.editar"):
+                return
+            selection = tree.selection()
+            if not selection:
+                return
+            values = tree.item(selection[0], "values")
+            name = simpledialog.askstring("Personal de estación", "Nombre:", initialvalue=values[1], parent=window)
+            if name:
+                try:
+                    self.app.records_service.actualizar_personal_estacion(int(values[0]), name, values[2] == "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.cargarPersonalEstacion()
+                    refresh()
+                except Exception as error:
+                    messagebox.showerror("Personal de estación", str(error), parent=window)
+
+        buttons = ttk.Frame(window)
+        buttons.pack(fill="x", padx=10, pady=5)
+        ttk.Button(buttons, text="Nuevo", command=add).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Editar", command=edit).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Activar / desactivar", command=toggle).pack(side="left", padx=3)
+        refresh()
+
+    def mostrar_destinatarios_informe(self):
+        if not self.app.requerir_permiso("destinatarios_informe.administrar"):
+            return
+        window = tk.Toplevel(self.app.root)
+        window.title("Destinatarios de informes")
+        window.geometry("720x380")
+        self.app.aplicar_tema_ventana(window)
+        tree = ttk.Treeview(window, columns=("id", "nombre", "email", "activo"), show="headings")
+        for column, title, width in (("id", "ID", 55), ("nombre", "Nombre", 220), ("email", "Correo", 300), ("activo", "Activo", 80)):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, stretch=column not in {"id", "activo"})
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            for row in self.app.records_service.listar_destinatarios_informe(True):
+                tree.insert("", "end", values=(row[0], row[1], row[2], "Sí" if row[3] else "No"))
+
+        def add():
+            nombre = simpledialog.askstring("Destinatario", "Nombre:", parent=window) or ""
+            email = simpledialog.askstring("Destinatario", "Correo:", parent=window)
+            if email:
+                try:
+                    self.app.records_service.crear_destinatario_informe(nombre, email, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    refresh()
+                except Exception as error:
+                    messagebox.showerror("Destinatarios", str(error), parent=window)
+
+        def edit():
+            selection = tree.selection()
+            if not selection:
+                return
+            values = tree.item(selection[0], "values")
+            nombre = simpledialog.askstring("Destinatario", "Nombre:", initialvalue=values[1], parent=window)
+            email = simpledialog.askstring("Destinatario", "Correo:", initialvalue=values[2], parent=window)
+            if nombre is not None and email:
+                try:
+                    self.app.records_service.actualizar_destinatario_informe(int(values[0]), nombre, email, values[3] == "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    refresh()
+                except Exception as error:
+                    messagebox.showerror("Destinatarios", str(error), parent=window)
+
+        buttons = ttk.Frame(window)
+        buttons.pack(fill="x", padx=10, pady=5)
+        ttk.Button(buttons, text="Nuevo", command=add).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Editar / activar", command=edit).pack(side="left", padx=3)
+        refresh()
+
+    def mostrar_configuracion_sesion(self):
+        if not self.app.requerir_permiso("sesion.configurar"):
+            return
+        actual = self.app.db_store.get_configuracion("sesion_minutos", "30")
+        minutos = simpledialog.askinteger(
+            "Tiempo de sesión", "Minutos de inactividad antes de cerrar la sesión:",
+            initialvalue=int(actual), minvalue=1, maxvalue=1440, parent=self.app.root,
+        )
+        if minutos is None:
+            return
+        self.app.db_store.set_configuracion("sesion_minutos", minutos)
+        self.app.renovar_sesion()
+        messagebox.showinfo("Tiempo de sesión", f"La sesión expirará luego de {minutos} minutos sin actividad.", parent=self.app.root)
 
     def mostrar_auditoria(self):
         if not self.app.requerir_permiso("auditoria.ver"):

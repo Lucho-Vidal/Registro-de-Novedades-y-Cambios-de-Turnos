@@ -74,6 +74,47 @@ class RecordsService:
             connection.execute("UPDATE dotaciones SET nombre=?, activo=? WHERE id=?", (nombre, int(activo), dotacion_id))
             self._audit(connection, user_id, windows_user, "modificar", "dotacion", dotacion_id, dict(before), {"nombre": nombre, "activo": int(activo)})
 
+    def listar_personal_estacion(self, incluir_inactivos=True):
+        return self.store.get_personal_estacion(incluir_inactivos)
+
+    def crear_personal_estacion(self, nombre, user_id=None, windows_user=None):
+        nombre = nombre.strip()
+        if not nombre:
+            raise ValueError("El nombre no puede estar vacío.")
+        with self.store.write_transaction() as connection:
+            cursor = connection.execute("INSERT INTO personal_estacion(nombre) VALUES (?)", (nombre,))
+            self._audit(connection, user_id, windows_user, "crear", "personal_estacion", cursor.lastrowid, None, {"nombre": nombre})
+            return cursor.lastrowid
+
+    def actualizar_personal_estacion(self, item_id, nombre, activo, user_id=None, windows_user=None):
+        nombre = nombre.strip()
+        with self.store.write_transaction() as connection:
+            before = connection.execute("SELECT id, nombre, activo FROM personal_estacion WHERE id=?", (item_id,)).fetchone()
+            if not before:
+                raise ValueError("El personal de estación no existe.")
+            connection.execute("UPDATE personal_estacion SET nombre=?, activo=? WHERE id=?", (nombre, int(activo), item_id))
+            self._audit(connection, user_id, windows_user, "modificar", "personal_estacion", item_id, dict(before), {"nombre": nombre, "activo": int(activo)})
+
+    def listar_destinatarios_informe(self, incluir_inactivos=True):
+        return self.store.get_destinatarios_informe(incluir_inactivos)
+
+    def crear_destinatario_informe(self, nombre, email, user_id=None, windows_user=None):
+        nombre, email = nombre.strip(), email.strip()
+        if not email or "@" not in email:
+            raise ValueError("Ingrese un correo válido.")
+        with self.store.write_transaction() as connection:
+            cursor = connection.execute("INSERT INTO destinatarios_informe(nombre, email) VALUES (?, ?)", (nombre, email))
+            self._audit(connection, user_id, windows_user, "crear", "destinatario_informe", cursor.lastrowid, None, {"nombre": nombre, "email": email})
+            return cursor.lastrowid
+
+    def actualizar_destinatario_informe(self, item_id, nombre, email, activo, user_id=None, windows_user=None):
+        with self.store.write_transaction() as connection:
+            before = connection.execute("SELECT id, nombre, email, activo FROM destinatarios_informe WHERE id=?", (item_id,)).fetchone()
+            if not before:
+                raise ValueError("El destinatario no existe.")
+            connection.execute("UPDATE destinatarios_informe SET nombre=?, email=?, activo=? WHERE id=?", (nombre.strip(), email.strip(), int(activo), item_id))
+            self._audit(connection, user_id, windows_user, "modificar", "destinatario_informe", item_id, dict(before), {"nombre": nombre, "email": email, "activo": int(activo)})
+
     def obtener_novedad(self, record_id):
         with self.store.read_connection() as connection:
             return connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()

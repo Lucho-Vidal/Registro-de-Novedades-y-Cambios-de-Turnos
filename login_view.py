@@ -18,8 +18,8 @@ class LoginView:
         self.window = tk.Toplevel(root)
         self.window.configure(background=str(self.style.colors.bg))
         self.window.title("Inicio de sesión")
-        self.window.geometry("420x330")
-        self.window.minsize(420, 330)
+        self.window.geometry("420x375")
+        self.window.minsize(420, 375)
         self.window.resizable(False, False)
         self.window.protocol("WM_DELETE_WINDOW", root.destroy)
         self.window.grab_set()
@@ -33,6 +33,9 @@ class LoginView:
         ttk.Label(form, text="Contraseña").grid(row=2, column=0, sticky="w", pady=(8, 5))
         self.password = ttk.Entry(form, show="*", width=30)
         self.password.grid(row=3, column=0, pady=2)
+        ttk.Label(form, text="Legajo (solo para crear administrador)").grid(row=4, column=0, sticky="w", pady=(8, 5))
+        self.legajo = ttk.Entry(form, width=30)
+        self.legajo.grid(row=5, column=0, pady=2)
         ttk.Button(self.window, text="Ingresar", command=self.login).pack(pady=(14, 5))
         self.username.focus_set()
         self.password.bind("<Return>", lambda _event: self.login())
@@ -85,11 +88,12 @@ class LoginView:
     def crear_administrador_inicial(self):
         username = self.username.get().strip()
         password = self.password.get()
-        if not username or not password:
-            messagebox.showwarning("Administrador", "Complete usuario y contraseña.", parent=self.window)
+        legajo = self.legajo.get().strip()
+        if not username or not password or not legajo:
+            messagebox.showwarning("Administrador", "Complete usuario, contraseña y legajo.", parent=self.window)
             return
         try:
-            user_id = self.auth.crear_administrador_inicial(username, password)
+            user_id = self.auth.crear_administrador_inicial(username, password, int(legajo))
             messagebox.showinfo("Administrador", "Administrador creado. Ya puede ingresar.", parent=self.window)
             self.username.delete(0, tk.END)
             self.password.delete(0, tk.END)

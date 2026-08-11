@@ -218,7 +218,7 @@ class FormsManager:
         self.app.fecha_inicio_novedad_var.set('')
         self.app.fecha_fin_novedad_var.set('')
         self.app.referencia_estacion_var.set('')
-        self.app.supervisor_var.set('')
+        self.app.supervisor_var.set(self.app.current_user.get("nombre") or self.app.current_user.get("username", ""))
         self.app.observaciones_var.set('')
         if hasattr(self.app, "observaciones_novedades_text"):
             self.app.observaciones_novedades_text.delete("1.0", "end")
@@ -249,7 +249,7 @@ class FormsManager:
         self.app.franco_2_var.set('')
         self.app.fecha_cambio_turno_var.set('')
         self.app.referencia_estacion_var.set('')
-        self.app.supervisor_var.set('')
+        self.app.supervisor_var.set(self.app.current_user.get("nombre") or self.app.current_user.get("username", ""))
         self.app.observaciones_var.set('') 
         if hasattr(self.app, "observaciones_cambios_text"):
             self.app.observaciones_cambios_text.delete("1.0", "end")
@@ -283,6 +283,15 @@ class FormsManager:
                 "crear", "novedad", record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
                 after={"novedad": self.app.novedad_var.get(), "legajo": self.app.legajo_var.get()},
             )
+            if self.app.novedad_var.get().strip().casefold() == "informe":
+                try:
+                    self.app.enviar_informe_novedad(record_id)
+                except Exception as error:
+                    self.app.records_service.registrar_auditoria(
+                        "error_envio", "informe_email", record_id, self.app.current_user.get("id"),
+                        self.app.obtener_usuario_windows(), after={"error": str(error)},
+                    )
+                    messagebox.showwarning("Informe", f"La novedad se guardó, pero no se pudo enviar el correo:\n{error}")
             messagebox.showinfo("Guardado", "Los datos han sido guardados correctamente.")
             self.limpiar_formulario_novedades()
             self.app.toggle_view()
@@ -428,16 +437,19 @@ class FormsManager:
         # Referencia Estación
         ttk.Label(self.app.form_frame, text="   REFERENCIA ESTACIÓN").grid(row=7, column=0, sticky="w")
         ttk.Label(self.app.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=7, column=0, sticky="w")
-        self.app.referencia_estacion_entry = ttk.Entry(
-            self.app.form_frame, textvariable=self.app.referencia_estacion_var, width=40
+        self.app.referencia_estacion_novedades_entry = ttk.Combobox(
+            self.app.form_frame, textvariable=self.app.referencia_estacion_var,
+            values=[row[1] for row in self.app.personal_estacion], width=40,
+            state="readonly" if self.app.tiene_permiso("personalEstacion.ver") else "disabled",
         )
+        self.app.referencia_estacion_entry = self.app.referencia_estacion_novedades_entry
         self.app.referencia_estacion_entry.grid(row=8, column=0, columnspan=2, sticky="w", pady=5)
 
         # Supervisor
         ttk.Label(self.app.form_frame, text="   SUPERVISOR").grid(row=7, column=3, sticky="w")
         ttk.Label(self.app.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=7, column=3, sticky="w")
         self.app.supervisor_entry = ttk.Entry(
-            self.app.form_frame, textvariable=self.app.supervisor_var, width=40
+            self.app.form_frame, textvariable=self.app.supervisor_var, width=40, state="readonly", style="Readonly.TEntry"
         )
         self.app.supervisor_entry.grid(row=8, column=3, columnspan=2, sticky="w", pady=5)
 
@@ -572,16 +584,19 @@ class FormsManager:
         # Referencia Estación
         ttk.Label(self.app.form_cambios_frame, text="   REFERENCIA ESTACIÓN").grid(row=11, column=0, sticky="w")
         ttk.Label(self.app.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=11, column=0, sticky="w")
-        self.app.referencia_estacion_entry = ttk.Entry(
-            self.app.form_cambios_frame, textvariable=self.app.referencia_estacion_var, width=40
+        self.app.referencia_estacion_cambios_entry = ttk.Combobox(
+            self.app.form_cambios_frame, textvariable=self.app.referencia_estacion_var,
+            values=[row[1] for row in self.app.personal_estacion], width=40,
+            state="readonly" if self.app.tiene_permiso("personalEstacion.ver") else "disabled",
         )
+        self.app.referencia_estacion_entry = self.app.referencia_estacion_cambios_entry
         self.app.referencia_estacion_entry.grid(row=12, column=0, columnspan=2, sticky="w", pady=5)
 
         # Supervisor
         ttk.Label(self.app.form_cambios_frame, text="   SUPERVISOR").grid(row=11, column=3, sticky="w")
         ttk.Label(self.app.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=11, column=3, sticky="w")
         self.app.supervisor_entry = ttk.Entry(
-            self.app.form_cambios_frame, textvariable=self.app.supervisor_var, width=40
+            self.app.form_cambios_frame, textvariable=self.app.supervisor_var, width=40, state="readonly", style="Readonly.TEntry"
         )
         self.app.supervisor_entry.grid(row=12, column=3, columnspan=2, sticky="w", pady=5)
 

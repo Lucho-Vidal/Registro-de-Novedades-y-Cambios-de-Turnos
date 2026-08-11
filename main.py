@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, filedialog
+from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
 from ttkbootstrap import DateEntry, Style
 from datetime import datetime, timedelta
 import os
 import ctypes
 import math
+import time
 import unicodedata
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from admin_views import AdminViews
 from database_bootstrap import open_configured_store
 from login_view import LoginView
 from records_service import RecordsService
+from outlook_mailer import enviar_informe_outlook
 
 
 class FormularioExcelApp:
@@ -79,6 +81,8 @@ class FormularioExcelApp:
         self.cargarTipoNovedades()
         self.dotaciones = []
         self.cargarDotaciones()
+        self.personal_estacion = []
+        self.cargarPersonalEstacion()
         
         # Aplicar estilo ttkbootstrap
         self.style = Style()
@@ -154,6 +158,10 @@ class FormularioExcelApp:
         
         # Refresh periódico
         self.root.after(60000, self.refrescar_excel_periodicamente)
+        self.session_active = True
+        self.session_last_activity = time.monotonic()
+        self.session_timeout_after = None
+        self.iniciar_control_sesion()
 
     def tiene_permiso(self, permiso):
         user_id = self.current_user.get("id")
@@ -213,6 +221,68 @@ class FormularioExcelApp:
         messagebox.showwarning("Acceso denegado", "Su usuario no tiene permiso para esta sección.", parent=self.root)
         return False
 
+    def iniciar_control_sesion(self):
+        self.root.bind_all("<Any-KeyPress>", self._actividad_sesion, add="+")
+        self.root.bind_all("<Any-Button>", self._actividad_sesion, add="+")
+        self.renovar_sesion()
+
+    def _actividad_sesion(self, _event=None):
+        if self.session_active:
+            self.renovar_sesion()
+
+    def renovar_sesion(self):
+        if not getattr(self, "session_active", False):
+            return
+        self.session_last_activity = time.monotonic()
+        if self.session_timeout_after:
+            self.root.after_cancel(self.session_timeout_after)
+        self.session_timeout_after = self.root.after(30000, self.verificar_sesion)
+
+    def verificar_sesion(self):
+        if not self.session_active:
+            return
+        try:
+            minutos = max(1, int(self.db_store.get_configuracion("sesion_minutos", 30)))
+        except (TypeError, ValueError):
+            minutos = 30
+        if time.monotonic() - self.session_last_activity >= minutos * 60:
+            self.cerrar_sesion_por_expiracion()
+        else:
+            self.renovar_sesion()
+
+    def cerrar_sesion_por_expiracion(self):
+        self.session_active = False
+        if self.session_timeout_after:
+            self.root.after_cancel(self.session_timeout_after)
+        self.root.unbind_all("<Any-KeyPress>")
+        self.root.unbind_all("<Any-Button>")
+        messagebox.showwarning("Sesión expirada", "La sesión expiró por inactividad.", parent=self.root)
+        self.root.config(menu="")
+        for child in list(self.root.winfo_children()):
+            child.destroy()
+        self.root.withdraw()
+        LoginView(self.root, self.db_store, lambda user, store: FormularioExcelApp(self.root, db_store=store, current_user=user))
+
+    def enviar_informe_novedad(self, record_id):
+        row = self.records_service.obtener_novedad(record_id)
+        if not row:
+            raise ValueError("No se encontró la novedad para enviar el informe.")
+        destinatarios = [item[2] for item in self.records_service.listar_destinatarios_informe(False)]
+        cuerpo = "\n".join([
+            "Se registró una novedad tipo Informe.",
+            f"ID: {row['id']}", f"Fecha de registro: {row['registrado_en']}",
+            f"Legajo: {row['legajo']}", f"Apellidos y nombres: {row['apellidos_nombres']}",
+            f"Especialidad: {row['especialidad']}", f"Dotación: {row['dotacion']}",
+            f"Fecha inicio: {row['fecha_inicio']}", f"Fecha fin: {row['fecha_fin'] or '-'}",
+            f"Referencia estación: {row['referencia_estacion']}", f"Supervisor: {row['supervisor']}",
+            "", "Observaciones:", row['observaciones'] or "-",
+        ])
+        enviar_informe_outlook(destinatarios, f"Informe de novedad #{row['id']}", cuerpo)
+        self.records_service.registrar_auditoria(
+            "enviado", "informe_email", record_id, self.current_user.get("id"), self.obtener_usuario_windows(),
+            after={"destinatarios": destinatarios},
+        )
+
     def _crear_menu(self):
         """Crea el menú principal de la aplicación."""
         self.menu_bar = tk.Menu(self.root)
@@ -235,12 +305,14 @@ class FormularioExcelApp:
         # Submenú Seleccionar Tema
         self.temas_menu = tk.Menu(self.opciones_menu, tearoff=0)
         self.opciones_menu.add_cascade(label="Seleccionar Tema", menu=self.temas_menu)
+        self.opciones_menu.add_separator()
+        self.opciones_menu.add_command(label="Cambiar mi contraseña", command=self.cambiar_mi_password)
         
         for tema in self.temas:
             self.temas_menu.add_command(label=tema, command=lambda t=tema: self.cambiar_tema(t))
 
         if any(self.tiene_permiso(permission) for permission in (
-            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "auditoria.ver"
+            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver"
         )):
             self.administracion_menu = tk.Menu(self.menu_bar, tearoff=0)
             self.menu_bar.add_cascade(label="Administración", menu=self.administracion_menu)
@@ -254,6 +326,12 @@ class FormularioExcelApp:
                 self.administracion_menu.add_command(label="Tipos de novedad", command=self.admin_views.mostrar_tipos_novedad)
             if self.tiene_permiso("dotaciones.administrar"):
                 self.administracion_menu.add_command(label="Dotaciones", command=self.admin_views.mostrar_dotaciones)
+            if self.tiene_permiso("personalEstacion.ver"):
+                self.administracion_menu.add_command(label="Personal de estación", command=self.admin_views.mostrar_personal_estacion)
+            if self.tiene_permiso("destinatarios_informe.administrar"):
+                self.administracion_menu.add_command(label="Destinatarios de informes", command=self.admin_views.mostrar_destinatarios_informe)
+            if self.tiene_permiso("sesion.configurar"):
+                self.administracion_menu.add_command(label="Tiempo de sesión", command=self.admin_views.mostrar_configuracion_sesion)
             if self.tiene_permiso("auditoria.ver"):
                 self.administracion_menu.add_command(label="Auditoría", command=self.admin_views.mostrar_auditoria)
 
@@ -269,7 +347,7 @@ class FormularioExcelApp:
         self.fecha_inicio_novedad_var = tk.StringVar()
         self.fecha_fin_novedad_var = tk.StringVar()
         self.referencia_estacion_var = tk.StringVar()
-        self.supervisor_var = tk.StringVar()
+        self.supervisor_var = tk.StringVar(value=self.current_user.get("nombre") or self.current_user.get("username", ""))
         self.observaciones_var = tk.StringVar()
         
         self.legajo_2_var = tk.StringVar()
@@ -530,6 +608,7 @@ class FormularioExcelApp:
 
     def toggle_view(self, target_view=None):
         """Alterna entre las vistas (tabla/formulario)."""
+        self.renovar_sesion()
         target_view = target_view or "table"
         required_permissions = {
             "table": "novedades.ver",
@@ -572,6 +651,9 @@ class FormularioExcelApp:
     def cargarTipoNovedades(self):
         """Carga los tipos de novedad desde SQLite."""
         self.tipo_novedades = self.db_store.get_tipo_novedades()
+        combo = getattr(self, "tipo_filter_novedades", None)
+        if combo is not None:
+            combo.configure(values=["Todos", *self.tipo_novedades])
 
     def cargarDotaciones(self):
         """Carga las dotaciones activas y actualiza las tablas de filtros."""
@@ -581,6 +663,31 @@ class FormularioExcelApp:
             tree = getattr(self, tree_name, None)
             if tree is not None:
                 tree.configure(values=self.DOTACIONES)
+
+    def cargarPersonalEstacion(self):
+        self.personal_estacion = self.db_store.get_personal_estacion(False)
+        valores = [row[1] for row in self.personal_estacion]
+        for widget_name in ("referencia_estacion_novedades_entry", "referencia_estacion_cambios_entry"):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.configure(values=valores)
+
+    def cambiar_mi_password(self):
+        actual = simpledialog.askstring("Cambiar contraseña", "Contraseña actual:", show="*", parent=self.root)
+        if actual is None:
+            return
+        nueva = simpledialog.askstring("Cambiar contraseña", "Nueva contraseña:", show="*", parent=self.root)
+        if nueva is None:
+            return
+        confirmar = simpledialog.askstring("Cambiar contraseña", "Repita la nueva contraseña:", show="*", parent=self.root)
+        if nueva != confirmar:
+            messagebox.showerror("Contraseña", "Las contraseñas nuevas no coinciden.", parent=self.root)
+            return
+        try:
+            self.auth_service.cambiar_mi_password(self.current_user["id"], actual, nueva)
+            messagebox.showinfo("Contraseña", "La contraseña fue cambiada correctamente.", parent=self.root)
+        except Exception as error:
+            messagebox.showerror("Contraseña", str(error), parent=self.root)
 
     def crear_archivo_excel(self):
         """Crea un archivo Excel con la estructura por defecto."""

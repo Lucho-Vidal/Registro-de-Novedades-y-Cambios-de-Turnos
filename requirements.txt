@@ -1,3 +1,4 @@
 openpyxl
 ttkbootstrap==1.10.1
 bcrypt
+pywin32

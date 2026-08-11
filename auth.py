@@ -9,15 +9,17 @@ class AuthService:
     def __init__(self, store):
         self.store = store
 
-    def crear_usuario(self, username, password, nombre="", roles=()):
+    def crear_usuario(self, username, password, nombre="", legajo=None, roles=()):
         if not password:
             raise ValueError("La contraseña no puede estar vacía.")
+        if legajo is None:
+            raise ValueError("El legajo es obligatorio para nuevos usuarios.")
         password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         with self.store.write_transaction() as connection:
             cursor = connection.execute(
-                """INSERT INTO usuarios(username, nombre, password_hash, creado_en)
-                   VALUES (?, ?, ?, ?)""",
-                (username.strip(), nombre.strip(), password_hash, self.store.now()),
+                """INSERT INTO usuarios(username, nombre, legajo, password_hash, creado_en)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (username.strip(), nombre.strip(), legajo, password_hash, self.store.now()),
             )
             user_id = cursor.lastrowid
             for role in roles:
@@ -58,12 +60,33 @@ class AuthService:
     def listar_usuarios(self):
         with self.store.read_connection() as connection:
             return connection.execute(
-                """SELECT u.id, u.username, u.nombre, u.activo,
+                """SELECT u.id, u.username, u.nombre, u.legajo, u.activo,
                           COALESCE(GROUP_CONCAT(r.nombre, ', '), '') AS roles
                    FROM usuarios u LEFT JOIN usuario_roles ur ON ur.usuario_id=u.id
                    LEFT JOIN roles r ON r.id=ur.rol_id
                    GROUP BY u.id ORDER BY u.username"""
             ).fetchall()
+
+    def actualizar_usuario(self, user_id, username, nombre, legajo, activo):
+        with self.store.write_transaction() as connection:
+            connection.execute(
+                "UPDATE usuarios SET username=?, nombre=?, legajo=?, activo=? WHERE id=?",
+                (username.strip(), nombre.strip(), legajo, int(activo), user_id),
+            )
+
+    def obtener_usuario(self, user_id):
+        with self.store.read_connection() as connection:
+            row = connection.execute("SELECT * FROM usuarios WHERE id=?", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def cambiar_mi_password(self, user_id, actual, nueva):
+        if not nueva:
+            raise ValueError("La contraseña nueva no puede estar vacía.")
+        with self.store.read_connection() as connection:
+            row = connection.execute("SELECT password_hash FROM usuarios WHERE id=?", (user_id,)).fetchone()
+        if not row or not bcrypt.checkpw(actual.encode("utf-8"), row[0].encode("utf-8")):
+            raise ValueError("La contraseña actual no es correcta.")
+        self.cambiar_password(user_id, nueva)
 
     def listar_roles(self):
         with self.store.read_connection() as connection:
@@ -148,7 +171,7 @@ class AuthService:
                 tuple(permissions),
             )
 
-    def crear_administrador_inicial(self, username, password):
+    def crear_administrador_inicial(self, username, password, legajo=None):
         """Crea el primer usuario y le asigna todos los permisos disponibles."""
         with self.store.read_connection() as connection:
             if connection.execute("SELECT 1 FROM usuarios LIMIT 1").fetchone():
@@ -158,12 +181,14 @@ class AuthService:
             "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "excel.exportar",
             "usuarios.administrar", "roles.administrar", "empleados.importar", "auditoria.ver",
             "dotaciones.administrar",
+            "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
+            "destinatarios_informe.administrar", "sesion.configurar",
         )
         with self.store.write_transaction() as connection:
             password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
             user_id = connection.execute(
-                "INSERT INTO usuarios(username, nombre, password_hash, creado_en) VALUES (?, ?, ?, ?)",
-                (username.strip(), username.strip(), password_hash, self.store.now()),
+                "INSERT INTO usuarios(username, nombre, legajo, password_hash, creado_en) VALUES (?, ?, ?, ?, ?)",
+                (username.strip(), username.strip(), legajo, password_hash, self.store.now()),
             ).lastrowid
             role_id = connection.execute("INSERT INTO roles(nombre) VALUES ('Administrador')").lastrowid
             for permission in permissions:

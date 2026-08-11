@@ -160,6 +160,7 @@ class SQLiteStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT NOT NULL COLLATE NOCASE UNIQUE,
                     nombre TEXT NOT NULL DEFAULT '',
+                    legajo INTEGER,
                     password_hash TEXT NOT NULL,
                     activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
                     creado_en TEXT NOT NULL,
@@ -242,6 +243,24 @@ class SQLiteStore:
                     creado_en TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS personal_estacion (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
+                );
+
+                CREATE TABLE IF NOT EXISTS destinatarios_informe (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT NOT NULL DEFAULT '',
+                    email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
+                );
+
+                CREATE TABLE IF NOT EXISTS configuracion (
+                    clave TEXT PRIMARY KEY,
+                    valor TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_novedades_legajo ON novedades(legajo);
                 CREATE INDEX IF NOT EXISTS idx_novedades_registrado ON novedades(registrado_en DESC);
                 CREATE INDEX IF NOT EXISTS idx_cambios_legajo_1 ON cambios_turno(legajo_1);
@@ -253,6 +272,13 @@ class SQLiteStore:
                 "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES (?, ?)",
                 ("version", str(SCHEMA_VERSION)),
             )
+            user_columns = {row[1] for row in connection.execute("PRAGMA table_info(usuarios)").fetchall()}
+            if "legajo" not in user_columns:
+                connection.execute("ALTER TABLE usuarios ADD COLUMN legajo INTEGER")
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('sesion_minutos', '30')"
+            )
+            connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre) VALUES ('Informe')")
             for nombre in ("PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"):
                 connection.execute("INSERT OR IGNORE INTO dotaciones(nombre) VALUES (?)", (nombre,))
             connection.execute(
@@ -323,6 +349,33 @@ class SQLiteStore:
             return [row[0] for row in connection.execute(
                 "SELECT nombre FROM dotaciones WHERE activo=1 ORDER BY nombre"
             ).fetchall()]
+
+    def get_personal_estacion(self, incluir_inactivos=False):
+        with self.read_connection() as connection:
+            query = "SELECT id, nombre, activo FROM personal_estacion"
+            if not incluir_inactivos:
+                query += " WHERE activo=1"
+            return connection.execute(query + " ORDER BY nombre").fetchall()
+
+    def get_destinatarios_informe(self, incluir_inactivos=False):
+        with self.read_connection() as connection:
+            query = "SELECT id, nombre, email, activo FROM destinatarios_informe"
+            if not incluir_inactivos:
+                query += " WHERE activo=1"
+            return connection.execute(query + " ORDER BY nombre, email").fetchall()
+
+    def get_configuracion(self, clave, default=None):
+        with self.read_connection() as connection:
+            row = connection.execute("SELECT valor FROM configuracion WHERE clave=?", (clave,)).fetchone()
+            return row[0] if row else default
+
+    def set_configuracion(self, clave, valor):
+        with self.write_transaction() as connection:
+            connection.execute(
+                "INSERT INTO configuracion(clave, valor) VALUES (?, ?) "
+                "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor",
+                (clave, str(valor)),
+            )
 
     def sincronizar_dotaciones(self):
         """Registra automáticamente dotaciones nuevas provenientes de empleados importados."""

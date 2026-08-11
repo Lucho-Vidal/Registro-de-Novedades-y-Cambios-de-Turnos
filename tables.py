@@ -283,7 +283,7 @@ class TablesManager:
         except Exception as e:
             print(f"Error al cargar los datos en el Treeview: {e}")
     
-    def filtrar_datos_novedades(self, nombre_filtro, dotacion_filtro):
+    def filtrar_datos_novedades(self, nombre_filtro, dotacion_filtro, tipo_filtro):
         """Filtra los datos de novedades según nombre y dotación.
         
         Busca coincidencias en la columna Apellidos y Nombres (índice 3) y
@@ -308,12 +308,13 @@ class TablesManager:
             # Muestra solo novedades de empleados con "García" y dotación "A"
         """
         try:
-            if dotacion_filtro == "Todas" and nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
+            if dotacion_filtro == "Todas" and tipo_filtro == "Todos" and nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
                 self.cargar_datos_completos_novedades()
                 return
 
             nombre_filtro_norm = self.app.normalizar_texto(nombre_filtro)
             dotacion_filtro_norm = self.app.normalizar_texto(dotacion_filtro)
+            tipo_filtro_norm = self.app.normalizar_texto(tipo_filtro)
 
             self.app.tabla_novedades.delete(*self.app.tabla_novedades.get_children())
             total = 0
@@ -324,18 +325,13 @@ class TablesManager:
                         continue
                     nombre_fila_norm = self.app.normalizar_texto(fila_procesada[3])
                     dotacion_fila_norm = self.app.normalizar_texto(fila_procesada[5])
-                    if dotacion_filtro == "Todas":
-                        if nombre_filtro_norm in nombre_fila_norm:
-                            self.app.tabla_novedades.insert("", "end", values=fila_procesada)
-                            total += 1
-                    elif nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
-                        if dotacion_filtro_norm in dotacion_fila_norm:
-                            self.app.tabla_novedades.insert("", "end", values=fila_procesada)
-                            total += 1
-                    else:
-                        if nombre_filtro_norm in nombre_fila_norm and dotacion_filtro_norm in dotacion_fila_norm:
-                            self.app.tabla_novedades.insert("", "end", values=fila_procesada)
-                            total += 1
+                    tipo_fila_norm = self.app.normalizar_texto(fila_procesada[8])
+                    coincide_nombre = nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE or nombre_filtro_norm in nombre_fila_norm
+                    coincide_dotacion = dotacion_filtro == "Todas" or dotacion_filtro_norm in dotacion_fila_norm
+                    coincide_tipo = tipo_filtro == "Todos" or tipo_filtro_norm == tipo_fila_norm
+                    if coincide_nombre and coincide_dotacion and coincide_tipo:
+                        self.app.tabla_novedades.insert("", "end", values=fila_procesada)
+                        total += 1
 
             self.ajustar_ancho_columnas(self.app.tabla_novedades)
             if hasattr(self.app, "resultados_novedades_label"):
@@ -362,7 +358,8 @@ class TablesManager:
             250,
             lambda: self.filtrar_datos_novedades(
                 self.app.apellido_filter_novedades_var.get(),
-                self.app.dotacion_filter_novedades_var.get()
+                self.app.dotacion_filter_novedades_var.get(),
+                self.app.tipo_filter_novedades_var.get()
             )
         )
 
@@ -441,9 +438,9 @@ class TablesManager:
     def actualizar_tabla(self):
         """Actualiza las tablas si es necesario (llamado en cada refresh de Excel)."""
         if self.app.sheet_novedades and self.app.current_view == 'table' and hasattr(self.app, "tabla_novedades"):
-            if not hasattr(self.app, "apellido_filter_novedades_var") or not hasattr(self.app, "dotacion_filter_novedades_var"):
+            if not hasattr(self.app, "apellido_filter_novedades_var") or not hasattr(self.app, "dotacion_filter_novedades_var") or not hasattr(self.app, "tipo_filter_novedades_var"):
                 return
-            if self.app.apellido_filter_novedades_var.get() != self.app.PLACEHOLDER_BUSCAR_NOMBRE or self.app.dotacion_filter_novedades_var.get() != "Todas":
+            if self.app.apellido_filter_novedades_var.get() != self.app.PLACEHOLDER_BUSCAR_NOMBRE or self.app.dotacion_filter_novedades_var.get() != "Todas" or self.app.tipo_filter_novedades_var.get() != "Todos":
                 return
             self.app.tabla_novedades.delete(*self.app.tabla_novedades.get_children())
             total = 0
@@ -499,6 +496,7 @@ class TablesManager:
         ]
         self.app.apellido_filter_novedades_var = tk.StringVar()
         self.app.dotacion_filter_novedades_var = tk.StringVar()
+        self.app.tipo_filter_novedades_var = tk.StringVar()
         
         # Título y botones
         ttk.Label(self.app.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(
@@ -521,21 +519,28 @@ class TablesManager:
         )
         dotacion_filter = self.app.dotacion_filter_novedades
         dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
+
+        self.app.tipo_filter_novedades = ttk.Combobox(
+            self.app.table_frame, textvariable=self.app.tipo_filter_novedades_var,
+            values=["Todos", *self.app.tipo_novedades], width=18, state="readonly"
+        )
+        self.app.tipo_filter_novedades.grid(row=0, column=4, sticky="e", pady=5, padx=6)
         
         self.app.resultados_novedades_label = ttk.Label(self.app.table_frame, text="0 resultados", font=("Helvetica", 9))
-        self.app.resultados_novedades_label.grid(row=0, column=4, sticky="w", padx=8)
+        self.app.resultados_novedades_label.grid(row=0, column=5, sticky="w", padx=8)
         
         if self.app.tiene_permiso("novedades.crear"):
             ttk.Button(self.app.table_frame, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).grid(
-                row=0, column=5, pady=10, padx=2, sticky="e"
+                row=0, column=6, pady=10, padx=2, sticky="e"
             )
         if self.app.tiene_permiso("cambios_turno.crear"):
             ttk.Button(self.app.table_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
-                row=0, column=6, pady=10, padx=10, sticky="e"
+                row=0, column=7, pady=10, padx=10, sticky="e"
             )
 
         apellido_filter.insert(0, self.app.PLACEHOLDER_BUSCAR_NOMBRE)
         dotacion_filter.insert(0, "Todas")
+        self.app.tipo_filter_novedades.set("Todos")
         apellido_filter.config(fg="grey")
         apellido_filter.bind("<FocusIn>", on_focus_in)
         apellido_filter.bind("<FocusOut>", on_focus_out)
@@ -543,10 +548,11 @@ class TablesManager:
         # Detectar cambios en filtros
         self.app.apellido_filter_novedades_var.trace_add("write", lambda *args: self.programar_filtrado_novedades())
         self.app.dotacion_filter_novedades_var.trace_add("write", lambda *args: self.programar_filtrado_novedades())
+        self.app.tipo_filter_novedades_var.trace_add("write", lambda *args: self.programar_filtrado_novedades())
         
         # Contenedor del Treeview
         self.app.tree_frame = ttk.Frame(self.app.table_frame, width=self.app.WIDTH, height=self.app.HEIGHT)
-        self.app.tree_frame.grid(row=1, column=0, columnspan=7, sticky="nsew")
+        self.app.tree_frame.grid(row=1, column=0, columnspan=8, sticky="nsew")
         self.app.tree_frame.grid_propagate(False)
 
         self.app.tree_frame.grid_rowconfigure(0, weight=1)
