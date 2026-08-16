@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from excel_exporter import export_auditoria
+from backups import crear_backup, listar_backups, restaurar_backup
+import os
 
 
 PERMISOS_BASE = (
@@ -14,7 +16,16 @@ PERMISOS_BASE = (
     "dotaciones.administrar",
     "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
     "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
+    "backup.gestionar",
 )
+
+
+def _formatear_tamano(bytes_valor):
+    if bytes_valor >= 1024 * 1024:
+        return f"{bytes_valor / (1024 * 1024):.1f} MB"
+    if bytes_valor >= 1024:
+        return f"{bytes_valor / 1024:.1f} KB"
+    return f"{bytes_valor} B"
 
 
 class AdminViews:
@@ -509,6 +520,116 @@ class AdminViews:
         buttons.pack(fill="x", padx=10, pady=8)
         ttk.Button(buttons, text="Recuperar", command=recuperar).pack(side="left", padx=3)
         ttk.Button(buttons, text="Borrar definitivamente", command=borrar_definitivo).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Cerrar", command=window.destroy).pack(side="right", padx=3)
+        refresh()
+
+    def mostrar_backups(self):
+        if not self.app.requerir_permiso("backup.gestionar"):
+            return
+        window = tk.Toplevel(self.app.root)
+        window.title("Copias de seguridad")
+        window.geometry("720x420")
+        self.app.aplicar_tema_ventana(window)
+        tree = ttk.Treeview(window, columns=("nombre", "tamano", "fecha"), show="headings")
+        for column, title, width in (("nombre", "Archivo", 300), ("tamano", "Tamaño", 110), ("fecha", "Fecha", 160)):
+            tree.heading(column, text=title)
+            tree.column(column, width=width)
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            for nombre, tamano in listar_backups(self.app.db_store):
+                fecha = nombre.replace("backup_", "").replace(".sqlite", "").replace("_", " ")
+                tree.insert("", "end", values=(nombre, _formatear_tamano(tamano), fecha))
+
+        def crear_copia():
+            try:
+                destino = crear_backup(self.app.db_store)
+                self.app.records_service.registrar_auditoria(
+                    "crear", "backup", None, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                    after={"archivo": destino},
+                )
+                refresh()
+                messagebox.showinfo("Copias de seguridad", "Copia de seguridad creada correctamente.", parent=window)
+            except Exception as error:
+                messagebox.showerror("Copias de seguridad", f"No se pudo crear la copia: {error}", parent=window)
+
+        def restaurar():
+            selection = tree.selection()
+            if not selection:
+                return
+            nombre = tree.item(selection[0], "values")[0]
+            if not messagebox.askyesno(
+                "Restaurar copia",
+                f"¿Restaurar la base de datos desde {nombre}?\n\n"
+                "Los registros actuales serán reemplazados por los de la copia.",
+                parent=window,
+            ):
+                return
+            try:
+                restaurar_backup(self.app.db_store, nombre)
+                self.app.records_service.registrar_auditoria(
+                    "restaurar", "backup", None, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                    after={"archivo": nombre},
+                )
+                messagebox.showinfo(
+                    "Restaurar copia",
+                    "La base fue restaurada. Cierre y vuelva a abrir la aplicación para aplicar los cambios.",
+                    parent=window,
+                )
+                window.destroy()
+            except Exception as error:
+                messagebox.showerror("Restaurar copia", f"No se pudo restaurar: {error}", parent=window)
+
+        def borrar_copia():
+            selection = tree.selection()
+            if not selection:
+                return
+            nombre = tree.item(selection[0], "values")[0]
+            if not messagebox.askyesno(
+                "Borrar copia", f"¿Eliminar la copia {nombre}?", parent=window
+            ):
+                return
+            try:
+                ruta = os.path.join(os.path.dirname(self.app.db_store.database_path), "backups", nombre)
+                os.remove(ruta)
+                refresh()
+            except OSError as error:
+                messagebox.showerror("Borrar copia", f"No se pudo borrar la copia: {error}", parent=window)
+
+        def configurar():
+            try:
+                retencion = simpledialog.askinteger(
+                    "Copias de seguridad",
+                    "Cantidad de copias a conservar:",
+                    initialvalue=int(self.app.db_store.get_configuracion("backup_retencion", "10")),
+                    minvalue=1, maxvalue=365, parent=window,
+                )
+                if retencion is None:
+                    return
+                self.app.db_store.set_configuracion("backup_retencion", retencion)
+                activo = messagebox.askyesno(
+                    "Copias de seguridad",
+                    "¿Crear una copia automática diaria al iniciar la aplicación?",
+                    parent=window,
+                )
+                self.app.db_store.set_configuracion("backup_activo", 1 if activo else 0)
+                messagebox.showinfo(
+                    "Copias de seguridad",
+                    f"Se conservarán {retencion} copias y el backup automático está "
+                    f"{'activado' if activo else 'desactivado'}.",
+                    parent=window,
+                )
+            except Exception as error:
+                messagebox.showerror("Copias de seguridad", str(error), parent=window)
+
+        buttons = ttk.Frame(window)
+        buttons.pack(fill="x", padx=10, pady=8)
+        ttk.Button(buttons, text="Hacer copia ahora", command=crear_copia).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Restaurar", command=restaurar).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Borrar copia", command=borrar_copia).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Configurar", command=configurar).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Cerrar", command=window.destroy).pack(side="right", padx=3)
         refresh()
 
     def mostrar_auditoria(self):

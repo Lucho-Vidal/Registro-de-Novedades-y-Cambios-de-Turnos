@@ -6,7 +6,7 @@
 - Data layer: `sqlite_store.py` (SQLite I/O + `SQLiteSheetAdapter`), `database_bootstrap.py` (database location + one-time migration from XLSX).
 - Excel bridge: `excel_migration.py` (import XLSX → SQLite), `excel_exporter.py` (export SQLite → XLSX), `excel_store.py` (only `get_windows_user` is used by the app).
 - Auth/roles: `auth.py` (`AuthService`, bcrypt), `login_view.py` (login + first-run admin creation).
-- UI modules: `forms.py`, `tables.py`, `admin_views.py`, `records_service.py`, `outlook_mailer.py`.
+- UI modules: `forms.py`, `tables.py`, `admin_views.py`, `records_service.py`, `outlook_mailer.py`, `backups.py`.
 - `validators.py` is implemented (validation for novedades/cambios forms) — `pytest test_validators.py` is the test suite.
 - Windows-specific: `ctypes.windll.user32` for DPI awareness, `root.state('zoomed')`, `.bat` updater, Inno Setup script.
 
@@ -35,8 +35,13 @@
 - Windows username stored in the `usuario_windows` column on save/audit.
 
 ## Installer / update quirks
-- `RENO.iss` and `inno registro novedades.iss` have hardcoded absolute paths (`C:\Users\Lucia\...`) — update before building on another machine.
+- `RENO.iss` is the single Inno Setup script (output installer `Instalador\RENO.exe`); it has hardcoded absolute paths (`C:\Users\Lucia\...`) — update before building on another machine.
 - `actulizar.bat` copies `main.exe` from `%~dp0` to `C:\Registro de novedades y cambios de turnos TK\main.exe`.
+
+## Backups
+- `backups.py`: copies of the SQLite DB stored in `backups\` next to the database as `backup_YYYYMMDD_HHMMSS.sqlite`, using the SQLite backup API.
+- Auto-backup runs once per day at startup (`backup_activo`, default 1); retention = last N copies (`backup_retencion`, default 10). Manual create/restore/delete/retention live in `Administración > Copias de seguridad` (`backup.gestionar`).
+- `registrado_en` is stored ISO `%Y-%m-%d %H:%M:%S` for new records; exports filter dates in Python accepting both ISO and legacy `DD/MM/YYYY`.
 
 ## Repo hygiene
 - Verification: `pytest test_validators.py` + manual app run. No lint/typecheck configured.

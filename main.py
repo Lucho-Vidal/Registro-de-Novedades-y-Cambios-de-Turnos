@@ -22,6 +22,10 @@ from database_bootstrap import open_configured_store
 from login_view import LoginView
 from records_service import RecordsService
 from outlook_mailer import enviar_informe_outlook
+from backups import backup_automatico_si_corresponde
+
+
+INTERVALO_SESION_MS = 30000
 
 
 class FormularioExcelApp:
@@ -58,6 +62,7 @@ class FormularioExcelApp:
         self.error_cambios_label = None
 
         self.inicializar_base_datos(db_store)
+        backup_automatico_si_corresponde(self.db_store)
         self.auth_service = AuthService(self.db_store)
         self.records_service = RecordsService(self.db_store)
         self.admin_views = AdminViews(self)
@@ -300,13 +305,12 @@ class FormularioExcelApp:
             self.temas_menu.add_command(label=tema, command=lambda t=tema: self.cambiar_tema(t))
 
         if any(self.tiene_permiso(permission) for permission in (
-            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver", "registros.recuperar"
+            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver", "registros.recuperar", "backup.gestionar"
         )):
             self.administracion_menu = tk.Menu(self.menu_bar, tearoff=0)
             self.menu_bar.add_cascade(label="Administración", menu=self.administracion_menu)
             if self.tiene_permiso("usuarios.administrar"):
-                        self.administracion_menu.add_command(label="Seleccionar base SQLite", command=self.seleccionar_base_sqlite)
-            if self.tiene_permiso("usuarios.administrar"):
+                self.administracion_menu.add_command(label="Seleccionar base SQLite", command=self.seleccionar_base_sqlite)
                 self.administracion_menu.add_command(label="Usuarios", command=self.admin_views.mostrar_usuarios)
             if self.tiene_permiso("roles.administrar"):
                 self.administracion_menu.add_command(label="Roles y permisos", command=self.admin_views.mostrar_roles)
@@ -324,6 +328,8 @@ class FormularioExcelApp:
                 self.administracion_menu.add_command(label="Tiempos de edición", command=self.admin_views.mostrar_configuracion_tiempos)
             if self.tiene_permiso("registros.recuperar"):
                 self.administracion_menu.add_command(label="Registros eliminados", command=self.admin_views.mostrar_registros_eliminados)
+            if self.tiene_permiso("backup.gestionar"):
+                self.administracion_menu.add_command(label="Copias de seguridad", command=self.admin_views.mostrar_backups)
             if self.tiene_permiso("auditoria.ver"):
                 self.administracion_menu.add_command(label="Auditoría", command=self.admin_views.mostrar_auditoria)
 

@@ -184,6 +184,7 @@ class AuthService:
             "dotaciones.administrar",
             "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
             "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
+            "backup.gestionar",
         )
         with self.store.write_transaction() as connection:
             password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
