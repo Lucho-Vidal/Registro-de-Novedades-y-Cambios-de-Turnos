@@ -19,11 +19,18 @@ def _write_sheet(workbook, title, headers, rows):
         worksheet.column_dimensions[get_column_letter(index)].width = max(12, min(35, len(header) + 2))
 
 
-def _date_key(value):
+def _clave_fecha(value):
+    """Normaliza una fecha ISO (YYYY-MM-DD) o DD/MM/YYYY a YYYYMMDD comparable.
+
+    Devuelve "" si el valor no puede normalizarse.
+    """
     value = (value or "").strip()
-    parts = value.split("/")
-    if len(parts) == 3 and len(parts[2]) == 4:
-        return parts[2] + parts[1].zfill(2) + parts[0].zfill(2)
+    if len(value) < 10:
+        return ""
+    if value[4] == "-" and value[7] == "-":
+        return value[0:4] + value[5:7] + value[8:10]
+    if value[2] == "/" and value[5] == "/":
+        return value[6:10] + value[3:5] + value[0:2]
     return ""
 
 
@@ -42,13 +49,6 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
         ).fetchall() if "TipoNovedad" in selected_tables else []
         common_conditions = []
         common_params = []
-        date_key = "substr(registrado_en,7,4)||substr(registrado_en,4,2)||substr(registrado_en,1,2)"
-        if fecha_desde:
-            common_conditions.append(f"{date_key} >= ?")
-            common_params.append(_date_key(fecha_desde))
-        if fecha_hasta:
-            common_conditions.append(f"{date_key} <= ?")
-            common_params.append(_date_key(fecha_hasta))
         if id_desde is not None:
             common_conditions.append("id >= ?")
             common_params.append(id_desde)
@@ -77,6 +77,24 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
                FROM cambios_turno WHERE """ + where_common + " ORDER BY id DESC""",
             common_params,
         ).fetchall() if "Cambio de Turnos" in selected_tables else []
+
+    desde_clave = _clave_fecha(fecha_desde)
+    hasta_clave = _clave_fecha(fecha_hasta)
+
+    def _en_rango(registrado_en):
+        if not desde_clave and not hasta_clave:
+            return True
+        clave = _clave_fecha(registrado_en)
+        if not clave:
+            return False
+        if desde_clave and clave < desde_clave:
+            return False
+        if hasta_clave and clave > hasta_clave:
+            return False
+        return True
+
+    novedades = [fila for fila in novedades if _en_rango(fila["registrado_en"])]
+    cambios = [fila for fila in cambios if _en_rango(fila["registrado_en"])]
 
     workbook = openpyxl.Workbook()
     del workbook[workbook.sheetnames[0]]

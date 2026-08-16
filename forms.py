@@ -271,7 +271,7 @@ class FormsManager:
             return
         try:
             record_id = self.app.db_store.insert_novedad((
-                None, datetime.now().strftime("%d/%m/%Y %H:%M"), int(self.app.legajo_var.get().strip()),
+                None, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(self.app.legajo_var.get().strip()),
                 self.app.apellidos_nombres_var.get(), self.app.especialidad_var.get(),
                 self.app.dotacion_var.get(), self.app.turnos_var.get(), self.app.franco_var.get(),
                 self.app.novedad_var.get(), self.app.fecha_inicio_novedad_var.get(),
@@ -313,7 +313,7 @@ class FormsManager:
             return
         try:
             record_id = self.app.db_store.insert_cambio_turno((
-                None, datetime.now().strftime("%d/%m/%Y %H:%M"), int(self.app.legajo_var.get().strip()),
+                None, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(self.app.legajo_var.get().strip()),
                 self.app.apellidos_nombres_var.get(), self.app.especialidad_var.get(),
                 self.app.dotacion_var.get(), self.app.turnos_var.get(), self.app.franco_var.get(),
                 int(self.app.legajo_2_var.get().strip()), self.app.apellidos_nombres_2_var.get(),
