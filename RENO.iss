@@ -39,7 +39,7 @@ InfoAfterFile=C:\Users\Lucia\workspace\Registro-de-Novedades-y-Cambios-de-Turnos
 ;PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=C:\Users\Lucia\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\Instalador
-OutputBaseFilename=Registro de novedades
+OutputBaseFilename=RENO
 
 Compression=lzma
 SolidCompression=yes
