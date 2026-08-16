@@ -247,12 +247,25 @@ class FormularioExcelApp:
             self._programar_verificacion_sesion()
 
     def cerrar_sesion_por_expiracion(self):
+        messagebox.showwarning("Sesión expirada", "La sesión expiró por inactividad.", parent=self.root)
+        self._volver_a_login()
+
+    def cambiar_usuario(self):
+        if not messagebox.askyesno(
+            "Cambiar usuario",
+            "¿Desea cerrar la sesión actual para ingresar con otro usuario?",
+            parent=self.root,
+        ):
+            return
+        self._volver_a_login()
+
+    def _volver_a_login(self):
         self.session_active = False
         if self.session_timeout_after:
             self.root.after_cancel(self.session_timeout_after)
+            self.session_timeout_after = None
         self.root.unbind_all("<Any-KeyPress>")
         self.root.unbind_all("<Any-Button>")
-        messagebox.showwarning("Sesión expirada", "La sesión expiró por inactividad.", parent=self.root)
         self.root.config(menu="")
         for child in list(self.root.winfo_children()):
             child.destroy()
@@ -287,6 +300,8 @@ class FormularioExcelApp:
         # Menú Archivo
         self.archivo_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Archivo", menu=self.archivo_menu)
+        self.archivo_menu.add_command(label="Cambiar usuario", command=self.cambiar_usuario)
+        self.archivo_menu.add_separator()
         if self.tiene_permiso("novedades.importar"):
             self.archivo_menu.add_command(label="Importar novedades", command=lambda: self.importar_excel_operativo("NOVEDADES"))
         if self.tiene_permiso("cambios_turno.importar"):
