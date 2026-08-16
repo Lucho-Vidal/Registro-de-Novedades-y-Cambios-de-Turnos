@@ -29,6 +29,7 @@
 - Periodic refresh every 60s (`root.after`); reloads views from SQLite.
 - Auth: first run has no users → login shows a "Legajo" field and a "Crear administrador inicial" button (hidden/destroyed once a user exists). Permissions are checked per-action via `tiene_permiso`/`requerir_permiso`.
 - Session control: 30s activity timeout checked against configured `sesion_minutos` (default 30 min).
+- Edit/delete windows: `novedades`/`cambios_turno` use soft delete via `activo` (0 = deleted, not listed, recoverable). `editar_horas` (default 24) and `eliminar_horas` (default 72) limit editing/deleting by age of `registrado_en`; unparseable legacy dates are blocked. Recovery + permanent delete live in `Administración > Registros eliminados` (`registros.recuperar`); windows are set in `Administración > Tiempos de edición` (`sesion.configurar`).
 - Observations text and filter variables are **separated per form** (`observaciones_novedades_text`, `observaciones_cambios_text`, etc.) to prevent cross-talk when switching views.
 - `Readonly.TEntry` style with bound `<Key>` → `"break"` for programmatic-only Entry fields.
 - Windows username stored in the `usuario_windows` column on save/audit.

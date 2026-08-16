@@ -205,7 +205,8 @@ class SQLiteStore:
                     supervisor TEXT NOT NULL,
                     observaciones TEXT,
                     usuario_windows TEXT,
-                    usuario_id INTEGER REFERENCES usuarios(id)
+                    usuario_id INTEGER REFERENCES usuarios(id),
+                    activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
                 );
 
                 CREATE TABLE IF NOT EXISTS cambios_turno (
@@ -228,7 +229,8 @@ class SQLiteStore:
                     supervisor TEXT NOT NULL,
                     observaciones TEXT,
                     usuario_windows TEXT,
-                    usuario_id INTEGER REFERENCES usuarios(id)
+                    usuario_id INTEGER REFERENCES usuarios(id),
+                    activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
                 );
 
                 CREATE TABLE IF NOT EXISTS auditoria (
@@ -275,8 +277,18 @@ class SQLiteStore:
             user_columns = {row[1] for row in connection.execute("PRAGMA table_info(usuarios)").fetchall()}
             if "legajo" not in user_columns:
                 connection.execute("ALTER TABLE usuarios ADD COLUMN legajo INTEGER")
+            for table in ("novedades", "cambios_turno"):
+                columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+                if "activo" not in columns:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN activo INTEGER NOT NULL DEFAULT 1")
             connection.execute(
                 "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('sesion_minutos', '30')"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('editar_horas', '24')"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('eliminar_horas', '72')"
             )
             connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre) VALUES ('Informe')")
             for nombre in ("PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"):

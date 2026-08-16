@@ -1,6 +1,7 @@
 """Operaciones de negocio para registros operativos, tipos y auditoría."""
 
 import json
+from datetime import datetime, timedelta
 
 
 class RecordsService:
@@ -20,6 +21,46 @@ class RecordsService:
                 self.store.now(),
             ),
         )
+
+    def _parsear_registrado_en(self, valor):
+        if valor is None or str(valor).strip() == "":
+            return None
+        texto = str(valor).strip()
+        try:
+            return datetime.fromisoformat(texto)
+        except ValueError:
+            pass
+        for formato in (
+            "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
+            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+        ):
+            try:
+                return datetime.strptime(texto, formato)
+            except ValueError:
+                continue
+        try:
+            return datetime(1899, 12, 30) + timedelta(days=float(texto))
+        except ValueError:
+            return None
+
+    def _horas_limite(self, connection, clave, default):
+        row = connection.execute("SELECT valor FROM configuracion WHERE clave=?", (clave,)).fetchone()
+        try:
+            return max(1, int(row[0])) if row else default
+        except (TypeError, ValueError):
+            return default
+
+    def _dentro_de_ventana(self, connection, registrado_en, clave, default):
+        fecha = self._parsear_registrado_en(registrado_en)
+        if fecha is None:
+            return False
+        horas = self._horas_limite(connection, clave, default)
+        return (datetime.now() - fecha).total_seconds() <= horas * 3600
+
+    def dentro_de_ventana(self, registrado_en, clave):
+        default = 24 if clave == "editar_horas" else 72
+        with self.store.read_connection() as connection:
+            return self._dentro_de_ventana(connection, registrado_en, clave, default)
 
     def listar_tipos(self, incluir_inactivos=True):
         with self.store.read_connection() as connection:
@@ -129,6 +170,8 @@ class RecordsService:
             before = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
             if not before:
                 raise ValueError("La novedad no existe.")
+            if not self._dentro_de_ventana(connection, before["registrado_en"], "editar_horas", 24):
+                raise ValueError("El registro superó el tiempo permitido para editar.")
             assignments = ", ".join(f"{field}=?" for field in fields)
             connection.execute(f"UPDATE novedades SET {assignments} WHERE id=?", tuple(data[field] for field in fields) + (record_id,))
             after = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
@@ -140,10 +183,70 @@ class RecordsService:
             before = connection.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone()
             if not before:
                 raise ValueError("El cambio de turno no existe.")
+            if not self._dentro_de_ventana(connection, before["registrado_en"], "editar_horas", 24):
+                raise ValueError("El registro superó el tiempo permitido para editar.")
             assignments = ", ".join(f"{field}=?" for field in fields)
             connection.execute(f"UPDATE cambios_turno SET {assignments} WHERE id=?", tuple(data[field] for field in fields) + (record_id,))
             after = connection.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone()
             self._audit(connection, user_id, windows_user, "modificar", "cambio_turno", record_id, dict(before), dict(after))
+
+    def eliminar_novedad(self, record_id, user_id=None, windows_user=None):
+        with self.store.write_transaction() as connection:
+            before = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
+            if not before:
+                raise ValueError("La novedad no existe.")
+            if not self._dentro_de_ventana(connection, before["registrado_en"], "eliminar_horas", 72):
+                raise ValueError("El registro superó el tiempo permitido para eliminar.")
+            connection.execute("UPDATE novedades SET activo=0 WHERE id=?", (record_id,))
+            self._audit(connection, user_id, windows_user, "eliminar", "novedad", record_id, dict(before), {"activo": 0})
+
+    def eliminar_cambio(self, record_id, user_id=None, windows_user=None):
+        with self.store.write_transaction() as connection:
+            before = connection.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone()
+            if not before:
+                raise ValueError("El cambio de turno no existe.")
+            if not self._dentro_de_ventana(connection, before["registrado_en"], "eliminar_horas", 72):
+                raise ValueError("El registro superó el tiempo permitido para eliminar.")
+            connection.execute("UPDATE cambios_turno SET activo=0 WHERE id=?", (record_id,))
+            self._audit(connection, user_id, windows_user, "eliminar", "cambio_turno", record_id, dict(before), {"activo": 0})
+
+    def _tabla_entidad(self, tipo):
+        if tipo == "Novedad":
+            return "novedades", "novedad"
+        if tipo == "Cambio":
+            return "cambios_turno", "cambio_turno"
+        raise ValueError("Tipo de registro inválido.")
+
+    def recuperar_registro(self, tipo, record_id, user_id=None, windows_user=None):
+        table, entidad = self._tabla_entidad(tipo)
+        with self.store.write_transaction() as connection:
+            before = connection.execute(f"SELECT * FROM {table} WHERE id=?", (record_id,)).fetchone()
+            if not before:
+                raise ValueError("El registro no existe.")
+            connection.execute(f"UPDATE {table} SET activo=1 WHERE id=?", (record_id,))
+            self._audit(connection, user_id, windows_user, "recuperar", entidad, record_id, dict(before), {"activo": 1})
+
+    def borrar_definitivo(self, tipo, record_id, user_id=None, windows_user=None):
+        table, entidad = self._tabla_entidad(tipo)
+        with self.store.write_transaction() as connection:
+            before = connection.execute(f"SELECT * FROM {table} WHERE id=?", (record_id,)).fetchone()
+            if not before:
+                raise ValueError("El registro no existe.")
+            connection.execute(f"DELETE FROM {table} WHERE id=?", (record_id,))
+            self._audit(connection, user_id, windows_user, "borrar_definitivo", entidad, record_id, dict(before), None)
+
+    def listar_eliminados(self):
+        with self.store.read_connection() as connection:
+            return connection.execute(
+                """SELECT 'Novedad' AS tipo, id, registrado_en, legajo, apellidos_nombres,
+                          dotacion, novedad AS detalle, observaciones
+                   FROM novedades WHERE activo=0
+                   UNION ALL
+                   SELECT 'Cambio' AS tipo, id, registrado_en, legajo_1, apellidos_nombres_1,
+                          dotacion_1, fecha_cambio, observaciones
+                   FROM cambios_turno WHERE activo=0
+                   ORDER BY registrado_en DESC"""
+            ).fetchall()
 
     def listar_auditoria(self, text_filter=""):
         with self.store.read_connection() as connection:

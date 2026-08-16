@@ -300,7 +300,7 @@ class FormularioExcelApp:
             self.temas_menu.add_command(label=tema, command=lambda t=tema: self.cambiar_tema(t))
 
         if any(self.tiene_permiso(permission) for permission in (
-            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver"
+            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver", "registros.recuperar"
         )):
             self.administracion_menu = tk.Menu(self.menu_bar, tearoff=0)
             self.menu_bar.add_cascade(label="Administración", menu=self.administracion_menu)
@@ -320,6 +320,10 @@ class FormularioExcelApp:
                 self.administracion_menu.add_command(label="Destinatarios de informes", command=self.admin_views.mostrar_destinatarios_informe)
             if self.tiene_permiso("sesion.configurar"):
                 self.administracion_menu.add_command(label="Tiempo de sesión", command=self.admin_views.mostrar_configuracion_sesion)
+            if self.tiene_permiso("sesion.configurar"):
+                self.administracion_menu.add_command(label="Tiempos de edición", command=self.admin_views.mostrar_configuracion_tiempos)
+            if self.tiene_permiso("registros.recuperar"):
+                self.administracion_menu.add_command(label="Registros eliminados", command=self.admin_views.mostrar_registros_eliminados)
             if self.tiene_permiso("auditoria.ver"):
                 self.administracion_menu.add_command(label="Auditoría", command=self.admin_views.mostrar_auditoria)
 
@@ -402,7 +406,8 @@ class FormularioExcelApp:
             self.db_store,
             """SELECT id, registrado_en, legajo, apellidos_nombres, especialidad, dotacion,
                       turnos, franco, novedad, fecha_inicio, fecha_fin, referencia_estacion,
-                      supervisor, observaciones, usuario_windows FROM novedades ORDER BY id DESC""",
+                      supervisor, observaciones, usuario_windows
+               FROM novedades WHERE activo=1 ORDER BY id DESC""",
         )
         self.sheet_cambio_turnos = SQLiteSheetAdapter(
             self.db_store,
@@ -410,7 +415,7 @@ class FormularioExcelApp:
                       dotacion_1, turnos_1, franco_1, legajo_2, apellidos_nombres_2,
                       especialidad_2, dotacion_2, turnos_2, franco_2, fecha_cambio,
                       referencia_estacion, supervisor, observaciones, usuario_windows
-               FROM cambios_turno ORDER BY id DESC""",
+               FROM cambios_turno WHERE activo=1 ORDER BY id DESC""",
         )
 
     def leer_archivo_base(self):

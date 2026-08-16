@@ -135,17 +135,41 @@ class TablesManager:
             else:
                 ttk.Label(modal, text=valor).grid(row=idx, column=1, pady=2, padx=10, sticky="w")
         
-        ttk.Button(modal, text="Cerrar", command=modal.destroy).grid(
-            row=row_button, column=0, pady=10, padx=10
-        )
-        if vista == "novedad" and self.app.tiene_permiso("novedades.editar"):
-            ttk.Button(modal, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "novedad"))).grid(
-                row=row_button, column=1, pady=10, padx=10
-            )
-        elif vista != "novedad" and self.app.tiene_permiso("cambios_turno.editar"):
-            ttk.Button(modal, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "cambio"))).grid(
-                row=row_button, column=1, pady=10, padx=10
-            )
+        botones = ttk.Frame(modal)
+        botones.grid(row=row_button, column=0, columnspan=2, pady=10, padx=10)
+        ttk.Button(botones, text="Cerrar", command=modal.destroy).pack(side="left", padx=5)
+
+        registrado_en = novedad[1] if len(novedad) > 1 else None
+        if vista == "novedad":
+            puede_editar = self.app.tiene_permiso("novedades.editar") and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+            puede_eliminar = self.app.tiene_permiso("novedades.eliminar") and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+        else:
+            puede_editar = self.app.tiene_permiso("cambios_turno.editar") and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+            puede_eliminar = self.app.tiene_permiso("cambios_turno.eliminar") and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+
+        if puede_editar:
+            ttk.Button(botones, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "novedad" if vista == "novedad" else "cambio"))).pack(side="left", padx=5)
+
+        if puede_eliminar:
+            def eliminar_registro():
+                if not messagebox.askyesno(
+                    "Eliminar",
+                    f"¿Eliminar el registro #{novedad[0]}?\n\n"
+                    "El registro dejará de listarse pero podrá recuperarse desde Administración.",
+                    parent=modal,
+                ):
+                    return
+                try:
+                    if vista == "novedad":
+                        self.app.records_service.eliminar_novedad(int(novedad[0]), self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                        self.cargar_datos_completos_novedades()
+                    else:
+                        self.app.records_service.eliminar_cambio(int(novedad[0]), self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                        self.cargar_datos_completos_cambios()
+                    modal.destroy()
+                except Exception as error:
+                    messagebox.showerror("Eliminar", str(error), parent=modal)
+            ttk.Button(botones, text="Eliminar", command=eliminar_registro).pack(side="left", padx=5)
 
     def mostrar_editor(self, record_id, record_type):
         """Edita un registro y registra el antes/después en auditoría."""

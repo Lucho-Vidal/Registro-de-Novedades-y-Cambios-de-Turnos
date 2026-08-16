@@ -36,7 +36,7 @@ class AuthService:
     def autenticar(self, username, password):
         with self.store.read_connection() as connection:
             user = connection.execute(
-                "SELECT * FROM usuarios WHERE username=? AND activo=1", (username.strip(),)
+                "SELECT * FROM usuarios WHERE username=? COLLATE BINARY AND activo=1", (username.strip(),)
             ).fetchone()
         if not user or not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
             return None
@@ -178,11 +178,12 @@ class AuthService:
                 raise ValueError("Ya existe un usuario administrador.")
         permissions = (
             "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
-            "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "excel.exportar",
+            "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
+            "excel.exportar",
             "usuarios.administrar", "roles.administrar", "empleados.importar", "auditoria.ver",
             "dotaciones.administrar",
             "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
-            "destinatarios_informe.administrar", "sesion.configurar",
+            "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
         )
         with self.store.write_transaction() as connection:
             password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")

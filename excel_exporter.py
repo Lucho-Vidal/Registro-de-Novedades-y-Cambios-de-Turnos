@@ -55,6 +55,7 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
         if id_hasta is not None:
             common_conditions.append("id <= ?")
             common_params.append(id_hasta)
+        common_conditions.append("activo = 1")
         where_common = " AND ".join(common_conditions) or "1=1"
         novedades_conditions = list(common_conditions)
         novedades_params = list(common_params)

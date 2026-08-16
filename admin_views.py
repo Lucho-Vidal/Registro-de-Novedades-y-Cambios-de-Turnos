@@ -8,11 +8,12 @@ from excel_exporter import export_auditoria
 
 PERMISOS_BASE = (
     "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
-    "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "excel.exportar",
+    "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
+    "excel.exportar",
     "usuarios.administrar", "roles.administrar", "empleados.importar", "auditoria.ver",
     "dotaciones.administrar",
     "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
-    "destinatarios_informe.administrar", "sesion.configurar",
+    "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
 )
 
 
@@ -425,6 +426,90 @@ class AdminViews:
         self.app.db_store.set_configuracion("sesion_minutos", minutos)
         self.app.renovar_sesion()
         messagebox.showinfo("Tiempo de sesión", f"La sesión expirará luego de {minutos} minutos sin actividad.", parent=self.app.root)
+
+    def mostrar_configuracion_tiempos(self):
+        if not self.app.requerir_permiso("sesion.configurar"):
+            return
+        editar_horas = simpledialog.askinteger(
+            "Tiempos de edición", "Horas permitidas para editar un registro desde su creación:",
+            initialvalue=int(self.app.db_store.get_configuracion("editar_horas", "24")),
+            minvalue=1, maxvalue=8760, parent=self.app.root,
+        )
+        if editar_horas is None:
+            return
+        eliminar_horas = simpledialog.askinteger(
+            "Tiempos de edición", "Horas permitidas para eliminar un registro desde su creación:",
+            initialvalue=int(self.app.db_store.get_configuracion("eliminar_horas", "72")),
+            minvalue=1, maxvalue=8760, parent=self.app.root,
+        )
+        if eliminar_horas is None:
+            return
+        self.app.db_store.set_configuracion("editar_horas", editar_horas)
+        self.app.db_store.set_configuracion("eliminar_horas", eliminar_horas)
+        messagebox.showinfo(
+            "Tiempos de edición",
+            f"Se podrá editar dentro de {editar_horas} horas y eliminar dentro de {eliminar_horas} horas.",
+            parent=self.app.root,
+        )
+
+    def mostrar_registros_eliminados(self):
+        if not self.app.requerir_permiso("registros.recuperar"):
+            return
+        window = tk.Toplevel(self.app.root)
+        window.title("Registros eliminados")
+        window.geometry("1100x480")
+        self.app.aplicar_tema_ventana(window)
+        tree = ttk.Treeview(window, columns=("tipo", "id", "fecha", "legajo", "empleado", "dotacion", "detalle", "observaciones"), show="headings")
+        for column, title, width in (
+            ("tipo", "Tipo", 80), ("id", "ID", 50), ("fecha", "Fecha de registro", 140),
+            ("legajo", "Legajo", 70), ("empleado", "Empleado", 220), ("dotacion", "Dotación", 80),
+            ("detalle", "Detalle", 180), ("observaciones", "Observaciones", 240),
+        ):
+            tree.heading(column, text=title)
+            tree.column(column, width=width)
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            for row in self.app.records_service.listar_eliminados():
+                tree.insert("", "end", values=tuple("-" if value is None else value for value in row))
+
+        def selected():
+            selection = tree.selection()
+            return (tree.item(selection[0], "values")[0], int(tree.item(selection[0], "values")[1])) if selection else None
+
+        def recuperar():
+            if not selected():
+                return
+            tipo, record_id = selected()
+            try:
+                self.app.records_service.recuperar_registro(tipo, record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                self.app.cargar_excel()
+                refresh()
+            except Exception as error:
+                messagebox.showerror("Recuperar", str(error), parent=window)
+
+        def borrar_definitivo():
+            if not selected():
+                return
+            tipo, record_id = selected()
+            if not messagebox.askyesno(
+                "Borrado definitivo",
+                f"¿Eliminar definitivamente el registro #{record_id}?\n\nEsta acción no se puede deshacer.",
+                parent=window,
+            ):
+                return
+            try:
+                self.app.records_service.borrar_definitivo(tipo, record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                refresh()
+            except Exception as error:
+                messagebox.showerror("Borrado definitivo", str(error), parent=window)
+
+        buttons = ttk.Frame(window)
+        buttons.pack(fill="x", padx=10, pady=8)
+        ttk.Button(buttons, text="Recuperar", command=recuperar).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Borrar definitivamente", command=borrar_definitivo).pack(side="left", padx=3)
+        refresh()
 
     def mostrar_auditoria(self):
         if not self.app.requerir_permiso("auditoria.ver"):
