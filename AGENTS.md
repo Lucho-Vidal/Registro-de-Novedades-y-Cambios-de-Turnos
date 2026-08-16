@@ -26,6 +26,8 @@
 - Store is a single SQLite file (`*.sqlite`); if it doesn't exist and the configured `.xlsx` exists, it auto-migrates once (`migrate_workbook`).
 - New records are inserted and displayed latest-first (`ORDER BY id DESC`) in `NOVEDADES` and `Cambio de Turnos` views.
 - `BASE`/empleados rows cached in memory (`base_rows` + `base_index`) — keep legajo lookups aligned with that cache (`db_store.get_base_rows()`).
+- Empleados CRUD lives in `Administración > Empleados` (`empleados.administrar`, solo administradores) with soft delete (`activo` toggle via `cambiar_estado_empleado`); after any change call `actualizar_cache_base()` + `cargarDotaciones()` to keep the legajo modal and dotación cache in sync. `empleados.importar` still covers Excel import via Archivo.
+- Employee form (`Administración > Empleados`): Legajo (número), Apellidos y nombres (obligatorio), Especialidad/Dotación/Franco are required readonly Comboboxes (`ESPECIALIDADES_EMPLEADO`, `self.app.dotaciones`, `DIAS_SEMANA`); legacy values not in a list are appended to the options so they stay editable.
 - Periodic refresh every 60s (`root.after`); reloads views from SQLite.
 - Auth: first run has no users → login shows a "Legajo" field and a "Crear administrador inicial" button (hidden/destroyed once a user exists). Permissions are checked per-action via `tiene_permiso`/`requerir_permiso`.
 - Session control: 30s activity timeout checked against configured `sesion_minutos` (default 30 min).

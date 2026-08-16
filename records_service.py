@@ -1,6 +1,7 @@
 """Operaciones de negocio para registros operativos, tipos y auditoría."""
 
 import json
+import sqlite3
 from datetime import datetime, timedelta
 
 
@@ -135,6 +136,86 @@ class RecordsService:
                 raise ValueError("El personal de estación no existe.")
             connection.execute("UPDATE personal_estacion SET nombre=?, activo=? WHERE id=?", (nombre, int(activo), item_id))
             self._audit(connection, user_id, windows_user, "modificar", "personal_estacion", item_id, dict(before), {"nombre": nombre, "activo": int(activo)})
+
+    def listar_empleados(self, incluir_inactivos=True):
+        with self.store.read_connection() as connection:
+            query = "SELECT id, legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, activo FROM empleados"
+            if not incluir_inactivos:
+                query += " WHERE activo=1"
+            return connection.execute(query + " ORDER BY apellidos_nombres").fetchall()
+
+    def obtener_empleado(self, empleado_id):
+        with self.store.read_connection() as connection:
+            return connection.execute("SELECT * FROM empleados WHERE id=?", (empleado_id,)).fetchone()
+
+    def _validar_empleado(self, data):
+        try:
+            legajo = int(str(data.get("legajo")).strip())
+        except (TypeError, ValueError):
+            raise ValueError("El legajo debe ser un número.")
+        apellidos = (data.get("apellidos_nombres") or "").strip()
+        if not apellidos:
+            raise ValueError("Los apellidos y nombres son obligatorios.")
+        return legajo, apellidos
+
+    def crear_empleado(self, data, user_id=None, windows_user=None):
+        legajo, apellidos = self._validar_empleado(data)
+        valores = {
+            "legajo": legajo,
+            "apellidos_nombres": apellidos,
+            "especialidad": (data.get("especialidad") or "").strip(),
+            "dotacion": (data.get("dotacion") or "").strip(),
+            "turnos": (data.get("turnos") or "").strip(),
+            "franco": (data.get("franco") or "").strip(),
+        }
+        with self.store.write_transaction() as connection:
+            try:
+                cursor = connection.execute(
+                    """INSERT INTO empleados(legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, actualizado_en)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (valores["legajo"], valores["apellidos_nombres"], valores["especialidad"],
+                     valores["dotacion"], valores["turnos"], valores["franco"], self.store.now()),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError(f"Ya existe un empleado con el legajo {legajo}.")
+            self._audit(connection, user_id, windows_user, "crear", "empleado", cursor.lastrowid, None, valores)
+            return cursor.lastrowid
+
+    def actualizar_empleado(self, empleado_id, data, user_id=None, windows_user=None):
+        legajo, apellidos = self._validar_empleado(data)
+        valores = {
+            "legajo": legajo,
+            "apellidos_nombres": apellidos,
+            "especialidad": (data.get("especialidad") or "").strip(),
+            "dotacion": (data.get("dotacion") or "").strip(),
+            "turnos": (data.get("turnos") or "").strip(),
+            "franco": (data.get("franco") or "").strip(),
+        }
+        with self.store.write_transaction() as connection:
+            before = connection.execute("SELECT * FROM empleados WHERE id=?", (empleado_id,)).fetchone()
+            if not before:
+                raise ValueError("El empleado no existe.")
+            try:
+                connection.execute(
+                    """UPDATE empleados SET legajo=?, apellidos_nombres=?, especialidad=?, dotacion=?,
+                          turnos=?, franco=?, actualizado_en=? WHERE id=?""",
+                    (valores["legajo"], valores["apellidos_nombres"], valores["especialidad"],
+                     valores["dotacion"], valores["turnos"], valores["franco"], self.store.now(), empleado_id),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError(f"Ya existe un empleado con el legajo {legajo}.")
+            after = connection.execute("SELECT * FROM empleados WHERE id=?", (empleado_id,)).fetchone()
+            self._audit(connection, user_id, windows_user, "modificar", "empleado", empleado_id, dict(before), dict(after))
+
+    def cambiar_estado_empleado(self, empleado_id, user_id=None, windows_user=None):
+        with self.store.write_transaction() as connection:
+            before = connection.execute("SELECT * FROM empleados WHERE id=?", (empleado_id,)).fetchone()
+            if not before:
+                raise ValueError("El empleado no existe.")
+            nuevo_estado = 1 - before["activo"]
+            connection.execute("UPDATE empleados SET activo=? WHERE id=?", (nuevo_estado, empleado_id))
+            accion = "desactivar" if nuevo_estado == 0 else "reactivar"
+            self._audit(connection, user_id, windows_user, accion, "empleado", empleado_id, dict(before), {"activo": nuevo_estado})
 
     def listar_destinatarios_informe(self, incluir_inactivos=True):
         return self.store.get_destinatarios_informe(incluir_inactivos)

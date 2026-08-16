@@ -12,12 +12,21 @@ PERMISOS_BASE = (
     "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
     "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
     "excel.exportar",
-    "usuarios.administrar", "roles.administrar", "empleados.importar", "auditoria.ver",
+    "usuarios.administrar", "roles.administrar", "empleados.importar", "empleados.administrar",
+    "auditoria.ver",
     "dotaciones.administrar",
     "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
     "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
     "backup.gestionar",
 )
+
+
+ESPECIALIDADES_EMPLEADO = (
+    "Conductor Eléctrico", "Conductor Diesel", "Ayudante Habilitado", "Ayudante Conductor",
+    "Guarda Eléctrico", "Guarda Diesel",
+)
+
+DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 
 
 def _formatear_tamano(bytes_valor):
@@ -307,6 +316,133 @@ class AdminViews:
         ttk.Button(buttons, text="Nuevo", command=add).pack(side="left", padx=3)
         ttk.Button(buttons, text="Editar", command=edit).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle).pack(side="left", padx=3)
+        refresh()
+
+    def mostrar_empleados(self):
+        if not self.app.requerir_permiso("empleados.administrar"):
+            return
+        window = tk.Toplevel(self.app.root)
+        window.title("Empleados")
+        window.geometry("980x460")
+        self.app.aplicar_tema_ventana(window)
+        tree = ttk.Treeview(window, columns=("id", "legajo", "apellidos", "especialidad", "dotacion", "turnos", "franco", "activo"), show="headings")
+        for column, title, width in (
+            ("id", "ID", 50), ("legajo", "Legajo", 70), ("apellidos", "Apellidos y nombres", 260),
+            ("especialidad", "Especialidad", 150), ("dotacion", "Dotación", 80), ("turnos", "Turnos", 160),
+            ("franco", "Franco", 100), ("activo", "Activo", 70),
+        ):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, stretch=column in {"apellidos", "especialidad", "turnos"})
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            for row in self.app.records_service.listar_empleados():
+                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "-", row[4] or "-", row[5] or "-", row[6] or "-", "Sí" if row[7] else "No"))
+
+        def _dialogo(valores_iniciales=None):
+            self.app.cargarDotaciones()
+            dialog = tk.Toplevel(window)
+            dialog.title("Nuevo empleado" if valores_iniciales is None else "Editar empleado")
+            dialog.geometry("430x330")
+            self.app.aplicar_tema_ventana(dialog)
+            dialog.transient(window)
+            dialog.grab_set()
+
+            def opciones(lista, valor):
+                opciones_lista = list(lista)
+                if valor and valor not in opciones_lista:
+                    opciones_lista.append(valor)
+                return opciones_lista
+
+            legajo_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("legajo") or ""))
+            apellidos_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("apellidos_nombres") or ""))
+            especialidad_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("especialidad") or ""))
+            dotacion_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("dotacion") or ""))
+            turnos_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("turnos") or ""))
+            franco_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("franco") or ""))
+
+            ttk.Label(dialog, text="Legajo").grid(row=0, column=0, sticky="w", padx=12, pady=4)
+            ttk.Entry(dialog, textvariable=legajo_var, width=30).grid(row=0, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Apellidos y nombres").grid(row=1, column=0, sticky="w", padx=12, pady=4)
+            ttk.Entry(dialog, textvariable=apellidos_var, width=30).grid(row=1, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Especialidad").grid(row=2, column=0, sticky="w", padx=12, pady=4)
+            ttk.Combobox(dialog, textvariable=especialidad_var, values=opciones(ESPECIALIDADES_EMPLEADO, especialidad_var.get()), state="readonly", width=28).grid(row=2, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Dotación").grid(row=3, column=0, sticky="w", padx=12, pady=4)
+            ttk.Combobox(dialog, textvariable=dotacion_var, values=opciones(self.app.dotaciones, dotacion_var.get()), state="readonly", width=28).grid(row=3, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Turnos").grid(row=4, column=0, sticky="w", padx=12, pady=4)
+            ttk.Entry(dialog, textvariable=turnos_var, width=30).grid(row=4, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Franco").grid(row=5, column=0, sticky="w", padx=12, pady=4)
+            ttk.Combobox(dialog, textvariable=franco_var, values=opciones(DIAS_SEMANA, franco_var.get()), state="readonly", width=28).grid(row=5, column=1, sticky="ew", padx=12, pady=4)
+
+            def guardar():
+                data = {
+                    "legajo": legajo_var.get(),
+                    "apellidos_nombres": apellidos_var.get(),
+                    "especialidad": especialidad_var.get(),
+                    "dotacion": dotacion_var.get(),
+                    "turnos": turnos_var.get(),
+                    "franco": franco_var.get(),
+                }
+                try:
+                    int(data["legajo"])
+                except ValueError:
+                    messagebox.showerror("Empleados", "El legajo debe ser un número.", parent=dialog)
+                    return
+                if not data["apellidos_nombres"].strip():
+                    messagebox.showerror("Empleados", "Los apellidos y nombres son obligatorios.", parent=dialog)
+                    return
+                for campo, etiqueta in (("especialidad", "Especialidad"), ("dotacion", "Dotación"), ("franco", "Franco")):
+                    if not data[campo]:
+                        messagebox.showerror("Empleados", f"Debe elegir {etiqueta}.", parent=dialog)
+                        return
+                try:
+                    if valores_iniciales is None:
+                        self.app.records_service.crear_empleado(data, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    else:
+                        self.app.records_service.actualizar_empleado(int(valores_iniciales["id"]), data, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                except Exception as error:
+                    messagebox.showerror("Empleados", str(error), parent=dialog)
+                    return
+                self.app.actualizar_cache_base()
+                self.app.cargarDotaciones()
+                refresh()
+                dialog.destroy()
+
+            ttk.Button(dialog, text="Guardar", command=guardar).grid(row=6, column=0, columnspan=2, pady=15)
+
+        def nuevo():
+            _dialogo()
+
+        def editar():
+            selection = tree.selection()
+            if not selection:
+                return
+            fila = self.app.records_service.obtener_empleado(int(tree.item(selection[0], "values")[0]))
+            if not fila:
+                messagebox.showerror("Empleados", "El empleado ya no existe.", parent=window)
+                return
+            _dialogo(dict(fila))
+
+        def alternar():
+            selection = tree.selection()
+            if not selection:
+                return
+            empleado_id = int(tree.item(selection[0], "values")[0])
+            try:
+                self.app.records_service.cambiar_estado_empleado(empleado_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+            except Exception as error:
+                messagebox.showerror("Empleados", str(error), parent=window)
+                return
+            self.app.actualizar_cache_base()
+            refresh()
+
+        buttons = ttk.Frame(window)
+        buttons.pack(fill="x", padx=10, pady=5)
+        ttk.Button(buttons, text="Nuevo", command=nuevo).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Editar", command=editar).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Activar / desactivar", command=alternar).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Cerrar", command=window.destroy).pack(side="right", padx=3)
         refresh()
 
     def mostrar_personal_estacion(self):

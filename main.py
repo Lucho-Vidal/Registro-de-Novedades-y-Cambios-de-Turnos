@@ -308,7 +308,7 @@ class FormularioExcelApp:
             self.temas_menu.add_command(label=tema, command=lambda t=tema: self.cambiar_tema(t))
 
         if any(self.tiene_permiso(permission) for permission in (
-            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver", "registros.recuperar", "backup.gestionar"
+            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver", "registros.recuperar", "backup.gestionar", "empleados.administrar"
         )):
             self.administracion_menu = tk.Menu(self.menu_bar, tearoff=0)
             self.menu_bar.add_cascade(label="Administración", menu=self.administracion_menu)
@@ -317,6 +317,8 @@ class FormularioExcelApp:
                 self.administracion_menu.add_command(label="Usuarios", command=self.admin_views.mostrar_usuarios)
             if self.tiene_permiso("roles.administrar"):
                 self.administracion_menu.add_command(label="Roles y permisos", command=self.admin_views.mostrar_roles)
+            if self.tiene_permiso("empleados.administrar"):
+                self.administracion_menu.add_command(label="Empleados", command=self.admin_views.mostrar_empleados)
             if self.tiene_permiso("novedades.editar"):
                 self.administracion_menu.add_command(label="Tipos de novedad", command=self.admin_views.mostrar_tipos_novedad)
             if self.tiene_permiso("dotaciones.administrar"):
