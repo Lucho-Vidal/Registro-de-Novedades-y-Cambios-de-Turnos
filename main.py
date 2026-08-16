@@ -287,11 +287,13 @@ class FormularioExcelApp:
         # Menú Archivo
         self.archivo_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Archivo", menu=self.archivo_menu)
-        self.archivo_menu.add_command(label="Importar novedades", command=lambda: self.importar_excel_operativo("NOVEDADES"))
-        self.archivo_menu.add_command(label="Importar cambios de turno", command=lambda: self.importar_excel_operativo("Cambio de Turnos"))
+        if self.tiene_permiso("novedades.importar"):
+            self.archivo_menu.add_command(label="Importar novedades", command=lambda: self.importar_excel_operativo("NOVEDADES"))
+        if self.tiene_permiso("cambios_turno.importar"):
+            self.archivo_menu.add_command(label="Importar cambios de turno", command=lambda: self.importar_excel_operativo("Cambio de Turnos"))
         if self.tiene_permiso("empleados.importar") or self.tiene_permiso("usuarios.administrar"):
             self.archivo_menu.add_command(label="Importar empleados", command=lambda: self.importar_excel_operativo("BASE"))
-        if self.tiene_permiso("excel.exportar"):
+        if self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar"):
             self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
         
         # Menú Opciones
@@ -462,7 +464,8 @@ class FormularioExcelApp:
 
     def exportar_excel(self):
         """Abre el selector de filtros y exporta una copia consistente."""
-        if not self.requerir_permiso("excel.exportar"):
+        if not (self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar")):
+            self.requerir_permiso("novedades.exportar")
             return
         window = tk.Toplevel(self.root)
         window.title("Exportar a Excel")
@@ -486,6 +489,11 @@ class FormularioExcelApp:
 
         def run_export():
             try:
+                tabla_sel = tabla.get()
+                permiso_exportar = "novedades.exportar" if tabla_sel == "NOVEDADES" else "cambios_turno.exportar"
+                if not self.tiene_permiso(permiso_exportar):
+                    messagebox.showwarning("Exportación", "Su usuario no tiene permiso para exportar esta tabla.", parent=window)
+                    return
                 parsed_id_desde = int(id_desde.get()) if id_desde.get().strip() else None
                 parsed_id_hasta = int(id_hasta.get()) if id_hasta.get().strip() else None
                 if fecha_desde.get() and len(fecha_desde.get().split("/")) != 3:
@@ -504,7 +512,7 @@ class FormularioExcelApp:
                     fecha_desde.get() or None, fecha_hasta.get() or None,
                     parsed_id_desde, parsed_id_hasta,
                     None if tipo.get() == "Todos" else tipo.get(),
-                    tables=[tabla.get()],
+                    tables=[tabla_sel],
                 )
                 window.destroy()
                 messagebox.showinfo("Exportación", f"Archivo exportado correctamente:\n{destino}")
@@ -520,9 +528,10 @@ class FormularioExcelApp:
     def importar_excel_operativo(self, sheet_name):
         """Importa solo una tabla operativa desde un Excel seleccionado."""
         if sheet_name == "BASE":
-            allowed = self.tiene_permiso("empleados.importar") or self.tiene_permiso("usuarios.administrar")
+            permission = "empleados.importar"
+            allowed = self.tiene_permiso(permission) or self.tiene_permiso("usuarios.administrar")
         else:
-            permission = "novedades.crear" if sheet_name == "NOVEDADES" else "cambios_turno.crear"
+            permission = "novedades.importar" if sheet_name == "NOVEDADES" else "cambios_turno.importar"
             allowed = self.tiene_permiso(permission)
         if not allowed:
             self.requerir_permiso("empleados.importar" if sheet_name == "BASE" else permission)

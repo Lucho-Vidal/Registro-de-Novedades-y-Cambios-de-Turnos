@@ -210,8 +210,9 @@ class AuthService:
                 raise ValueError("Ya existe un usuario administrador.")
         permissions = (
             "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
+            "novedades.importar", "novedades.exportar",
             "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
-            "excel.exportar",
+            "cambios_turno.importar", "cambios_turno.exportar",
             "usuarios.administrar", "roles.administrar", "empleados.importar", "empleados.administrar",
             "auditoria.ver",
             "dotaciones.administrar",
