@@ -10,7 +10,7 @@ def configured_paths():
     try:
         excel_file = Path(Path("path_base").read_text(encoding="utf-8").strip())
     except (FileNotFoundError, OSError):
-        excel_file = Path("PLANILLA NOVEDADES PERSONAL ABORDO.xlsx")
+        excel_file = Path("RENO.xlsx")
     if excel_file.suffix.lower() == ".sqlite":
         return excel_file.with_suffix(".xlsx"), excel_file
     return excel_file, excel_file.with_suffix(".sqlite")

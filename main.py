@@ -689,7 +689,7 @@ class FormularioExcelApp:
                 self.excel_file = file.read().strip()
         except Exception as e:
             print(f"Error leyendo el archivo: {e}")
-            self.excel_file = r'PLANILLA NOVEDADES PERSONAL ABORDO.xlsx'
+            self.excel_file = r'RENO.xlsx'
 
     def seleccionar_base_sqlite(self):
         """Selecciona la base SQLite compartida para el próximo inicio."""
