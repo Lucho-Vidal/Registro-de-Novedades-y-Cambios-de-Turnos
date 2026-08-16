@@ -243,7 +243,6 @@ class TablesManager:
                 messagebox.showerror("Edición", str(error), parent=window)
 
         ttk.Button(window, text="Guardar cambios", command=save).grid(row=len(fields), column=0, columnspan=2, pady=15)
-        self.app.aplicar_tema_ventana(window)
     
     def cargar_datos_completos_novedades(self):
         """Carga todos los datos de novedades en la tabla sin filtros.

@@ -13,7 +13,7 @@ class FormsManager:
     
     Maneja la presentación de formularios de novedades y cambios de turnos,
     búsqueda de personal por legajo (con modal filtrable), validación,
-    guardado en Excel y manejo de errores.
+    guardado en la base de datos y manejo de errores.
     
     Attributes:
         app: Referencia a la aplicación FormularioExcelApp que contiene
@@ -181,8 +181,6 @@ class FormsManager:
                 legajo = int(self.app.legajo_var.get().strip())
             elif campo == 2:
                 legajo = int(self.app.legajo_2_var.get().strip())
-                
-            print(f"Buscando legajo SAP: {legajo}")
 
             row = self.app.base_index.get(legajo)
             if row:
@@ -198,10 +196,8 @@ class FormsManager:
                     self.app.dotacion_2_var.set(row[3])
                     self.app.turnos_2_var.set(row[4])
                     self.app.franco_2_var.set(row[5])
-                print(f"Legajo encontrado: {legajo}")
             else:
                 messagebox.showinfo("Legajo No Encontrado", f"El legajo {legajo} no fue encontrado.")
-                print(f"Legajo SAP {legajo} no encontrado.")
 
         except ValueError:
             messagebox.showerror("Error de entrada", "Por favor, ingrese un número de legajo válido.")
