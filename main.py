@@ -227,9 +227,12 @@ class FormularioExcelApp:
         if not getattr(self, "session_active", False):
             return
         self.session_last_activity = time.monotonic()
+        self._programar_verificacion_sesion()
+
+    def _programar_verificacion_sesion(self):
         if self.session_timeout_after:
             self.root.after_cancel(self.session_timeout_after)
-        self.session_timeout_after = self.root.after(30000, self.verificar_sesion)
+        self.session_timeout_after = self.root.after(INTERVALO_SESION_MS, self.verificar_sesion)
 
     def verificar_sesion(self):
         if not self.session_active:
@@ -241,7 +244,7 @@ class FormularioExcelApp:
         if time.monotonic() - self.session_last_activity >= minutos * 60:
             self.cerrar_sesion_por_expiracion()
         else:
-            self.renovar_sesion()
+            self._programar_verificacion_sesion()
 
     def cerrar_sesion_por_expiracion(self):
         self.session_active = False
