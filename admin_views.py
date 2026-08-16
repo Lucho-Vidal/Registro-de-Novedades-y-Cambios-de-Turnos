@@ -742,6 +742,58 @@ class AdminViews:
             parent=self.app.root,
         )
 
+    def mostrar_configuracion_notificaciones(self):
+        if not self.app.requerir_permiso("sesion.configurar"):
+            return
+        window = tk.Toplevel(self.app.root)
+        window.title("Notificaciones")
+        window.geometry("480x250")
+        window.resizable(False, False)
+        self.app.aplicar_tema_ventana(window)
+        window.transient(self.app.root)
+        window.grab_set()
+        activo = tk.BooleanVar(
+            value=str(self.app.db_store.get_configuracion("notificaciones_activo", "1")) == "1"
+        )
+        try:
+            duracion = int(self.app.db_store.get_configuracion("toast_duracion", "6"))
+        except (TypeError, ValueError):
+            duracion = 6
+        duracion_var = tk.IntVar(value=max(1, duracion))
+        form = ttk.Frame(window)
+        form.pack(fill="x", padx=20, pady=18)
+        ttk.Label(
+            form,
+            text=("Notificar registros (novedades y cambios de turno)\n"
+                  "cargados por otros usuarios, desde su último ingreso."),
+            justify="left",
+        ).pack(anchor="w")
+        ttk.Checkbutton(form, text="Activar notificaciones", variable=activo).pack(anchor="w", pady=(12, 4))
+        ttk.Label(form, text="Duración del toast (segundos)").pack(anchor="w", pady=(10, 2))
+        ttk.Spinbox(form, from_=1, to=60, textvariable=duracion_var, width=8).pack(anchor="w")
+
+        def guardar():
+            try:
+                segundos = duracion_var.get()
+            except (TypeError, ValueError):
+                segundos = 6
+            if segundos < 1:
+                segundos = 6
+            self.app.db_store.set_configuracion("notificaciones_activo", 1 if activo.get() else 0)
+            self.app.db_store.set_configuracion("toast_duracion", segundos)
+            window.destroy()
+            estado = "activadas" if activo.get() else "desactivadas"
+            messagebox.showinfo(
+                "Notificaciones",
+                f"Notificaciones {estado}. El toast se mostrará durante {segundos} segundos.",
+                parent=self.app.root,
+            )
+
+        bottom = ttk.Frame(window)
+        bottom.pack(fill="x", padx=20, pady=(0, 16))
+        ttk.Button(bottom, text="Guardar", command=guardar).pack(side="left", padx=3)
+        ttk.Button(bottom, text="Cancelar", command=window.destroy).pack(side="left", padx=3)
+
     def mostrar_registros_eliminados(self):
         if not self.app.requerir_permiso("registros.recuperar"):
             return

@@ -5,6 +5,7 @@ import ctypes
 import math
 import time
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 from config import (
@@ -105,8 +106,21 @@ class FormularioExcelApp:
                 "darkly", "sandstone", "superhero", "morph"
             ]
         
+        # Estado de notificaciones y registros nuevos
+        self._baseline_ultimo_ingreso = self.current_user.get("ultimo_ingreso")
+        self._mi_usuario_windows = self.obtener_usuario_windows()
+        self._registros_nuevos = {"novedades": [], "cambios_turno": []}
+        self._ids_vistos = {"novedades": set(), "cambios_turno": set()}
+        self._ultima_revision = self._leer_ultima_revision()
+        self._no_revisados = 0
+        self._toast_window = None
+        self._toast_after = None
+        self._registros_menu_index = None
+        self._startup_toast_hecho = False
+
         # Menú principal
         self._crear_menu()
+        self._recalcular_registros_nuevos(es_inicio=True)
         
         # Etiqueta de tema
         self.label = tk.Label(self.root, text=f"Tema actual: {self.theme}", font=("Arial", 8),
@@ -308,9 +322,15 @@ class FormularioExcelApp:
             self.archivo_menu.add_command(label="Importar cambios de turno", command=lambda: self.importar_excel_operativo("Cambio de Turnos"))
         if self.tiene_permiso("empleados.importar") or self.tiene_permiso("usuarios.administrar"):
             self.archivo_menu.add_command(label="Importar empleados", command=lambda: self.importar_excel_operativo("BASE"))
-        if self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar"):
-            self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
-        
+            if self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar"):
+                self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
+
+        # Menú Registros nuevos
+        self.registros_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Registros nuevos", menu=self.registros_menu, state="disabled")
+        self._registros_menu_index = self.menu_bar.index("end")
+        self.registros_menu.configure(postcommand=self._marcar_revisado)
+
         # Menú Opciones
         self.opciones_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Opciones", menu=self.opciones_menu)
@@ -348,6 +368,8 @@ class FormularioExcelApp:
                 self.administracion_menu.add_command(label="Tiempo de sesión", command=self.admin_views.mostrar_configuracion_sesion)
             if self.tiene_permiso("sesion.configurar"):
                 self.administracion_menu.add_command(label="Tiempos de edición", command=self.admin_views.mostrar_configuracion_tiempos)
+            if self.tiene_permiso("sesion.configurar"):
+                self.administracion_menu.add_command(label="Notificaciones", command=self.admin_views.mostrar_configuracion_notificaciones)
             if self.tiene_permiso("registros.recuperar"):
                 self.administracion_menu.add_command(label="Registros eliminados", command=self.admin_views.mostrar_registros_eliminados)
             if self.tiene_permiso("backup.gestionar"):
@@ -416,7 +438,221 @@ class FormularioExcelApp:
     def refrescar_excel_periodicamente(self):
         """Refresca las vistas desde SQLite cada 60 segundos."""
         self.cargar_excel()
+        self._recalcular_registros_nuevos()
         self.root.after(60000, self.refrescar_excel_periodicamente)
+
+    def _parsear_registrado_en(self, valor):
+        if valor is None or str(valor).strip() == "":
+            return None
+        texto = str(valor).strip()
+        try:
+            return datetime.fromisoformat(texto)
+        except ValueError:
+            pass
+        for formato in (
+            "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
+            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+        ):
+            try:
+                return datetime.strptime(texto, formato)
+            except ValueError:
+                continue
+        return None
+
+    def _es_registro_propio(self, fila):
+        user_id = self.current_user.get("id")
+        if fila["usuario_id"] is not None:
+            return fila["usuario_id"] == user_id
+        return (
+            (fila["usuario_windows"] or "").strip().casefold()
+            == (self._mi_usuario_windows or "").strip().casefold()
+        )
+
+    def _computar_registros_nuevos(self):
+        items = {"novedades": [], "cambios_turno": []}
+        baseline_dt = self._parsear_registrado_en(self._baseline_ultimo_ingreso)
+        for tabla in ("novedades", "cambios_turno"):
+            for fila in self.db_store.listar_resumen_activos(tabla):
+                if self._es_registro_propio(fila):
+                    continue
+                fecha_dt = self._parsear_registrado_en(fila["registrado_en"])
+                if fecha_dt is None or (baseline_dt and fecha_dt < baseline_dt):
+                    continue
+                items[tabla].append(
+                    (fila["id"], self._etiqueta_registro(tabla, fila), fila["usuario_windows"], fecha_dt)
+                )
+            items[tabla].sort(key=lambda item: item[0], reverse=True)
+        return items
+
+    def _etiqueta_registro(self, tabla, fila):
+        usuario = (fila["usuario_windows"] or "").strip() or "s/n"
+        apellidos = (fila["apellidos_nombres"] or "").strip()
+        nombre = apellidos or f"Legajo {fila['legajo']}"
+        fecha = fila["registrado_en"] or ""
+        prefijo = "Cambio" if tabla == "cambios_turno" else "Novedad"
+        return f"{prefijo} #{fila['id']} — {nombre} — {fecha} — {usuario}"
+
+    def _recalcular_registros_nuevos(self, es_inicio=False):
+        items = self._computar_registros_nuevos()
+        self._registros_nuevos = items
+        total = len(items["novedades"]) + len(items["cambios_turno"])
+        self._no_revisados = self._contar_no_revisados()
+        self._actualizar_menu_registros(total, self._no_revisados)
+        if es_inicio:
+            self._ids_vistos["novedades"] = {item[0] for item in items["novedades"]}
+            self._ids_vistos["cambios_turno"] = {item[0] for item in items["cambios_turno"]}
+            if self._no_revisados and not self._startup_toast_hecho:
+                self._startup_toast_hecho = True
+                self._mostrar_toast(
+                    f"Hay {self._no_revisados} registro(s) nuevo(s) desde su último ingreso.\n"
+                    "Vea el menú 'Registros nuevos' para revisarlos."
+                )
+            return
+        nuevos = {
+            "novedades": {item[0] for item in items["novedades"]} - self._ids_vistos["novedades"],
+            "cambios_turno": {item[0] for item in items["cambios_turno"]} - self._ids_vistos["cambios_turno"],
+        }
+        self._ids_vistos["novedades"] = {item[0] for item in items["novedades"]}
+        self._ids_vistos["cambios_turno"] = {item[0] for item in items["cambios_turno"]}
+        if nuevos["novedades"] or nuevos["cambios_turno"]:
+            self._mostrar_toast(self._texto_toast_vivo(nuevos))
+
+    def _leer_ultima_revision(self):
+        user_id = self.current_user.get("id")
+        if not user_id:
+            return None
+        valor = self.db_store.get_configuracion(f"ultimo_revision_{user_id}", None)
+        return self._parsear_registrado_en(valor)
+
+    def _persistir_ultima_revision(self):
+        user_id = self.current_user.get("id")
+        if not user_id:
+            return
+        self.db_store.set_configuracion(
+            f"ultimo_revision_{user_id}", self._ultima_revision.isoformat(timespec="seconds")
+        )
+
+    def _contar_no_revisados(self):
+        total = 0
+        for tabla in ("novedades", "cambios_turno"):
+            for item in self._registros_nuevos[tabla]:
+                if self._ultima_revision is None or item[3] >= self._ultima_revision:
+                    total += 1
+        return total
+
+    def _marcar_revisado(self):
+        if not (self._registros_nuevos["novedades"] or self._registros_nuevos["cambios_turno"]):
+            return
+        self._ultima_revision = datetime.now()
+        self._persistir_ultima_revision()
+        self._no_revisados = self._contar_no_revisados()
+        self._actualizar_contador_menu()
+
+    def _actualizar_contador_menu(self):
+        total = len(self._registros_nuevos["novedades"]) + len(self._registros_nuevos["cambios_turno"])
+        self.menu_bar.entryconfigure(
+            self._registros_menu_index,
+            label=f"Registros nuevos ({self._no_revisados})",
+            state="normal" if total else "disabled",
+        )
+
+    def _texto_toast_vivo(self, nuevos):
+        partes = []
+        if nuevos["novedades"]:
+            partes.append(f"{len(nuevos['novedades'])} novedad(es)")
+        if nuevos["cambios_turno"]:
+            partes.append(f"{len(nuevos['cambios_turno'])} cambio(s) de turno")
+        return "Se cargaron " + " y ".join(partes) + " nuevos desde otra estación."
+
+    def _actualizar_menu_registros(self, total, no_revisados):
+        menu = self.registros_menu
+        menu.delete(0, "end")
+        self.menu_bar.entryconfigure(
+            self._registros_menu_index,
+            label=f"Registros nuevos ({no_revisados})",
+            state="normal" if total else "disabled",
+        )
+        if not total:
+            menu.add_command(label="Sin registros nuevos", state="disabled")
+            return
+        for tabla, vista in (("novedades", "novedad"), ("cambios_turno", "cambio de turno")):
+            for record_id, etiqueta, _usuario, _fecha in self._registros_nuevos[tabla]:
+                menu.add_command(
+                    label=etiqueta,
+                    command=lambda t=tabla, rid=record_id, v=vista: self._abrir_registro_nuevo(t, rid, v),
+                )
+
+    def _abrir_registro_nuevo(self, tabla, record_id, vista):
+        if tabla == "novedades":
+            fila = self.records_service.obtener_novedad(record_id)
+            if not fila:
+                return
+            columnas = [
+                "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
+                "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
+                "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+            ]
+            valores = (
+                fila["id"], fila["registrado_en"], fila["legajo"], fila["apellidos_nombres"],
+                fila["especialidad"], fila["dotacion"], fila["turnos"], fila["franco"],
+                fila["novedad"], fila["fecha_inicio"], fila["fecha_fin"],
+                fila["referencia_estacion"], fila["supervisor"], fila["observaciones"],
+                fila["usuario_windows"],
+            )
+        else:
+            fila = self.records_service.obtener_cambio(record_id)
+            if not fila:
+                return
+            columnas = [
+                "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION",
+                "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2",
+                "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+            ]
+            valores = (
+                fila["id"], fila["registrado_en"], fila["legajo_1"], fila["apellidos_nombres_1"],
+                fila["especialidad_1"], fila["dotacion_1"], fila["turnos_1"], fila["franco_1"],
+                fila["legajo_2"], fila["apellidos_nombres_2"], fila["especialidad_2"], fila["dotacion_2"],
+                fila["turnos_2"], fila["franco_2"], fila["fecha_cambio"],
+                fila["referencia_estacion"], fila["supervisor"], fila["observaciones"],
+                fila["usuario_windows"],
+            )
+        self.tables_manager.mostrar_modal_detalle(valores, columnas, vista)
+
+    def _mostrar_toast(self, texto):
+        if str(self.db_store.get_configuracion("notificaciones_activo", "1")) != "1":
+            return
+        try:
+            segundos = int(self.db_store.get_configuracion("toast_duracion", "6"))
+        except (TypeError, ValueError):
+            segundos = 6
+        duracion_ms = max(1, segundos) * 1000
+        if self._toast_window is not None:
+            try:
+                self._toast_window.destroy()
+            except tk.TclError:
+                pass
+            self._toast_window = None
+        if self._toast_after:
+            try:
+                self.root.after_cancel(self._toast_after)
+            except Exception:
+                pass
+            self._toast_after = None
+        window = tk.Toplevel(self.root)
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+        window.configure(background=self.ui_background, highlightthickness=1, highlightbackground=self.ui_foreground)
+        frame = ttk.Frame(window)
+        frame.pack(padx=10, pady=10)
+        ttk.Label(frame, text=texto, justify="left", wraplength=340).pack(side="left", padx=(0, 12))
+        ttk.Button(frame, text="Cerrar", command=window.destroy).pack(side="left")
+        window.update_idletasks()
+        x = self.WIDTH - window.winfo_reqwidth() - 24
+        y = self.HEIGHT - window.winfo_reqheight() - 60
+        window.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self._toast_window = window
+        self._toast_after = self.root.after(duracion_ms, window.destroy)
+        window.bind("<Button-1>", lambda _event: window.destroy())
 
     def inicializar_base_datos(self, existing_store=None):
         """Crea la base compartida y migra el XLSX una sola vez."""
@@ -567,7 +803,10 @@ class FormularioExcelApp:
             if sheet_name == "BASE":
                 count = migrate_empleados_sheet(source, self.db_store, clear_existing=clear_existing)
             else:
-                count = migrate_operational_sheet(source, self.db_store, sheet_name, clear_existing=clear_existing)
+                count = migrate_operational_sheet(
+                    source, self.db_store, sheet_name,
+                    clear_existing=clear_existing, usuario_id=self.current_user.get("id"),
+                )
             self.records_service.registrar_auditoria(
                 "importar", sheet_name, None, self.current_user.get("id"), self.obtener_usuario_windows(),
                 after={"archivo": source, "registros": count, "tabla_limpiada": clear_existing},

@@ -172,7 +172,7 @@ def migrate_workbook(workbook_path, store):
     return counts
 
 
-def migrate_operational_sheet(workbook_path, store, sheet_name, clear_existing=False):
+def migrate_operational_sheet(workbook_path, store, sheet_name, clear_existing=False, usuario_id=None):
     """Importa solo NOVEDADES o Cambio de Turnos y conserva los datos existentes."""
     if sheet_name not in {SHEETS["novedades"], SHEETS["cambios"]}:
         raise ValueError("Solo se pueden importar NOVEDADES o Cambio de Turnos.")
@@ -196,8 +196,8 @@ def migrate_operational_sheet(workbook_path, store, sheet_name, clear_existing=F
                     """INSERT OR IGNORE INTO novedades
                        (id, registrado_en, legajo, apellidos_nombres, especialidad, dotacion,
                         turnos, franco, novedad, fecha_inicio, fecha_fin, referencia_estacion,
-                        supervisor, observaciones, usuario_windows)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        supervisor, observaciones, usuario_windows, usuario_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (record_id, _texto(_valor(row, headers, "FECHA", "FECHA Y HORA")), legajo,
                      _texto(_valor(row, headers, "APELLIDOS Y NOMBRES")), _texto(_valor(row, headers, "ESPECIALIDAD")),
                      _texto(_valor(row, headers, "DOTACION", "DOT")), _texto(_valor(row, headers, "TURNOS", "TURNO")),
@@ -205,7 +205,7 @@ def migrate_operational_sheet(workbook_path, store, sheet_name, clear_existing=F
                      _fecha(_valor(row, headers, "FECHA DE INICIO NOVEDAD")), _fecha(_valor(row, headers, "FECHA DE FIN NOVEDAD")),
                      _texto(_valor(row, headers, "REFERENCIA ESTACIÓN", "REFERENCIA ESTACION")),
                      _texto(_valor(row, headers, "SUPERVISOR")), _texto(_valor(row, headers, "OBSERVACIONES")),
-                     _texto(_valor(row, headers, "USUARIO WINDOWS"))),
+                     _texto(_valor(row, headers, "USUARIO WINDOWS")), usuario_id),
                 )
             else:
                 legajo_1 = _entero(_valor(row, headers, "LEGAJO"))
@@ -217,8 +217,8 @@ def migrate_operational_sheet(workbook_path, store, sheet_name, clear_existing=F
                        (id, registrado_en, legajo_1, apellidos_nombres_1, especialidad_1,
                         dotacion_1, turnos_1, franco_1, legajo_2, apellidos_nombres_2,
                         especialidad_2, dotacion_2, turnos_2, franco_2, fecha_cambio,
-                        referencia_estacion, supervisor, observaciones, usuario_windows)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        referencia_estacion, supervisor, observaciones, usuario_windows, usuario_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (record_id, _texto(_valor(row, headers, "FECHA", "FECHA Y HORA")), legajo_1,
                      _texto(_valor(row, headers, "APELLIDOS Y NOMBRES")), _texto(_valor(row, headers, "ESPECIALIDAD")),
                      _texto(_valor(row, headers, "DOTACION")), _texto(_valor(row, headers, "TURNOS")), _texto(_valor(row, headers, "FRANCO")),
@@ -227,7 +227,7 @@ def migrate_operational_sheet(workbook_path, store, sheet_name, clear_existing=F
                      _fecha(_valor(row, headers, "FECHA DE CAMBIO DE TURNO")),
                      _texto(_valor(row, headers, "REFERENCIA ESTACIÓN", "REFERENCIA ESTACION")),
                      _texto(_valor(row, headers, "SUPERVISOR")), _texto(_valor(row, headers, "OBSERVACIONES")),
-                     _texto(_valor(row, headers, "USUARIO WINDOWS"))),
+                     _texto(_valor(row, headers, "USUARIO WINDOWS")), usuario_id),
                 )
             count += 1
     workbook.close()

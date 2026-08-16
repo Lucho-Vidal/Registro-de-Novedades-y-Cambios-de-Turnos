@@ -273,7 +273,7 @@ class FormsManager:
                 self.app.novedad_var.get(), self.app.fecha_inicio_novedad_var.get(),
                 self.app.fecha_fin_novedad_var.get() or None, self.app.referencia_estacion_var.get(),
                 self.app.supervisor_var.get(), self.app.observaciones_var.get(),
-                self.app.obtener_usuario_windows(), None,
+                self.app.obtener_usuario_windows(), self.app.current_user.get("id"),
             ))
             self.app.records_service.registrar_auditoria(
                 "crear", "novedad", record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
@@ -317,7 +317,7 @@ class FormsManager:
                 self.app.turnos_2_var.get(), self.app.franco_2_var.get(),
                 self.app.fecha_cambio_turno_var.get(), self.app.referencia_estacion_var.get(),
                 self.app.supervisor_var.get(), self.app.observaciones_var.get(),
-                self.app.obtener_usuario_windows(), None,
+                self.app.obtener_usuario_windows(), self.app.current_user.get("id"),
             ))
             self.app.records_service.registrar_auditoria(
                 "crear", "cambio_turno", record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),

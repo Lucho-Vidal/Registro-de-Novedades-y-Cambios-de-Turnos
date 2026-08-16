@@ -296,6 +296,12 @@ class SQLiteStore:
             connection.execute(
                 "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('backup_retencion', '10')"
             )
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('notificaciones_activo', '1')"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('toast_duracion', '6')"
+            )
             connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre) VALUES ('Informe')")
             for nombre in ("PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"):
                 connection.execute("INSERT OR IGNORE INTO dotaciones(nombre) VALUES (?)", (nombre,))
@@ -317,6 +323,18 @@ class SQLiteStore:
             raise ValueError("Tabla no permitida")
         with self.read_connection() as connection:
             return connection.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}").fetchone()[0]
+
+    def listar_resumen_activos(self, table):
+        if table not in {"novedades", "cambios_turno"}:
+            raise ValueError("Tabla no permitida")
+        name_col = "apellidos_nombres" if table == "novedades" else "apellidos_nombres_1"
+        legajo_col = "legajo" if table == "novedades" else "legajo_1"
+        with self.read_connection() as connection:
+            return connection.execute(
+                f"""SELECT id, registrado_en, usuario_windows, usuario_id,
+                           {name_col} AS apellidos_nombres, {legajo_col} AS legajo
+                    FROM {table} WHERE activo=1"""
+            ).fetchall()
 
     def insert_novedad(self, values):
         with self.write_transaction() as connection:
