@@ -1,13 +1,30 @@
 """Funciones de autenticación preparadas para la futura pantalla de login."""
 
+import time
 from datetime import datetime
 
 import bcrypt
 
 
+MAX_INTENTOS_FALLIDOS = 5
+BLOQUEO_SEGUNDOS = 30
+
+
+class CuentaBloqueadaError(Exception):
+    """Se levanta cuando una cuenta está bloqueada temporalmente por intentos fallidos."""
+
+    def __init__(self, segundos_restantes):
+        super().__init__(
+            f"Cuenta temporalmente bloqueada por demasiados intentos fallidos. "
+            f"Intente nuevamente en {segundos_restantes} segundos."
+        )
+        self.segundos_restantes = segundos_restantes
+
+
 class AuthService:
     def __init__(self, store):
         self.store = store
+        self._intentos_fallidos = {}
 
     def crear_usuario(self, username, password, nombre="", legajo=None, roles=()):
         if not password:
@@ -34,12 +51,27 @@ class AuthService:
             return user_id
 
     def autenticar(self, username, password):
+        clave = (username or "").strip().casefold()
+        registro = self._intentos_fallidos.get(clave)
+        ahora = time.time()
+        if registro and registro.get("bloqueado_hasta"):
+            restante = registro["bloqueado_hasta"] - ahora
+            if restante > 0:
+                raise CuentaBloqueadaError(int(restante) + 1)
+            del self._intentos_fallidos[clave]
         with self.store.read_connection() as connection:
             user = connection.execute(
                 "SELECT * FROM usuarios WHERE username=? COLLATE BINARY AND activo=1", (username.strip(),)
             ).fetchone()
         if not user or not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+            intentos = self._intentos_fallidos.get(clave, {"count": 0})
+            intentos["count"] += 1
+            if intentos["count"] >= MAX_INTENTOS_FALLIDOS:
+                intentos["count"] = 0
+                intentos["bloqueado_hasta"] = ahora + BLOQUEO_SEGUNDOS
+            self._intentos_fallidos[clave] = intentos
             return None
+        self._intentos_fallidos.pop(clave, None)
         with self.store.write_transaction() as connection:
             connection.execute(
                 "UPDATE usuarios SET ultimo_ingreso=? WHERE id=?",

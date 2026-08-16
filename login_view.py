@@ -5,7 +5,7 @@ from tkinter import messagebox
 from tkinter import ttk
 from ttkbootstrap import Style
 
-from auth import AuthService
+from auth import AuthService, CuentaBloqueadaError
 
 
 class LoginView:
@@ -91,7 +91,11 @@ class LoginView:
             return connection.execute("SELECT 1 FROM usuarios LIMIT 1").fetchone() is not None
 
     def login(self):
-        user = self.auth.autenticar(self.username.get(), self.password.get())
+        try:
+            user = self.auth.autenticar(self.username.get(), self.password.get())
+        except CuentaBloqueadaError as error:
+            messagebox.showerror("Inicio de sesión", str(error), parent=self.window)
+            return
         if not user:
             messagebox.showerror("Inicio de sesión", "Usuario o contraseña incorrectos.", parent=self.window)
             return
