@@ -30,6 +30,51 @@ ESPECIALIDADES_EMPLEADO = (
 
 DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 
+PERMISOS_GRUPOS = (
+    ("novedades", "Novedades"),
+    ("cambios_turno", "Cambios de turno"),
+    ("empleados", "Empleados"),
+    ("personalEstacion", "Personal de estación"),
+    ("dotaciones", "Dotaciones"),
+    ("destinatarios_informe", "Destinatarios de informes"),
+    ("usuarios", "Usuarios"),
+    ("roles", "Roles y permisos"),
+    ("auditoria", "Auditoría"),
+    ("sesion", "Sesión"),
+    ("registros", "Registros"),
+    ("backup", "Copias de seguridad"),
+    ("excel", "Excel / Archivo"),
+)
+
+ACCIONES_PERMISO = {
+    "ver": "Ver", "crear": "Crear", "editar": "Editar", "eliminar": "Eliminar",
+    "importar": "Importar", "exportar": "Exportar", "administrar": "Administrar",
+    "configurar": "Configurar", "recuperar": "Recuperar", "gestionar": "Gestionar",
+}
+
+_ORDEN_ACCION = {
+    "ver": 0, "crear": 1, "editar": 2, "eliminar": 3, "importar": 4,
+    "exportar": 5, "administrar": 6, "configurar": 7, "recuperar": 8, "gestionar": 9,
+}
+
+
+def _agrupar_permisos(codigos):
+    """Agrupa códigos de permiso por módulo para el editor de roles."""
+    grupos = [(titulo, []) for _, titulo in PERMISOS_GRUPOS]
+    grupos.append(("Otros", []))
+    indice = {prefijo: i for i, (prefijo, _) in enumerate(PERMISOS_GRUPOS)}
+    for codigo in codigos:
+        accion = ACCIONES_PERMISO.get(codigo.split(".")[-1], codigo.split(".")[-1])
+        posicion = next((indice[prefijo] for prefijo in indice if codigo.startswith(prefijo)), len(PERMISOS_GRUPOS))
+        grupos[posicion][1].append((codigo, accion))
+    resultado = []
+    for titulo, items in grupos:
+        if not items:
+            continue
+        items.sort(key=lambda item: (_ORDEN_ACCION.get(item[0].split(".")[-1], 99), item[0]))
+        resultado.append((titulo, items))
+    return resultado
+
 
 def _formatear_tamano(bytes_valor):
     if bytes_valor >= 1024 * 1024:
@@ -203,18 +248,69 @@ class AdminViews:
             current = set(self.service.permisos_de_rol(role_id))
             dialog = tk.Toplevel(window)
             dialog.title("Permisos del rol")
+            dialog.geometry("640x560")
             dialog.configure(background=self.app.ui_background)
-            variables = []
-            for permission in self.service.listar_permisos():
-                variable = tk.BooleanVar(value=permission in current)
-                ttk.Checkbutton(dialog, text=permission, variable=variable).pack(anchor="w", padx=12)
-                variables.append((permission, variable))
-            def save():
-                self.service.establecer_permisos_rol(role_id, [name for name, var in variables if var.get()])
+            self.app.aplicar_tema_ventana(dialog)
+            dialog.transient(window)
+            dialog.grab_set()
+
+            filtro_var = tk.StringVar()
+            top = ttk.Frame(dialog)
+            top.pack(fill="x", padx=12, pady=8)
+            ttk.Label(top, text="Buscar:").pack(side="left")
+            ttk.Entry(top, textvariable=filtro_var, width=38).pack(side="left", padx=6)
+
+            canvas = tk.Canvas(dialog, highlightthickness=0, background=self.app.ui_background)
+            scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+            listado = ttk.Frame(canvas)
+            listado.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+            canvas.create_window((0, 0), window=listado, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            canvas.pack(side="left", fill="both", expand=True, padx=(12, 0), pady=(0, 8))
+            scrollbar.pack(side="right", fill="y", pady=(0, 8))
+
+            def _rueda(event):
+                canvas.yview_scroll(int(-event.delta / 120), "units")
+
+            canvas.bind("<MouseWheel>", _rueda)
+            listado.bind("<MouseWheel>", _rueda)
+
+            variables = {}
+
+            def rebuild():
+                for child in listado.winfo_children():
+                    child.destroy()
+                variables.clear()
+                consulta = filtro_var.get().strip().lower()
+                for titulo, items in _agrupar_permisos(self.service.listar_permisos()):
+                    visibles = [
+                        item for item in items
+                        if not consulta or consulta in item[0].lower() or consulta in item[1].lower()
+                    ]
+                    if not visibles:
+                        continue
+                    header = ttk.Frame(listado)
+                    header.pack(fill="x", padx=8, pady=(10, 0))
+                    ttk.Label(header, text=titulo, font=("", 10, "bold")).pack(side="left")
+                    ttk.Button(header, text="Ninguno", command=lambda items=visibles: [variables[i].set(False) for i, _ in items]).pack(side="right", padx=2)
+                    ttk.Button(header, text="Todos", command=lambda items=visibles: [variables[i].set(True) for i, _ in items]).pack(side="right", padx=2)
+                    for codigo, accion in visibles:
+                        variable = tk.BooleanVar(value=codigo in current)
+                        variables[codigo] = variable
+                        ttk.Checkbutton(listado, text=f"{accion} ({codigo})", variable=variable).pack(anchor="w", padx=20)
+
+            filtro_var.trace_add("write", lambda *_args: rebuild())
+            rebuild()
+
+            def guardar():
+                self.service.establecer_permisos_rol(role_id, [codigo for codigo, variable in variables.items() if variable.get()])
                 dialog.destroy()
                 refresh()
-            ttk.Button(dialog, text="Guardar", command=save).pack(pady=10)
-            self.app.aplicar_tema_ventana(dialog)
+
+            bottom = ttk.Frame(dialog)
+            bottom.pack(fill="x", padx=12, pady=8)
+            ttk.Button(bottom, text="Guardar", command=guardar).pack(side="left", padx=3)
+            ttk.Button(bottom, text="Cancelar", command=dialog.destroy).pack(side="left", padx=3)
 
         buttons = ttk.Frame(window)
         buttons.pack(side="bottom", fill="x", padx=10, pady=8)
