@@ -269,3 +269,58 @@ def migrate_empleados_sheet(workbook_path, store, clear_existing=False):
             count += 1
     workbook.close()
     return count
+
+
+def _es_encabezado_catalogo(valor, prefijos):
+    normalizado = _normalizar(valor)
+    return any(normalizado.startswith(prefijo) for prefijo in prefijos)
+
+
+def _migrar_catalogo(workbook_path, store, tabla, prefijos_encabezado, clear_existing=False):
+    """Importa la 1ª columna de la 1ª hoja como nombres de un catálogo.
+
+    La primera fila se omite si parece un encabezado. Los nombres ya existentes se
+    reactivan; con clear_existing=True primero se desactivan todos los demás.
+    """
+    workbook = openpyxl.load_workbook(workbook_path, read_only=True, data_only=True)
+    store.initialize()
+    count = 0
+    with store.write_transaction() as connection:
+        if clear_existing:
+            connection.execute(f"UPDATE {tabla} SET activo=0")
+        ws = workbook.worksheets[0]
+        for index, row in enumerate(ws.iter_rows(min_row=1, values_only=True)):
+            nombre = _texto(row[0] if row else None)
+            if not nombre:
+                continue
+            if index == 0 and _es_encabezado_catalogo(nombre, prefijos_encabezado):
+                continue
+            connection.execute(
+                f"INSERT INTO {tabla}(nombre, activo) VALUES (?, 1) "
+                f"ON CONFLICT(nombre) DO UPDATE SET activo=1",
+                (nombre,),
+            )
+            count += 1
+    workbook.close()
+    return count
+
+
+def migrate_personal_estacion_sheet(workbook_path, store, clear_existing=False):
+    """Importa la 1ª columna de la 1ª hoja como nombres de personal de estación."""
+    return _migrar_catalogo(
+        workbook_path, store, "personal_estacion", ("NOMBRE", "PERSONAL"), clear_existing=clear_existing
+    )
+
+
+def migrate_tipos_novedad_sheet(workbook_path, store, clear_existing=False):
+    """Importa la 1ª columna de la 1ª hoja como tipos de novedad."""
+    return _migrar_catalogo(
+        workbook_path, store, "tipos_novedad", ("TIPO", "NOVEDAD"), clear_existing=clear_existing
+    )
+
+
+def migrate_dotaciones_sheet(workbook_path, store, clear_existing=False):
+    """Importa la 1ª columna de la 1ª hoja como dotaciones."""
+    return _migrar_catalogo(
+        workbook_path, store, "dotaciones", ("DOTACION",), clear_existing=clear_existing
+    )

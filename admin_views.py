@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from excel_exporter import export_auditoria
+from excel_migration import migrate_dotaciones_sheet, migrate_personal_estacion_sheet, migrate_tipos_novedad_sheet
 from backups import crear_backup, listar_backups, restaurar_backup
 import os
 
@@ -42,6 +43,33 @@ class AdminViews:
         self.app = app
         self.service = app.auth_service
         self.service.inicializar_permisos(PERMISOS_BASE)
+
+    def _importar_desde_excel(self, window, titulo, permiso, entidad, migrador, despues=None):
+        if not self.app.requerir_permiso(permiso):
+            return
+        source = filedialog.askopenfilename(
+            title=f"Importar {titulo}", parent=window,
+            filetypes=[("Excel", "*.xlsx")],
+        )
+        if not source:
+            return
+        clear_existing = messagebox.askyesno(
+            "Limpiar antes de importar",
+            f"¿Desactivar todos los {titulo} actuales antes de importar?\n\n"
+            "Los que no estén en el Excel quedarán desactivados.",
+            parent=window,
+        )
+        try:
+            count = migrador(source, self.app.db_store, clear_existing=clear_existing)
+            self.app.records_service.registrar_auditoria(
+                "importar", entidad, None, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                after={"archivo": source, "registros": count, "tabla_limpiada": clear_existing},
+            )
+            if despues is not None:
+                despues()
+            messagebox.showinfo(titulo, f"Se importaron {count} registros.", parent=window)
+        except Exception as error:
+            messagebox.showerror(titulo, f"No se pudo importar: {error}", parent=window)
 
     def mostrar_usuarios(self):
         if not self.app.requerir_permiso("usuarios.administrar"):
@@ -255,6 +283,11 @@ class AdminViews:
         ttk.Button(buttons, text="Nuevo", command=add_type).pack(side="left", padx=3)
         ttk.Button(buttons, text="Editar", command=edit_type).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle_type).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Importar desde Excel", command=lambda: self._importar_desde_excel(
+            window, "Tipos de novedad", "novedades.editar", "tipos_novedad",
+            migrate_tipos_novedad_sheet,
+            despues=lambda: (self.app.cargarTipoNovedades(), refresh()),
+        )).pack(side="left", padx=3)
         refresh()
 
     def mostrar_dotaciones(self):
@@ -316,6 +349,11 @@ class AdminViews:
         ttk.Button(buttons, text="Nuevo", command=add).pack(side="left", padx=3)
         ttk.Button(buttons, text="Editar", command=edit).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Importar desde Excel", command=lambda: self._importar_desde_excel(
+            window, "Dotaciones", "dotaciones.administrar", "dotaciones",
+            migrate_dotaciones_sheet,
+            despues=lambda: (self.app.cargarDotaciones(), refresh()),
+        )).pack(side="left", padx=3)
         refresh()
 
     def mostrar_empleados(self):
@@ -505,11 +543,19 @@ class AdminViews:
                 except Exception as error:
                     messagebox.showerror("Personal de estación", str(error), parent=window)
 
+        def importar():
+            self._importar_desde_excel(
+                window, "Personal de estación", "personalEstacion.editar", "personal_estacion",
+                migrate_personal_estacion_sheet,
+                despues=lambda: (self.app.cargarPersonalEstacion(), refresh()),
+            )
+
         buttons = ttk.Frame(window)
         buttons.pack(fill="x", padx=10, pady=5)
         ttk.Button(buttons, text="Nuevo", command=add).pack(side="left", padx=3)
         ttk.Button(buttons, text="Editar", command=edit).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Importar desde Excel", command=importar).pack(side="left", padx=3)
         refresh()
 
     def mostrar_destinatarios_informe(self):
