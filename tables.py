@@ -366,7 +366,8 @@ class TablesManager:
     def filtrar_datos_cambios(self, nombre_filtro, dotacion_filtro):
         """Filtra los datos de cambios de turnos según nombre y dotación.
         
-        Busca coincidencias en cualquiera de los dos empleados (apellidos índices 3 y 9).
+        Busca coincidencias en cualquiera de los dos empleados (apellidos índices 3 y 9)
+        y en cualquiera de las dos dotaciones (índices 5 y 11).
         Utiliza búsqueda case-insensitive y sin acentos (normalización unicode).
         Si ambos filtros están en valores por defecto, carga datos completos.
         
@@ -399,21 +400,24 @@ class TablesManager:
             if self.app.sheet_cambio_turnos:
                 for fila in self.app.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
-                    if len(fila_procesada) <= 9:
+                    if len(fila_procesada) <= 11:
                         continue
                     nombre_1_norm = self.app.normalizar_texto(fila_procesada[3])
                     nombre_2_norm = self.app.normalizar_texto(fila_procesada[9])
-                    dotacion_norm = self.app.normalizar_texto(fila_procesada[5])
+                    dotacion_1_norm = self.app.normalizar_texto(fila_procesada[5])
+                    dotacion_2_norm = self.app.normalizar_texto(fila_procesada[11])
+                    coincide_nombre = nombre_filtro_norm in nombre_1_norm or nombre_filtro_norm in nombre_2_norm
+                    coincide_dotacion = dotacion_filtro_norm in dotacion_1_norm or dotacion_filtro_norm in dotacion_2_norm
                     if dotacion_filtro == "Todas":
-                        if nombre_filtro_norm in nombre_1_norm or nombre_filtro_norm in nombre_2_norm:
+                        if coincide_nombre:
                             self.app.table_cambios.insert("", "end", values=fila_procesada)
                             total += 1
                     elif nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
-                        if dotacion_filtro_norm in dotacion_norm:
+                        if coincide_dotacion:
                             self.app.table_cambios.insert("", "end", values=fila_procesada)
                             total += 1
                     else:
-                        if (nombre_filtro_norm in nombre_1_norm or nombre_filtro_norm in nombre_2_norm) and dotacion_filtro_norm in dotacion_norm:
+                        if coincide_nombre and coincide_dotacion:
                             self.app.table_cambios.insert("", "end", values=fila_procesada)
                             total += 1
 

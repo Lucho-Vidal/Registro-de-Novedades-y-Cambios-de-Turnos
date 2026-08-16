@@ -1,8 +1,6 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
-from ttkbootstrap import DateEntry, Style
-from datetime import datetime, timedelta
-import os
+from tkinter import ttk, messagebox, filedialog, simpledialog
+from ttkbootstrap import Style
 import ctypes
 import math
 import time
@@ -10,23 +8,13 @@ import unicodedata
 from pathlib import Path
 
 from config import (
-    SHEET_BASE, SHEET_NOVEDADES, SHEET_TIPO_NOVEDAD, SHEET_CAMBIO_TURNOS,
-    COL_USUARIO_WINDOWS, PLACEHOLDER_BUSCAR_NOMBRE, DOTACIONES
+    PLACEHOLDER_BUSCAR_NOMBRE, DOTACIONES
 )
-from excel_store import (
-    get_workbook_mtime,
-    load_workbook_if_needed,
-    build_base_cache,
-    get_windows_user,
-    ensure_user_column,
-    get_last_id,
-    create_default_workbook,
-)
-from validators import validar_campos_requeridos_novedades, validar_campos_requeridos_cambios
+from excel_store import get_windows_user
 from forms import FormsManager
 from tables import TablesManager
-from sqlite_store import SQLiteSheetAdapter, SQLiteStore
-from excel_migration import migrate_workbook, migrate_operational_sheet, migrate_empleados_sheet
+from sqlite_store import SQLiteSheetAdapter
+from excel_migration import migrate_operational_sheet, migrate_empleados_sheet
 from excel_exporter import export_database
 from auth import AuthService
 from admin_views import AdminViews
@@ -61,7 +49,7 @@ class FormularioExcelApp:
         self.leer_archivo_base()
         self.theme_file = 'theme'
         self.theme = self.cargar_tema()
-        self.excel_last_mtime = None
+        self.PLACEHOLDER_BUSCAR_NOMBRE = PLACEHOLDER_BUSCAR_NOMBRE
         self.base_rows = []
         self.base_index = {}
         self.filtro_after_novedades = None
@@ -358,10 +346,6 @@ class FormularioExcelApp:
         self.franco_2_var = tk.StringVar()
         self.fecha_cambio_turno_var = tk.StringVar()
 
-    def obtener_mtime_excel(self):
-        """Obtiene el mtime del archivo Excel."""
-        return get_workbook_mtime(self.excel_file)
-
     def actualizar_cache_base(self):
         """Actualiza el caché de empleados desde SQLite."""
         self.base_rows = [tuple(row) for row in self.db_store.get_base_rows()]
@@ -377,11 +361,7 @@ class FormularioExcelApp:
         """Obtiene el nombre de usuario de Windows."""
         return get_windows_user()
 
-    def asegurar_columna_usuario(self, sheet, titulo=COL_USUARIO_WINDOWS):
-        """Asegura que la columna de usuario existe en la hoja."""
-        return ensure_user_column(sheet, titulo)
-
-    def cargar_excel(self, solo_si_cambio=False):
+    def cargar_excel(self):
         """Actualiza las vistas leyendo SQLite."""
         try:
             self.labelCarga.config(text="Actualizando base de datos...")
@@ -400,11 +380,10 @@ class FormularioExcelApp:
             print(f"Error cargando la base de datos: {e}")
             self.labelCarga.config(text="Error al cargar la base de datos.")
             return False
-        return True
 
     def refrescar_excel_periodicamente(self):
         """Refresca las vistas desde SQLite cada 60 segundos."""
-        self.cargar_excel(solo_si_cambio=True)
+        self.cargar_excel()
         self.root.after(60000, self.refrescar_excel_periodicamente)
 
     def inicializar_base_datos(self, existing_store=None):
@@ -419,10 +398,6 @@ class FormularioExcelApp:
             self.db_store.initialize()
         self.excel_file = str(excel_path)
         self.database_file = str(self.db_store.database_path)
-        self.sheet_base = SQLiteSheetAdapter(
-            self.db_store,
-            "SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco FROM empleados WHERE activo=1 ORDER BY apellidos_nombres",
-        )
         self.sheet_novedades = SQLiteSheetAdapter(
             self.db_store,
             """SELECT id, registrado_en, legajo, apellidos_nombres, especialidad, dotacion,
@@ -688,45 +663,6 @@ class FormularioExcelApp:
             messagebox.showinfo("Contraseña", "La contraseña fue cambiada correctamente.", parent=self.root)
         except Exception as error:
             messagebox.showerror("Contraseña", str(error), parent=self.root)
-
-    def crear_archivo_excel(self):
-        """Crea un archivo Excel con la estructura por defecto."""
-        create_default_workbook(
-            self.excel_file,
-            SHEET_BASE,
-            SHEET_NOVEDADES,
-            SHEET_TIPO_NOVEDAD,
-            SHEET_CAMBIO_TURNOS,
-            COL_USUARIO_WINDOWS,
-        )
-        print(f"Archivo creado: {self.excel_file}")
-
-    def obtener_ultimo_id(self, sheet):
-        """Obtiene el último ID de una hoja."""
-        return get_last_id(sheet)
-
-    def obtener_nuevo_id_con_sincronizacion(self, nombre_hoja):
-        """Obtiene un nuevo ID sincronizando con el archivo en disco."""
-        hoja_local = self.wb[nombre_hoja]
-        ultimo_id_local = self.obtener_ultimo_id(hoja_local)
-        recarga_ok = self.cargar_excel(solo_si_cambio=True)
-        if recarga_ok is False and self.obtener_mtime_excel() != self.excel_last_mtime:
-            raise RuntimeError("No se pudo sincronizar el archivo antes de guardar. Intente nuevamente.")
-        hoja_actualizada = self.wb[nombre_hoja]
-        ultimo_id_actual = self.obtener_ultimo_id(hoja_actualizada)
-
-        if ultimo_id_actual > ultimo_id_local:
-            self.labelCarga.config(text="Se detectaron registros nuevos. Sincronizado antes de guardar.")
-            print(f"Sincronización previa al guardado: {nombre_hoja} pasó de ID {ultimo_id_local} a {ultimo_id_actual}.")
-
-        return ultimo_id_actual + 1
-
-
-# Constantes accesibles para la clase
-FormularioExcelApp.SHEET_NOVEDADES = SHEET_NOVEDADES
-FormularioExcelApp.SHEET_CAMBIO_TURNOS = SHEET_CAMBIO_TURNOS
-FormularioExcelApp.PLACEHOLDER_BUSCAR_NOMBRE = PLACEHOLDER_BUSCAR_NOMBRE
-FormularioExcelApp.DOTACIONES = ["Todas", *DOTACIONES[1:]]
 
 
 if __name__ == "__main__":

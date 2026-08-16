@@ -24,8 +24,16 @@ class LoginView:
         self.window.protocol("WM_DELETE_WINDOW", root.destroy)
         self.window.grab_set()
 
-        ttk.Label(self.window, text="Registro de novedades", font=("Helvetica", 18, "bold")).pack(pady=(20, 14))
-        form = ttk.Frame(self.window)
+        # Centra el contenido verticalmente; la altura fija mantiene el
+        # espacio reservado para el campo de legajo aunque no se muestre.
+        self.window.grid_rowconfigure(0, weight=1)
+        self.window.grid_rowconfigure(2, weight=1)
+        self.window.grid_columnconfigure(0, weight=1)
+        content = ttk.Frame(self.window)
+        content.grid(row=1, column=0)
+
+        ttk.Label(content, text="Registro de novedades", font=("Helvetica", 18, "bold")).pack(pady=(0, 14))
+        form = ttk.Frame(content)
         form.pack(fill="x", padx=35)
         ttk.Label(form, text="Usuario").grid(row=0, column=0, sticky="w", pady=5)
         self.username = ttk.Entry(form, width=30)
@@ -33,18 +41,25 @@ class LoginView:
         ttk.Label(form, text="Contraseña").grid(row=2, column=0, sticky="w", pady=(8, 5))
         self.password = ttk.Entry(form, show="*", width=30)
         self.password.grid(row=3, column=0, pady=2)
-        ttk.Label(form, text="Legajo (solo para crear administrador)").grid(row=4, column=0, sticky="w", pady=(8, 5))
-        self.legajo = ttk.Entry(form, width=30)
-        self.legajo.grid(row=5, column=0, pady=2)
-        ttk.Button(self.window, text="Ingresar", command=self.login).pack(pady=(14, 5))
+
+        self.legajo_label = None
+        self.legajo = None
+        self.admin_button = None
+
+        ttk.Button(content, text="Ingresar", command=self.login).pack(pady=(14, 5))
         self.username.focus_set()
         self.password.bind("<Return>", lambda _event: self.login())
 
         if not self._hay_usuarios():
-            ttk.Button(
-                self.window, text="Crear administrador inicial",
+            self.legajo_label = ttk.Label(form, text="Legajo (solo para crear administrador)")
+            self.legajo_label.grid(row=4, column=0, sticky="w", pady=(8, 5))
+            self.legajo = ttk.Entry(form, width=30)
+            self.legajo.grid(row=5, column=0, pady=2)
+            self.admin_button = ttk.Button(
+                content, text="Crear administrador inicial",
                 command=self.crear_administrador_inicial,
-            ).pack()
+            )
+            self.admin_button.pack(pady=(0, 5))
 
     def _apply_saved_theme(self):
         try:
@@ -95,6 +110,15 @@ class LoginView:
         try:
             user_id = self.auth.crear_administrador_inicial(username, password, int(legajo))
             messagebox.showinfo("Administrador", "Administrador creado. Ya puede ingresar.", parent=self.window)
+            if self.legajo_label is not None:
+                self.legajo_label.destroy()
+                self.legajo_label = None
+            if self.legajo is not None:
+                self.legajo.destroy()
+                self.legajo = None
+            if self.admin_button is not None:
+                self.admin_button.destroy()
+                self.admin_button = None
             self.username.delete(0, tk.END)
             self.password.delete(0, tk.END)
             self.username.insert(0, username)
