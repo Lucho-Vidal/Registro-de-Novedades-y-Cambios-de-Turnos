@@ -38,7 +38,7 @@ class FormularioExcelApp:
         self.current_user = current_user or {}
         self.root.geometry('1110x650')
         root.state('zoomed')
-        self.root.title("Registro de Novedades y Cambios de turnos TK")
+        self.root.title("RENO")
         
         # Configurar DPI awareness para Windows
         user32 = ctypes.windll.user32
