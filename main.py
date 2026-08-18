@@ -24,6 +24,7 @@ from login_view import LoginView
 from records_service import RecordsService
 from outlook_mailer import enviar_informe_outlook
 from backups import backup_automatico_si_corresponde
+from dashboard import DashboardManager
 
 
 INTERVALO_SESION_MS = 30000
@@ -138,6 +139,7 @@ class FormularioExcelApp:
         self.form_cambios_frame = ttk.Frame(main_frame)
         self.table_cambios_frame = ttk.Frame(main_frame)
         self.table_frame = ttk.Frame(main_frame)
+        self.dashboard_frame = ttk.Frame(main_frame)
         self.form_novedades_creado = False
         self.form_cambios_creado = False
         self.tabla_novedades_creada = False
@@ -150,16 +152,16 @@ class FormularioExcelApp:
         # Inicializar managers
         self.forms_manager = FormsManager(self)
         self.tables_manager = TablesManager(self)
+        self.dashboard_manager = DashboardManager(self)
         
         # Crear la primera vista disponible según los permisos de la sesión.
-        if self.tiene_permiso("novedades.ver"):
-            self.tables_manager.crear_tabla_novedades()
-        elif self.tiene_permiso("cambios_turno.ver"):
-            self.current_view = "table_cambios"
+        if self.tiene_permiso("novedades.ver") or self.tiene_permiso("cambios_turno.ver"):
+            self.current_view = "dashboard"
             self.table_frame.grid_forget()
-            self.table_cambios_frame.grid(row=0, column=0, padx=10, pady=10)
-            self.tables_manager.crear_tabla_cambios()
+            self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.dashboard_manager.crear_dashboard()
         else:
+            self.current_view = "table"
             self.table_frame.grid_forget()
             self.labelCarga.config(text="Su usuario no tiene módulos habilitados.")
         
@@ -325,12 +327,6 @@ class FormularioExcelApp:
             if self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar"):
                 self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
 
-        # Menú Registros nuevos
-        self.registros_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.menu_bar.add_cascade(label="Registros nuevos", menu=self.registros_menu, state="disabled")
-        self._registros_menu_index = self.menu_bar.index("end")
-        self.registros_menu.configure(postcommand=self._marcar_revisado)
-
         # Menú Opciones
         self.opciones_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Opciones", menu=self.opciones_menu)
@@ -377,6 +373,12 @@ class FormularioExcelApp:
             if self.tiene_permiso("auditoria.ver"):
                 self.administracion_menu.add_command(label="Auditoría", command=self.admin_views.mostrar_auditoria)
 
+        # Menú Registros nuevos
+        self.registros_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Registros nuevos", menu=self.registros_menu, state="disabled")
+        self._registros_menu_index = self.menu_bar.index("end")
+        self.registros_menu.configure(postcommand=self._marcar_revisado)
+        
     def _inicializar_variables(self):
         """Inicializa todas las variables StringVar de los formularios."""
         self.legajo_var = tk.StringVar()
@@ -429,6 +431,9 @@ class FormularioExcelApp:
             elif self.current_view == 'table_cambios':
                 print("Cambios de turnos actualizados correctamente.")
                 self.labelCarga.config(text="Cambios de turnos actualizados correctamente.")
+            elif self.current_view == 'dashboard':
+                self.dashboard_manager.actualizar_dashboard()
+                self.labelCarga.config(text="Panel de control actualizado.")
             return True
         except Exception as e:
             print(f"Error cargando la base de datos: {e}")
@@ -516,6 +521,10 @@ class FormularioExcelApp:
         self._ids_vistos["cambios_turno"] = {item[0] for item in items["cambios_turno"]}
         if nuevos["novedades"] or nuevos["cambios_turno"]:
             self._mostrar_toast(self._texto_toast_vivo(nuevos))
+        if getattr(self, "current_view", None) == "dashboard":
+            dashboard = getattr(self, "dashboard_manager", None)
+            if dashboard is not None and getattr(dashboard, "_creado", False):
+                dashboard.tarjeta_sin_revisar.config(text=str(self._no_revisados))
 
     def _leer_ultima_revision(self):
         user_id = self.current_user.get("id")
@@ -861,7 +870,7 @@ class FormularioExcelApp:
             return "flatly"
 
     def toggle_view(self, target_view=None):
-        """Alterna entre las vistas (tabla/formulario)."""
+        """Alterna entre las vistas (panel, tabla/formulario)."""
         self.renovar_sesion()
         target_view = target_view or "table"
         required_permissions = {
@@ -870,12 +879,13 @@ class FormularioExcelApp:
             "table_cambios": "cambios_turno.ver",
             "form_cambios": "cambios_turno.crear",
         }
-        if not self.requerir_permiso(required_permissions.get(target_view, "")):
+        if target_view != "dashboard" and not self.requerir_permiso(required_permissions.get(target_view, "")):
             return
         self.form_frame.grid_forget()
         self.table_frame.grid_forget()
         self.form_cambios_frame.grid_forget()
         self.table_cambios_frame.grid_forget()
+        self.dashboard_frame.grid_forget()
 
         self.current_view = target_view
 
@@ -895,6 +905,9 @@ class FormularioExcelApp:
                 self.tables_manager.crear_tabla_cambios()
             else:
                 self.tables_manager.cargar_datos_completos_cambios()
+        elif self.current_view == "dashboard":
+            self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.dashboard_manager.actualizar_dashboard()
         else:
             self.table_frame.grid(row=0, column=0, padx=10, pady=10)
             if not self.tabla_novedades_creada:

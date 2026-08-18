@@ -341,3 +341,105 @@ class RecordsService:
                    ORDER BY a.id DESC""",
                 (text_filter.strip(), like, like, like),
             ).fetchall()
+
+    def _desde_hace(self, dias):
+        return datetime.now() - timedelta(days=max(1, int(dias)))
+
+    def _contar_por_fecha(self, tabla, columnas_registrado, funcion):
+        with self.store.read_connection() as connection:
+            columnas = ", ".join(columnas_registrado)
+            filas = connection.execute(
+                f"SELECT {columnas} FROM {tabla} WHERE activo=1"
+            ).fetchall()
+        for fila in filas:
+            fecha = self._parsear_registrado_en(fila["registrado_en"])
+            if fecha is None:
+                continue
+            funcion(fecha, fila)
+
+    def dashboard_resumen(self):
+        """Totales de hoy y del mes actual para el panel de control."""
+        hoy = datetime.now()
+        resumen = {
+            "novedades_hoy": 0, "cambios_hoy": 0,
+            "novedades_mes": 0, "cambios_mes": 0, "total_mes": 0,
+        }
+
+        def contar_novedades(fecha, fila):
+            if fecha.date() == hoy.date():
+                resumen["novedades_hoy"] += 1
+            if fecha.year == hoy.year and fecha.month == hoy.month:
+                resumen["novedades_mes"] += 1
+
+        def contar_cambios(fecha, fila):
+            if fecha.date() == hoy.date():
+                resumen["cambios_hoy"] += 1
+            if fecha.year == hoy.year and fecha.month == hoy.month:
+                resumen["cambios_mes"] += 1
+
+        self._contar_por_fecha("novedades", ("registrado_en",), contar_novedades)
+        self._contar_por_fecha("cambios_turno", ("registrado_en",), contar_cambios)
+        resumen["total_mes"] = resumen["novedades_mes"] + resumen["cambios_mes"]
+        return resumen
+
+    def dashboard_por_tipo(self, dias=30):
+        """Cantidad de novedades por tipo dentro de la ventana indicada."""
+        desde = self._desde_hace(dias)
+        conteo = {}
+
+        def sumar(fecha, fila):
+            if fecha < desde:
+                return
+            tipo = (fila["novedad"] or "").strip() or "Sin tipo"
+            conteo[tipo] = conteo.get(tipo, 0) + 1
+
+        self._contar_por_fecha("novedades", ("registrado_en", "novedad"), sumar)
+        return sorted(conteo.items(), key=lambda item: item[1], reverse=True)
+
+    def dashboard_por_dotacion(self, dias=30, limite=10):
+        """Cantidad de registros (novedades + cambios) por dotación, top N."""
+        desde = self._desde_hace(dias)
+        conteo = {}
+
+        def sumar_dotacion(dotacion):
+            valor = (dotacion or "").strip()
+            if not valor:
+                return
+            conteo[valor] = conteo.get(valor, 0) + 1
+
+        def sumar_novedad(fecha, fila):
+            if fecha < desde:
+                return
+            sumar_dotacion(fila["dotacion"])
+
+        def sumar_cambio(fecha, fila):
+            if fecha < desde:
+                return
+            sumar_dotacion(fila["dotacion_1"])
+            sumar_dotacion(fila["dotacion_2"])
+
+        self._contar_por_fecha("novedades", ("registrado_en", "dotacion"), sumar_novedad)
+        self._contar_por_fecha("cambios_turno", ("registrado_en", "dotacion_1", "dotacion_2"), sumar_cambio)
+        return sorted(conteo.items(), key=lambda item: item[1], reverse=True)[:max(1, int(limite))]
+
+    def dashboard_tendencia(self, dias=30):
+        """Novedades y cambios por día para los últimos N días (incluye hoy)."""
+        dias = max(1, int(dias))
+        hoy = datetime.now()
+        desde = hoy - timedelta(days=dias - 1)
+        fechas = [(desde + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(dias)]
+        serie = {fecha: {"novedades": 0, "cambios": 0} for fecha in fechas}
+
+        def sumar_novedad(fecha, fila):
+            clave = fecha.strftime("%Y-%m-%d")
+            if clave in serie:
+                serie[clave]["novedades"] += 1
+
+        def sumar_cambio(fecha, fila):
+            clave = fecha.strftime("%Y-%m-%d")
+            if clave in serie:
+                serie[clave]["cambios"] += 1
+
+        self._contar_por_fecha("novedades", ("registrado_en",), sumar_novedad)
+        self._contar_por_fecha("cambios_turno", ("registrado_en",), sumar_cambio)
+        return [(fecha, serie[fecha]["novedades"], serie[fecha]["cambios"]) for fecha in fechas]

@@ -529,15 +529,19 @@ class TablesManager:
         ttk.Label(self.app.table_frame, text="Registro de novedades", font=("Helvetica", 20, "bold")).grid(
             row=0, column=0, pady=10, padx=10, sticky="w"
         )
+        ttk.Button(
+            self.app.table_frame, text="Panel de control",
+            command=lambda: self.app.toggle_view("dashboard")
+        ).grid(row=0, column=1, pady=10, padx=10, sticky="e")
         if self.app.tiene_permiso("cambios_turno.ver"):
             ttk.Button(
                 self.app.table_frame, text="Ver cambios de turno",
                 command=lambda: self.app.toggle_view("table_cambios")
-            ).grid(row=0, column=1, pady=10, padx=10, sticky="e")
+            ).grid(row=0, column=2, pady=10, padx=10, sticky="e")
         
         # Filtro nombre
         apellido_filter = tk.Entry(self.app.table_frame, textvariable=self.app.apellido_filter_novedades_var, font=("Helvetica", 10))
-        apellido_filter.grid(row=0, column=2, sticky="e", pady=10, padx=10, ipady=5, ipadx=10)
+        apellido_filter.grid(row=0, column=3, sticky="e", pady=10, padx=10, ipady=5, ipadx=10)
         
         # Filtro dotación
         self.app.dotacion_filter_novedades = ttk.Combobox(
@@ -545,24 +549,24 @@ class TablesManager:
             values=self.app.DOTACIONES, width=10, state="normal"
         )
         dotacion_filter = self.app.dotacion_filter_novedades
-        dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
+        dotacion_filter.grid(row=0, column=4, sticky="e", pady=5)
 
         self.app.tipo_filter_novedades = ttk.Combobox(
             self.app.table_frame, textvariable=self.app.tipo_filter_novedades_var,
             values=["Todos", *self.app.tipo_novedades], width=18, state="readonly"
         )
-        self.app.tipo_filter_novedades.grid(row=0, column=4, sticky="e", pady=5, padx=6)
+        self.app.tipo_filter_novedades.grid(row=0, column=5, sticky="e", pady=5, padx=6)
         
         self.app.resultados_novedades_label = ttk.Label(self.app.table_frame, text="0 resultados", font=("Helvetica", 9))
-        self.app.resultados_novedades_label.grid(row=0, column=5, sticky="w", padx=8)
+        self.app.resultados_novedades_label.grid(row=0, column=6, sticky="w", padx=8)
         
         if self.app.tiene_permiso("novedades.crear"):
             ttk.Button(self.app.table_frame, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).grid(
-                row=0, column=6, pady=10, padx=2, sticky="e"
+                row=0, column=7, pady=10, padx=2, sticky="e"
             )
         if self.app.tiene_permiso("cambios_turno.crear"):
             ttk.Button(self.app.table_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
-                row=0, column=7, pady=10, padx=10, sticky="e"
+                row=0, column=8, pady=10, padx=10, sticky="e"
             )
 
         apellido_filter.insert(0, self.app.PLACEHOLDER_BUSCAR_NOMBRE)
@@ -579,7 +583,7 @@ class TablesManager:
         
         # Contenedor del Treeview
         self.app.tree_frame = ttk.Frame(self.app.table_frame, width=self.app.WIDTH, height=self.app.HEIGHT)
-        self.app.tree_frame.grid(row=1, column=0, columnspan=8, sticky="nsew")
+        self.app.tree_frame.grid(row=1, column=0, columnspan=9, sticky="nsew")
         self.app.tree_frame.grid_propagate(False)
 
         self.app.tree_frame.grid_rowconfigure(0, weight=1)
@@ -644,15 +648,19 @@ class TablesManager:
         ttk.Label(self.app.table_cambios_frame, text="Registro de cambios de turnos", font=("Helvetica", 20, "bold")).grid(
             row=0, column=0, pady=10, padx=10, sticky="w"
         )
+        ttk.Button(
+            self.app.table_cambios_frame, text="Panel de control",
+            command=lambda: self.app.toggle_view("dashboard")
+        ).grid(row=0, column=1, pady=10, padx=10, sticky="e")
         if self.app.tiene_permiso("novedades.ver"):
             ttk.Button(
                 self.app.table_cambios_frame, text="Ver novedades",
                 command=lambda: self.app.toggle_view("table")
-            ).grid(row=0, column=1, pady=10, padx=1, sticky="e")
+            ).grid(row=0, column=2, pady=10, padx=1, sticky="e")
         
         # Filtro nombre
         apellido_filter = tk.Entry(self.app.table_cambios_frame, textvariable=self.app.apellido_filter_cambios_var, font=("Helvetica", 10))
-        apellido_filter.grid(row=0, column=2, sticky="e", pady=10, padx=10, ipady=5, ipadx=10)
+        apellido_filter.grid(row=0, column=3, sticky="e", pady=10, padx=10, ipady=5, ipadx=10)
         
         # Filtro dotación
         self.app.dotacion_filter_cambios = ttk.Combobox(
@@ -660,18 +668,18 @@ class TablesManager:
             values=self.app.DOTACIONES, width=10, state="normal"
         )
         dotacion_filter = self.app.dotacion_filter_cambios
-        dotacion_filter.grid(row=0, column=3, sticky="e", pady=5)
+        dotacion_filter.grid(row=0, column=4, sticky="e", pady=5)
         
         self.app.resultados_cambios_label = ttk.Label(self.app.table_cambios_frame, text="0 resultados", font=("Helvetica", 9))
-        self.app.resultados_cambios_label.grid(row=0, column=4, sticky="w", padx=8)
+        self.app.resultados_cambios_label.grid(row=0, column=5, sticky="w", padx=8)
         
         if self.app.tiene_permiso("novedades.crear"):
             ttk.Button(self.app.table_cambios_frame, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).grid(
-                row=0, column=5, pady=10, padx=1, sticky="e"
+                row=0, column=6, pady=10, padx=1, sticky="e"
             )
         if self.app.tiene_permiso("cambios_turno.crear"):
             ttk.Button(self.app.table_cambios_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
-                row=0, column=6, pady=10, padx=1, sticky="e"
+                row=0, column=7, pady=10, padx=1, sticky="e"
             )
 
         dotacion_filter.insert(0, "Todas")
@@ -682,7 +690,7 @@ class TablesManager:
         
         # Contenedor del Treeview
         self.app.tree_frame = ttk.Frame(self.app.table_cambios_frame, width=self.app.WIDTH, height=self.app.HEIGHT)
-        self.app.tree_frame.grid(row=1, column=0, columnspan=7, sticky="nsew")
+        self.app.tree_frame.grid(row=1, column=0, columnspan=8, sticky="nsew")
         self.app.tree_frame.grid_propagate(False)
 
         self.app.tree_frame.grid_rowconfigure(0, weight=1)
