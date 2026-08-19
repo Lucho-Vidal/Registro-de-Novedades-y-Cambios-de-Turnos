@@ -519,7 +519,7 @@ class AdminViews:
         filas_completas = []
 
         ttk.Label(filtros, text="Buscar:").pack(side="left", padx=(0, 4))
-        filtro_nombre = ttk.Entry(filtros, textvariable=filtro_nombre_var, width=28)
+        filtro_nombre = tk.Entry(filtros, textvariable=filtro_nombre_var, width=28)
         filtro_nombre.pack(side="left", padx=(0, 12))
 
         ttk.Label(filtros, text="Dotación:").pack(side="left", padx=(0, 4))
