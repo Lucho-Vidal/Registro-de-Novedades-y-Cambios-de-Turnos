@@ -77,6 +77,12 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
                FROM cambios_turno WHERE """ + where_common + " ORDER BY id DESC""",
             common_params,
         ).fetchall() if "Cambio de Turnos" in selected_tables else []
+        personal = [
+            {"NOMBRE": fila["nombre"], "ACTIVO": "Sí" if fila["activo"] else "No"}
+            for fila in connection.execute(
+                "SELECT nombre, activo FROM personal_estacion ORDER BY nombre"
+            ).fetchall()
+        ] if "PersonalEstacion" in selected_tables else []
 
     desde_clave = _clave_fecha(fecha_desde)
     hasta_clave = _clave_fecha(fecha_hasta)
@@ -115,6 +121,8 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
             "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACIÓN", "SUPERVISOR",
             "Observaciones", "USUARIO WINDOWS"
         ], cambios)
+    if "PersonalEstacion" in selected_tables:
+        _write_sheet(workbook, "PersonalEstacion", ["NOMBRE", "ACTIVO"], personal)
 
     fd, temporary_path = tempfile.mkstemp(prefix="registro_export_", suffix=".xlsx", dir=output_path.parent)
     os.close(fd)

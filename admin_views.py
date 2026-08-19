@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from excel_exporter import export_auditoria
+from excel_exporter import export_auditoria, export_database
 from excel_migration import migrate_dotaciones_sheet, migrate_personal_estacion_sheet, migrate_tipos_novedad_sheet
 from backups import crear_backup, listar_backups, restaurar_backup
 import os
@@ -18,6 +18,7 @@ PERMISOS_BASE = (
     "auditoria.ver",
     "dotaciones.administrar",
     "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
+    "personalEstacion.importar", "personalEstacion.exportar",
     "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
     "backup.gestionar",
 )
@@ -642,10 +643,33 @@ class AdminViews:
 
         def importar():
             self._importar_desde_excel(
-                window, "Personal de estación", "personalEstacion.editar", "personal_estacion",
+                window, "Personal de estación", "personalEstacion.importar", "personal_estacion",
                 migrate_personal_estacion_sheet,
                 despues=lambda: (self.app.cargarPersonalEstacion(), refresh()),
             )
+
+        def exportar():
+            if not self.app.requerir_permiso("personalEstacion.exportar"):
+                return
+            destino = filedialog.asksaveasfilename(
+                title="Exportar personal de estación a Excel", parent=window,
+                defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")],
+                initialfile="Personal de estación.xlsx",
+            )
+            if not destino:
+                return
+            try:
+                export_database(self.app.db_store, destino, tables=["PersonalEstacion"])
+                self.app.records_service.registrar_auditoria(
+                    "exportar", "personal_estacion", None,
+                    self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                    after={"archivo": destino},
+                )
+                messagebox.showinfo("Personal de estación", f"Archivo exportado correctamente:\n{destino}", parent=window)
+            except PermissionError:
+                messagebox.showerror("Personal de estación", "No se pudo reemplazar el Excel. Verifique que no esté abierto.", parent=window)
+            except Exception as error:
+                messagebox.showerror("Personal de estación", f"No se pudo exportar: {error}", parent=window)
 
         buttons = ttk.Frame(window)
         buttons.pack(fill="x", padx=10, pady=5)
@@ -653,6 +677,7 @@ class AdminViews:
         ttk.Button(buttons, text="Editar", command=edit).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle).pack(side="left", padx=3)
         ttk.Button(buttons, text="Importar desde Excel", command=importar).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Exportar a Excel", command=exportar).pack(side="left", padx=3)
         refresh()
 
     def mostrar_destinatarios_informe(self):
