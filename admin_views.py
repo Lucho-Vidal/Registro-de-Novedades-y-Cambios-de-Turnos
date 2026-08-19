@@ -511,12 +511,75 @@ class AdminViews:
         ):
             tree.heading(column, text=title)
             tree.column(column, width=width, stretch=column in {"apellidos", "especialidad", "turnos"})
-        tree.pack(fill="both", expand=True, padx=10, pady=10)
+        filtros = ttk.Frame(window)
+        filtros.pack(fill="x", padx=10, pady=(10, 0))
+        filtro_nombre_var = tk.StringVar(value=self.app.PLACEHOLDER_BUSCAR_NOMBRE)
+        filtro_dotacion_var = tk.StringVar(value="Todas")
+        filtro_especialidad_var = tk.StringVar(value="Todas")
+        filas_completas = []
+
+        ttk.Label(filtros, text="Buscar:").pack(side="left", padx=(0, 4))
+        filtro_nombre = ttk.Entry(filtros, textvariable=filtro_nombre_var, width=28)
+        filtro_nombre.pack(side="left", padx=(0, 12))
+
+        ttk.Label(filtros, text="Dotación:").pack(side="left", padx=(0, 4))
+        filtro_dotacion = ttk.Combobox(filtros, textvariable=filtro_dotacion_var, state="readonly", width=16)
+        filtro_dotacion.pack(side="left", padx=(0, 12))
+
+        ttk.Label(filtros, text="Especialidad:").pack(side="left", padx=(0, 4))
+        filtro_especialidad = ttk.Combobox(filtros, textvariable=filtro_especialidad_var, state="readonly", width=20)
+        filtro_especialidad.pack(side="left", padx=(0, 12))
+
+        ttk.Button(filtros, text="Limpiar filtros", command=lambda: limpiar_filtros()).pack(side="left")
+
+        def on_focus_in(_event):
+            if filtro_nombre_var.get() == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
+                filtro_nombre.delete(0, tk.END)
+                filtro_nombre.config(fg="black")
+
+        def on_focus_out(_event):
+            if filtro_nombre_var.get().strip() == "":
+                filtro_nombre_var.set(self.app.PLACEHOLDER_BUSCAR_NOMBRE)
+                filtro_nombre.config(fg="grey")
+
+        filtro_nombre.config(fg="grey")
+        filtro_nombre.bind("<FocusIn>", on_focus_in)
+        filtro_nombre.bind("<FocusOut>", on_focus_out)
+        filtro_nombre.bind("<KeyRelease>", lambda _event: render())
+        filtro_dotacion.bind("<<ComboboxSelected>>", lambda _event: render())
+        filtro_especialidad.bind("<<ComboboxSelected>>", lambda _event: render())
+
+        def limpiar_filtros():
+            filtro_nombre_var.set(self.app.PLACEHOLDER_BUSCAR_NOMBRE)
+            filtro_dotacion_var.set("Todas")
+            filtro_especialidad_var.set("Todas")
+            filtro_nombre.config(fg="grey")
+            render()
+
+        def render():
+            tree.delete(*tree.get_children())
+            nombre = filtro_nombre_var.get().strip()
+            dotacion = filtro_dotacion_var.get()
+            especialidad = filtro_especialidad_var.get()
+            nombre_activo = bool(nombre) and nombre != self.app.PLACEHOLDER_BUSCAR_NOMBRE
+            nombre_norm = self.app.normalizar_texto(nombre) if nombre_activo else ""
+            for row in filas_completas:
+                if nombre_activo and nombre_norm not in self.app.normalizar_texto(row[2]):
+                    continue
+                if dotacion != "Todas" and (row[4] or "") != dotacion:
+                    continue
+                if especialidad != "Todas" and (row[3] or "") != especialidad:
+                    continue
+                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "-", row[4] or "-", row[5] or "-", row[6] or "-", "Sí" if row[7] else "No"))
 
         def refresh():
-            tree.delete(*tree.get_children())
-            for row in self.app.records_service.listar_empleados():
-                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "-", row[4] or "-", row[5] or "-", row[6] or "-", "Sí" if row[7] else "No"))
+            filas_completas.clear()
+            filas_completas.extend(self.app.records_service.listar_empleados())
+            filtro_dotacion["values"] = ["Todas"] + sorted({row[4] for row in filas_completas if row[4]})
+            filtro_especialidad["values"] = ["Todas"] + sorted({row[3] for row in filas_completas if row[3]})
+            render()
+
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
 
         def _dialogo(valores_iniciales=None):
             self.app.cargarDotaciones()
