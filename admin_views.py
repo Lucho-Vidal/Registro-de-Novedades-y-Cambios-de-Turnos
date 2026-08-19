@@ -140,20 +140,64 @@ class AdminViews:
             for row in self.service.listar_usuarios():
                 tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "", "Sí" if row[4] else "No", row[5]))
 
-        def new_user():
-            username = simpledialog.askstring("Nuevo usuario", "Usuario:", parent=window)
-            if not username:
-                return
-            nombre = simpledialog.askstring("Nuevo usuario", "Nombre completo:", parent=window) or ""
-            legajo = simpledialog.askstring("Nuevo usuario", "Legajo:", parent=window) or ""
-            password = simpledialog.askstring("Nuevo usuario", "Contraseña:", show="*", parent=window)
-            if not password:
-                return
-            try:
-                self.service.crear_usuario(username, password, nombre, int(legajo) if legajo else None)
+        def _dialogo_usuario(valores_iniciales=None):
+            editando = valores_iniciales is not None
+            dialog = tk.Toplevel(window)
+            dialog.title("Editar usuario" if editando else "Nuevo usuario")
+            dialog.geometry("380x260")
+            self.app.aplicar_tema_ventana(dialog)
+            dialog.grab_set()
+            username_var = tk.StringVar(value="" if not editando else valores_iniciales["username"])
+            nombre_var = tk.StringVar(value="" if not editando else valores_iniciales["nombre"])
+            legajo_var = tk.StringVar(value="" if not editando else str(valores_iniciales["legajo"] or ""))
+            password_var = tk.StringVar()
+
+            ttk.Label(dialog, text="Usuario").grid(row=0, column=0, sticky="w", padx=12, pady=4)
+            ttk.Entry(dialog, textvariable=username_var, width=30).grid(row=0, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Nombre completo").grid(row=1, column=0, sticky="w", padx=12, pady=4)
+            ttk.Entry(dialog, textvariable=nombre_var, width=30).grid(row=1, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Legajo").grid(row=2, column=0, sticky="w", padx=12, pady=4)
+            ttk.Entry(dialog, textvariable=legajo_var, width=30).grid(row=2, column=1, sticky="ew", padx=12, pady=4)
+            if not editando:
+                ttk.Label(dialog, text="Contraseña").grid(row=3, column=0, sticky="w", padx=12, pady=4)
+                ttk.Entry(dialog, textvariable=password_var, show="*", width=30).grid(row=3, column=1, sticky="ew", padx=12, pady=4)
+
+            def guardar():
+                username = username_var.get().strip()
+                nombre = nombre_var.get().strip()
+                legajo_text = legajo_var.get().strip()
+                if not username:
+                    messagebox.showerror("Usuarios", "El usuario es obligatorio.", parent=dialog)
+                    return
+                if not editando and not password_var.get():
+                    messagebox.showerror("Usuarios", "La contraseña es obligatoria.", parent=dialog)
+                    return
+                try:
+                    legajo = int(legajo_text) if legajo_text else None
+                except ValueError:
+                    messagebox.showerror("Usuarios", "El legajo debe ser un número.", parent=dialog)
+                    return
+                if not editando and legajo is None:
+                    messagebox.showerror("Usuarios", "El legajo es obligatorio para nuevos usuarios.", parent=dialog)
+                    return
+                try:
+                    if not editando:
+                        self.service.crear_usuario(username, password_var.get(), nombre, legajo)
+                    else:
+                        self.service.actualizar_usuario(int(valores_iniciales["id"]), username, nombre, legajo, valores_iniciales["activo"])
+                except Exception as error:
+                    messagebox.showerror("Usuarios", str(error), parent=dialog)
+                    return
+                dialog.destroy()
                 refresh()
-            except Exception as error:
-                messagebox.showerror("Usuarios", str(error), parent=window)
+
+            botones = ttk.Frame(dialog)
+            botones.grid(row=4 if not editando else 3, column=0, columnspan=2, pady=15)
+            ttk.Button(botones, text="Guardar", command=guardar).pack(side="left", padx=6)
+            ttk.Button(botones, text="Cancelar", command=dialog.destroy).pack(side="left", padx=6)
+
+        def new_user():
+            _dialogo_usuario()
 
         def change_password():
             user_id = selected_id()
@@ -168,15 +212,13 @@ class AdminViews:
             if not selection:
                 return
             values = tree.item(selection[0], "values")
-            username = simpledialog.askstring("Usuario", "Usuario:", initialvalue=values[1], parent=window)
-            nombre = simpledialog.askstring("Usuario", "Nombre completo:", initialvalue=values[2], parent=window)
-            legajo = simpledialog.askstring("Usuario", "Legajo:", initialvalue=values[3], parent=window)
-            if username and nombre is not None and legajo is not None:
-                try:
-                    self.service.actualizar_usuario(int(values[0]), username, nombre, int(legajo) if legajo.strip() else None, values[4] == "Sí")
-                    refresh()
-                except Exception as error:
-                    messagebox.showerror("Usuarios", str(error), parent=window)
+            _dialogo_usuario({
+                "id": int(values[0]),
+                "username": values[1],
+                "nombre": values[2],
+                "legajo": values[3] or None,
+                "activo": values[4] == "Sí",
+            })
 
         def toggle_user():
             user_id = selected_id()
@@ -324,7 +366,7 @@ class AdminViews:
             return
         window = tk.Toplevel(self.app.root)
         window.title("Tipos de novedad")
-        window.geometry("520x360")
+        window.geometry("640x400")
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "nombre", "activo"), show="headings")
         for column, title, width in (("id", "ID", 60), ("nombre", "Nombre", 300), ("activo", "Activo", 80)):
@@ -393,7 +435,7 @@ class AdminViews:
             return
         window = tk.Toplevel(self.app.root)
         window.title("Dotaciones")
-        window.geometry("520x360")
+        window.geometry("640x400")
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "nombre", "activo"), show="headings")
         for column, title, width in (("id", "ID", 60), ("nombre", "Nombre", 300), ("activo", "Activo", 80)):
@@ -586,7 +628,7 @@ class AdminViews:
             return
         window = tk.Toplevel(self.app.root)
         window.title("Personal de estación")
-        window.geometry("560x360")
+        window.geometry("720x440")
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "nombre", "activo"), show="headings")
         for column, title, width in (("id", "ID", 55), ("nombre", "Nombre", 350), ("activo", "Activo", 80)):
