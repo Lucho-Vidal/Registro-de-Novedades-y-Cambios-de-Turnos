@@ -5,7 +5,6 @@ main.spec
 RENO.spec
 build/
 dist/
-*.docx
 __pycache__/
 venv/
 .opencodeignore

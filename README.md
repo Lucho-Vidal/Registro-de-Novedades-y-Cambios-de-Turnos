@@ -5,10 +5,21 @@ En caso de querer revisar el código y empaquetarlo necesitaran tener todas las 
 
 ```
 pyinstaller --onefile --windowed main.py
+python -m PyInstaller --clean --noconfirm --onefile --windowed --name "RENO" --collect-all bcrypt main.py
 ```
 
+Antes de empaquetar, instalar las dependencias en el mismo Python que ejecutará PyInstaller. Para incluir correctamente el módulo nativo de bcrypt puede utilizar:
+
+```powershell
+python -m pip install -r requirements.txt
+python -m pip install pyinstaller
+python -m PyInstaller --clean --noconfirm --onefile --windowed --collect-all bcrypt main.py
+```
+
+Si se utiliza la especificación del proyecto, ejecutar `python -m PyInstaller main.spec` después de instalar las dependencias.
+
 El ejecutable puede tener un archivo de configuración en la misma carpeta con el nombre "path_base" sin ninguna extensión. Puede contener la ruta de un Excel inicial o directamente la ruta de la base SQLite compartida.
-Por ejemplo: 
+Por ejemplo:
 
 ```
 C:\Users\user\workspace\registroNovedadesTk\assets\PLANILLA NOVEDADES PERSONAL ABORDO.xlsx

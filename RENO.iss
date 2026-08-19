@@ -45,6 +45,36 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 
+[Code]
+
+const
+  FECHA_VENCIMIENTO = '20260831';
+
+function FormatearFecha(const Fecha: String): String;
+begin
+  Result := Copy(Fecha, 7, 2) + '/' +
+            Copy(Fecha, 5, 2) + '/' +
+            Copy(Fecha, 1, 4);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := CompareStr(
+    GetDateTimeString('yyyymmdd', #0, #0),
+    FECHA_VENCIMIENTO
+  ) <= 0;
+
+  if not Result then
+  begin
+    MsgBox(
+      'Este instalador ha vencido.' + #13#10 +
+      'Fecha límite: ' + FormatearFecha(FECHA_VENCIMIENTO),
+      mbError,
+      MB_OK
+    );
+  end;
+end;
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
