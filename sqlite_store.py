@@ -302,6 +302,9 @@ class SQLiteStore:
             connection.execute(
                 "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('toast_duracion', '6')"
             )
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('fila_alto', '30')"
+            )
             connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre) VALUES ('Informe')")
             for nombre in ("PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"):
                 connection.execute("INSERT OR IGNORE INTO dotaciones(nombre) VALUES (?)", (nombre,))

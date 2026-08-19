@@ -801,8 +801,17 @@ class AdminViews:
         )
         if eliminar_horas is None:
             return
+        fila_alto = simpledialog.askinteger(
+            "Tiempos de edición", "Altura de las filas de las tablas (píxeles, 1-60):",
+            initialvalue=int(self.app.db_store.get_configuracion("fila_alto", "30")),
+            minvalue=1, maxvalue=60, parent=self.app.root,
+        )
+        if fila_alto is None:
+            return
         self.app.db_store.set_configuracion("editar_horas", editar_horas)
         self.app.db_store.set_configuracion("eliminar_horas", eliminar_horas)
+        self.app.db_store.set_configuracion("fila_alto", fila_alto)
+        self.app.configurar_estilos_formularios()
         messagebox.showinfo(
             "Tiempos de edición",
             f"Se podrá editar dentro de {editar_horas} horas y eliminar dentro de {eliminar_horas} horas.",

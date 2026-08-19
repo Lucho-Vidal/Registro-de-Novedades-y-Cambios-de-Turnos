@@ -841,7 +841,7 @@ class FormularioExcelApp:
             print(f"Error al cambiar el tema: {e}")
 
     def configurar_estilos_formularios(self):
-        """Configura los estilos de los campos readonly según el tema."""
+        """Configura los estilos de los campos readonly y la altura de fila según el tema."""
         temas_oscuros = {"darkly", "superhero", "solar"}
         tema_actual = self.style.theme_use()
         if tema_actual in temas_oscuros:
@@ -857,6 +857,12 @@ class FormularioExcelApp:
             foreground=[("readonly", fg)],
             fieldbackground=[("readonly", bg)]
         )
+
+        try:
+            fila_alto = int(self.db_store.get_configuracion("fila_alto", "30"))
+        except (TypeError, ValueError):
+            fila_alto = 30
+        self.style.configure("Treeview", rowheight=max(1, min(60, fila_alto)))
 
     def cargar_tema(self):
         """Carga el tema almacenado en el archivo theme."""

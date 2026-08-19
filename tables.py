@@ -5,6 +5,39 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 
+ANCHOS_NOVEDADES = {
+    "ID": 55, "Fecha de registro": 110, "LEGAJO": 70, "APELLIDOS Y NOMBRES": 240,
+    "ESPECIALIDAD": 130, "DOTACION": 75, "TURNOS": 60, "FRANCO": 75, "NOVEDAD": 150,
+    "Fecha de Inicio Novedad": 115, "Fecha de Fin Novedad": 115,
+    "REFERENCIA ESTACION": 130, "SUPERVISOR": 160,
+}
+
+ANCHOS_CAMBIOS = {
+    "ID": 55, "Fecha de registro": 110, "LEGAJO": 70, "APELLIDOS Y NOMBRES": 240,
+    "ESPECIALIDAD": 130, "DOTACION": 75, "TURNOS": 60, "FRANCO": 75,
+    "LEGAJO2": 70, "APELLIDOS Y NOMBRES2": 240, "ESPECIALIDAD2": 130, "DOTACION2": 75,
+    "TURNOS2": 60, "FRANCO2": 75, "Fecha de Cambio de Turno": 125,
+    "REFERENCIA ESTACION": 130, "SUPERVISOR": 160,
+}
+
+# Índices de corte: se quitan Observaciones y USUARIO WINDOWS del listado.
+COLUMNAS_NOVEDADES_VISIBLES = 13
+COLUMNAS_CAMBIOS_VISIBLES = 17
+
+COLUMNAS_DETALLE_NOVEDAD = [
+    "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
+    "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
+    "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+]
+
+COLUMNAS_DETALLE_CAMBIO = [
+    "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION",
+    "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2",
+    "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR",
+    "Observaciones", "USUARIO WINDOWS"
+]
+
+
 class TablesManager:
     """Gestor de tablas, filtrado y modales de detalle.
     
@@ -34,6 +67,25 @@ class TablesManager:
             app: Instancia de FormularioExcelApp con acceso a workbook, sheets, etc.
         """
         self.app = app
+
+    def _valores_novedad(self, fila):
+        return (
+            fila["id"], fila["registrado_en"], fila["legajo"], fila["apellidos_nombres"],
+            fila["especialidad"], fila["dotacion"], fila["turnos"], fila["franco"],
+            fila["novedad"], fila["fecha_inicio"], fila["fecha_fin"],
+            fila["referencia_estacion"], fila["supervisor"], fila["observaciones"],
+            fila["usuario_windows"],
+        )
+
+    def _valores_cambio(self, fila):
+        return (
+            fila["id"], fila["registrado_en"], fila["legajo_1"], fila["apellidos_nombres_1"],
+            fila["especialidad_1"], fila["dotacion_1"], fila["turnos_1"], fila["franco_1"],
+            fila["legajo_2"], fila["apellidos_nombres_2"], fila["especialidad_2"], fila["dotacion_2"],
+            fila["turnos_2"], fila["franco_2"], fila["fecha_cambio"],
+            fila["referencia_estacion"], fila["supervisor"], fila["observaciones"],
+            fila["usuario_windows"],
+        )
     
     def actualizar_contador_resultados(self, label, cantidad, sufijo=""):
         """Actualiza la etiqueta de cantidad de resultados.
@@ -264,12 +316,11 @@ class TablesManager:
             if self.app.sheet_novedades:
                 for fila in self.app.sheet_novedades.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
-                    self.app.tabla_novedades.insert("", "end", values=fila_procesada)
+                    self.app.tabla_novedades.insert("", "end", values=fila_procesada[:COLUMNAS_NOVEDADES_VISIBLES])
                     total += 1
             else:
                 print("La hoja 'NOVEDADES' está vacía o no se pudo cargar.")
 
-            self.ajustar_ancho_columnas(self.app.tabla_novedades)
             if hasattr(self.app, "resultados_novedades_label"):
                 self.actualizar_contador_resultados(self.app.resultados_novedades_label, total)
         except Exception as e:
@@ -295,12 +346,11 @@ class TablesManager:
             if self.app.sheet_cambio_turnos:
                 for fila in self.app.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
                     fila_procesada = ["-" if celda is None else celda for celda in fila]
-                    self.app.table_cambios.insert("", "end", values=fila_procesada)
+                    self.app.table_cambios.insert("", "end", values=fila_procesada[:COLUMNAS_CAMBIOS_VISIBLES])
                     total += 1
             else:
                 print("La hoja 'Cambio de Turnos' está vacía o no se pudo cargar.")
 
-            self.ajustar_ancho_columnas(self.app.table_cambios)
             if hasattr(self.app, "resultados_cambios_label"):
                 self.actualizar_contador_resultados(self.app.resultados_cambios_label, total)
         except Exception as e:
@@ -353,10 +403,9 @@ class TablesManager:
                     coincide_dotacion = dotacion_filtro == "Todas" or dotacion_filtro_norm in dotacion_fila_norm
                     coincide_tipo = tipo_filtro == "Todos" or tipo_filtro_norm == tipo_fila_norm
                     if coincide_nombre and coincide_dotacion and coincide_tipo:
-                        self.app.tabla_novedades.insert("", "end", values=fila_procesada)
+                        self.app.tabla_novedades.insert("", "end", values=fila_procesada[:COLUMNAS_NOVEDADES_VISIBLES])
                         total += 1
 
-            self.ajustar_ancho_columnas(self.app.tabla_novedades)
             if hasattr(self.app, "resultados_novedades_label"):
                 self.actualizar_contador_resultados(self.app.resultados_novedades_label, total)
         except Exception as e:
@@ -433,18 +482,17 @@ class TablesManager:
                     coincide_dotacion = dotacion_filtro_norm in dotacion_1_norm or dotacion_filtro_norm in dotacion_2_norm
                     if dotacion_filtro == "Todas":
                         if coincide_nombre:
-                            self.app.table_cambios.insert("", "end", values=fila_procesada)
+                            self.app.table_cambios.insert("", "end", values=fila_procesada[:COLUMNAS_CAMBIOS_VISIBLES])
                             total += 1
                     elif nombre_filtro == self.app.PLACEHOLDER_BUSCAR_NOMBRE:
                         if coincide_dotacion:
-                            self.app.table_cambios.insert("", "end", values=fila_procesada)
+                            self.app.table_cambios.insert("", "end", values=fila_procesada[:COLUMNAS_CAMBIOS_VISIBLES])
                             total += 1
                     else:
                         if coincide_nombre and coincide_dotacion:
-                            self.app.table_cambios.insert("", "end", values=fila_procesada)
+                            self.app.table_cambios.insert("", "end", values=fila_procesada[:COLUMNAS_CAMBIOS_VISIBLES])
                             total += 1
 
-            self.ajustar_ancho_columnas(self.app.table_cambios)
             if hasattr(self.app, "resultados_cambios_label"):
                 self.actualizar_contador_resultados(self.app.resultados_cambios_label, total)
         except Exception as e:
@@ -473,9 +521,8 @@ class TablesManager:
             total = 0
             for row in self.app.sheet_novedades.iter_rows(min_row=2, values_only=True):
                 row_data = ["-" if celda is None else celda for celda in row]
-                self.app.tabla_novedades.insert("", "end", values=row_data)
+                self.app.tabla_novedades.insert("", "end", values=row_data[:COLUMNAS_NOVEDADES_VISIBLES])
                 total += 1
-            self.ajustar_ancho_columnas(self.app.tabla_novedades)
             if hasattr(self.app, "resultados_novedades_label"):
                 self.actualizar_contador_resultados(self.app.resultados_novedades_label, total)
         
@@ -489,9 +536,8 @@ class TablesManager:
                 self.app.table_cambios.delete(item)
             for row in self.app.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
                 row_data = ["-" if celda is None else celda for celda in row]
-                self.app.table_cambios.insert("", "end", values=row_data)
+                self.app.table_cambios.insert("", "end", values=row_data[:COLUMNAS_CAMBIOS_VISIBLES])
                 total += 1
-            self.ajustar_ancho_columnas(self.app.table_cambios)
             if hasattr(self.app, "resultados_cambios_label"):
                 self.actualizar_contador_resultados(self.app.resultados_cambios_label, total)
     
@@ -512,14 +558,17 @@ class TablesManager:
             selected_item = treeview.selection()
             if selected_item:
                 item_values = treeview.item(selected_item[0], "values")
-                self.mostrar_modal_detalle(item_values, columnas, "novedad")
+                if item_values:
+                    fila = self.app.records_service.obtener_novedad(int(item_values[0]))
+                    if fila:
+                        self.mostrar_modal_detalle(self._valores_novedad(fila), COLUMNAS_DETALLE_NOVEDAD, "novedad")
             else:
                 print("No se seleccionó ningún elemento.")
             
         columnas = [
             "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
             "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
-            "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+            "REFERENCIA ESTACION", "SUPERVISOR"
         ]
         self.app.apellido_filter_novedades_var = tk.StringVar()
         self.app.dotacion_filter_novedades_var = tk.StringVar()
@@ -594,11 +643,10 @@ class TablesManager:
         self.app.tabla_novedades.grid(row=0, column=0, sticky="nsew")
         self.app.tabla_novedades.bind("<Double-1>", on_double_click)
         
-        # Encabezados y anchos
-        anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 120, 90, 120, 120, 120, 140, 120]
-        for col, ancho in zip(columnas, anchuras):
+        # Encabezados y anchos por columna
+        for col in columnas:
             self.app.tabla_novedades.heading(col, text=col.capitalize())
-            self.app.tabla_novedades.column(col, width=ancho, stretch=False)
+            self.app.tabla_novedades.column(col, width=ANCHOS_NOVEDADES[col], stretch=False)
 
         # Scrollbars
         scrollbar_vertical = ttk.Scrollbar(self.app.tree_frame, orient="vertical", command=self.app.tabla_novedades.yview)
@@ -628,7 +676,10 @@ class TablesManager:
             selected_item = treeview.selection()
             if selected_item:
                 item_values = treeview.item(selected_item[0], "values")
-                self.mostrar_modal_detalle(item_values, columnas, "cambio de turno")
+                if item_values:
+                    fila = self.app.records_service.obtener_cambio(int(item_values[0]))
+                    if fila:
+                        self.mostrar_modal_detalle(self._valores_cambio(fila), COLUMNAS_DETALLE_CAMBIO, "cambio de turno")
             else:
                 print("No se seleccionó ningún elemento.")
         
@@ -637,7 +688,7 @@ class TablesManager:
         columnas = [
             "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", 
             "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2", 
-            "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+            "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR"
         ]
         
         # Detectar cambios en filtros
@@ -701,11 +752,10 @@ class TablesManager:
         self.app.table_cambios.grid(row=0, column=0, sticky="nsew")
         self.app.table_cambios.bind("<Double-1>", on_double_click)
         
-        # Encabezados y anchos
-        anchuras = [30, 100, 60, 150, 150, 80, 60, 80, 60, 150, 150, 80, 60, 80, 120, 120, 120, 120, 140]
-        for col, ancho in zip(columnas, anchuras):
+        # Encabezados y anchos por columna
+        for col in columnas:
             self.app.table_cambios.heading(col, text=col)
-            self.app.table_cambios.column(col, width=ancho, anchor='center', stretch=False)
+            self.app.table_cambios.column(col, width=ANCHOS_CAMBIOS[col], anchor='center', stretch=False)
 
         # Scrollbars
         scrollbar_vertical = ttk.Scrollbar(self.app.tree_frame, orient="vertical", command=self.app.table_cambios.yview)
