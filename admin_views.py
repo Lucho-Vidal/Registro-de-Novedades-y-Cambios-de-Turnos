@@ -17,6 +17,7 @@ PERMISOS_BASE = (
     "usuarios.administrar", "roles.administrar", "empleados.importar", "empleados.administrar",
     "auditoria.ver",
     "dotaciones.administrar",
+    "tiposNovedad.administrar",
     "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
     "personalEstacion.importar", "personalEstacion.exportar",
     "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
@@ -37,6 +38,7 @@ PERMISOS_GRUPOS = (
     ("empleados", "Empleados"),
     ("personalEstacion", "Personal de estación"),
     ("dotaciones", "Dotaciones"),
+    ("tiposNovedad", "Tipos de novedad"),
     ("destinatarios_informe", "Destinatarios de informes"),
     ("usuarios", "Usuarios"),
     ("roles", "Roles y permisos"),
@@ -362,7 +364,7 @@ class AdminViews:
         refresh()
 
     def mostrar_tipos_novedad(self):
-        if not self.app.requerir_permiso("novedades.editar"):
+        if not self.app.requerir_permiso("tiposNovedad.administrar"):
             return
         window = tk.Toplevel(self.app.root)
         window.title("Tipos de novedad")
@@ -424,7 +426,7 @@ class AdminViews:
         ttk.Button(buttons, text="Editar", command=edit_type).pack(side="left", padx=3)
         ttk.Button(buttons, text="Activar / desactivar", command=toggle_type).pack(side="left", padx=3)
         ttk.Button(buttons, text="Importar desde Excel", command=lambda: self._importar_desde_excel(
-            window, "Tipos de novedad", "novedades.editar", "tipos_novedad",
+            window, "Tipos de novedad", "tiposNovedad.administrar", "tipos_novedad",
             migrate_tipos_novedad_sheet,
             despues=lambda: (self.app.cargarTipoNovedades(), refresh()),
         )).pack(side="left", padx=3)

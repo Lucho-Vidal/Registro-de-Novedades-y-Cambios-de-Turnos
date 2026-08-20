@@ -47,8 +47,8 @@ class LoginView:
         self.admin_button = None
 
         ttk.Button(content, text="Ingresar", command=self.login).pack(pady=(14, 5))
-        self.username.focus_set()
         self.password.bind("<Return>", lambda _event: self.login())
+        self.window.after(50, self._dar_foco_inicial)
 
         if not self._hay_usuarios():
             self.legajo_label = ttk.Label(form, text="Legajo (solo para crear administrador)")
@@ -60,6 +60,11 @@ class LoginView:
                 command=self.crear_administrador_inicial,
             )
             self.admin_button.pack(pady=(0, 5))
+
+    def _dar_foco_inicial(self):
+        self.window.lift()
+        self.window.focus_force()
+        self.username.focus_set()
 
     def _apply_saved_theme(self):
         try:

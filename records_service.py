@@ -2,7 +2,13 @@
 
 import json
 import sqlite3
+import unicodedata
 from datetime import datetime, timedelta
+
+_DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+_DIAS_SEMANA_NORM = {
+    "lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo",
+}
 
 
 class RecordsService:
@@ -345,6 +351,26 @@ class RecordsService:
     def _desde_hace(self, dias):
         return datetime.now() - timedelta(days=max(1, int(dias)))
 
+    def _es_dia_semana(self, valor):
+        """Indica si el texto corresponde a un día de la semana (ignora mayúsculas/acentos)."""
+        texto = unicodedata.normalize("NFKD", str(valor or ""))
+        texto = "".join(c for c in texto if not unicodedata.combining(c)).lower().strip()
+        return texto in _DIAS_SEMANA_NORM
+
+    def dashboard_por_dia_semana(self, dias=30):
+        """Novedades y cambios por día de la semana dentro de la ventana indicada."""
+        desde = self._desde_hace(dias)
+        conteo = {dia: 0 for dia in _DIAS_SEMANA}
+
+        def sumar(fecha, fila):
+            if fecha < desde:
+                return
+            conteo[_DIAS_SEMANA[fecha.weekday()]] += 1
+
+        self._contar_por_fecha("novedades", ("registrado_en",), sumar)
+        self._contar_por_fecha("cambios_turno", ("registrado_en",), sumar)
+        return list(conteo.items())
+
     def _contar_por_fecha(self, tabla, columnas_registrado, funcion):
         with self.store.read_connection() as connection:
             columnas = ", ".join(columnas_registrado)
@@ -403,7 +429,7 @@ class RecordsService:
 
         def sumar_dotacion(dotacion):
             valor = (dotacion or "").strip()
-            if not valor:
+            if not valor or self._es_dia_semana(valor):
                 return
             conteo[valor] = conteo.get(valor, 0) + 1
 

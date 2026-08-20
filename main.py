@@ -158,7 +158,7 @@ class FormularioExcelApp:
         if self.tiene_permiso("novedades.ver") or self.tiene_permiso("cambios_turno.ver"):
             self.current_view = "dashboard"
             self.table_frame.grid_forget()
-            self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
             self.dashboard_manager.crear_dashboard()
         else:
             self.current_view = "table"
@@ -324,8 +324,8 @@ class FormularioExcelApp:
             self.archivo_menu.add_command(label="Importar cambios de turno", command=lambda: self.importar_excel_operativo("Cambio de Turnos"))
         if self.tiene_permiso("empleados.importar") or self.tiene_permiso("usuarios.administrar"):
             self.archivo_menu.add_command(label="Importar empleados", command=lambda: self.importar_excel_operativo("BASE"))
-            if self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar"):
-                self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
+        if self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar"):
+            self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
 
         # Menú Opciones
         self.opciones_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -341,7 +341,7 @@ class FormularioExcelApp:
             self.temas_menu.add_command(label=tema, command=lambda t=tema: self.cambiar_tema(t))
 
         if any(self.tiene_permiso(permission) for permission in (
-            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver", "registros.recuperar", "backup.gestionar", "empleados.administrar"
+            "usuarios.administrar", "roles.administrar", "novedades.editar", "dotaciones.administrar", "personalEstacion.ver", "tiposNovedad.administrar", "destinatarios_informe.administrar", "sesion.configurar", "auditoria.ver", "registros.recuperar", "backup.gestionar", "empleados.administrar"
         )):
             self.administracion_menu = tk.Menu(self.menu_bar, tearoff=0)
             self.menu_bar.add_cascade(label="Administración", menu=self.administracion_menu)
@@ -352,7 +352,7 @@ class FormularioExcelApp:
                 self.administracion_menu.add_command(label="Roles y permisos", command=self.admin_views.mostrar_roles)
             if self.tiene_permiso("empleados.administrar"):
                 self.administracion_menu.add_command(label="Empleados", command=self.admin_views.mostrar_empleados)
-            if self.tiene_permiso("novedades.editar"):
+            if self.tiene_permiso("tiposNovedad.administrar"):
                 self.administracion_menu.add_command(label="Tipos de novedad", command=self.admin_views.mostrar_tipos_novedad)
             if self.tiene_permiso("dotaciones.administrar"):
                 self.administracion_menu.add_command(label="Dotaciones", command=self.admin_views.mostrar_dotaciones)
@@ -912,7 +912,7 @@ class FormularioExcelApp:
             else:
                 self.tables_manager.cargar_datos_completos_cambios()
         elif self.current_view == "dashboard":
-            self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
             self.dashboard_manager.actualizar_dashboard()
         else:
             self.table_frame.grid(row=0, column=0, padx=10, pady=10)

@@ -216,6 +216,7 @@ class AuthService:
             "usuarios.administrar", "roles.administrar", "empleados.importar", "empleados.administrar",
             "auditoria.ver",
             "dotaciones.administrar",
+            "tiposNovedad.administrar",
             "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
             "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
             "backup.gestionar",

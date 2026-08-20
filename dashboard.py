@@ -8,13 +8,15 @@ class DashboardManager:
     """Gestor del panel de control.
 
     Arma el dashboard dentro de `app.dashboard_frame`: tarjetas de resumen,
-    navegación rápida y gráficos de barras (tk.Canvas) para novedades por tipo,
-    registros por dotación y tendencia diaria. Los datos se recalculan en cada
-    `actualizar_dashboard()` (al entrar a la vista y en el refresh de 60s).
+    navegación rápida y una grilla 2x2 de gráficos de barras (tk.Canvas) para
+    novedades por tipo, registros por dotación, tendencia diaria y registros
+    por día de semana. Los datos se recalculan en cada `actualizar_dashboard()`
+    (al entrar a la vista y en el refresh de 60s).
     """
 
     ANCHO_CANVAS = 340
-    ALTO_CANVAS = 190
+    ALTO_CANVAS = 300
+    MAX_TIPOS = 12
 
     def __init__(self, app):
         self.app = app
@@ -33,6 +35,7 @@ class DashboardManager:
         )
         self.lbl_actualizado = ttk.Label(frame, text="", font=("Helvetica", 9))
         self.lbl_actualizado.grid(row=0, column=1, pady=10, padx=10, sticky="e")
+        frame.grid_columnconfigure((0, 1), weight=1)
 
         barra = ttk.Frame(frame)
         barra.grid(row=1, column=0, columnspan=2, pady=5, padx=10, sticky="w")
@@ -68,28 +71,20 @@ class DashboardManager:
         graficos = ttk.Frame(frame)
         graficos.grid(row=3, column=0, columnspan=2, pady=8, padx=6, sticky="nsew")
 
-        self._crear_grafico_caja(graficos, 0, "Novedades por tipo", self.ANCHO_CANVAS, self.ALTO_CANVAS)
-        self._canvas_tipo = getattr(self, "_canvas_tipo")
+        cajas = ttk.Frame(graficos)
+        cajas.pack(anchor="n")
 
-        self._crear_grafico_caja(graficos, 1, "Registros por dotación (top 10)", self.ANCHO_CANVAS, self.ALTO_CANVAS)
-        self._canvas_dotacion = getattr(self, "_canvas_dotacion")
-
-        caja_tendencia = ttk.Frame(graficos)
-        caja_tendencia.grid(row=1, column=2, padx=6, pady=4, sticky="n")
-        ttk.Label(caja_tendencia, text="Tendencia", font=("Helvetica", 12, "bold")).pack(anchor="w")
-        self._canvas_tendencia = tk.Canvas(
-            caja_tendencia, width=self.ANCHO_CANVAS, height=self.ALTO_CANVAS,
-            background=self.app.ui_background, highlightthickness=1,
-            highlightbackground=self.app.ui_foreground,
-        )
-        self._canvas_tendencia.pack()
+        self._crear_grafico_caja(cajas, 0, 0, "Novedades por tipo", self.ANCHO_CANVAS, self.ALTO_CANVAS, "tipo")
+        self._crear_grafico_caja(cajas, 0, 1, "Registros por dotación (top 10)", self.ANCHO_CANVAS, self.ALTO_CANVAS, "dotacion")
+        self._crear_grafico_caja(cajas, 1, 0, "Tendencia", self.ANCHO_CANVAS, self.ALTO_CANVAS, "tendencia")
+        self._crear_grafico_caja(cajas, 1, 1, "Registros por día de semana", self.ANCHO_CANVAS, self.ALTO_CANVAS, "dia")
 
         self._creado = True
         self.actualizar_dashboard()
 
-    def _crear_grafico_caja(self, parent, columna, titulo, ancho, alto):
+    def _crear_grafico_caja(self, parent, fila, columna, titulo, ancho, alto, attr):
         caja = ttk.Frame(parent)
-        caja.grid(row=1, column=columna, padx=6, pady=4, sticky="n")
+        caja.grid(row=fila, column=columna, padx=6, pady=4, sticky="n")
         ttk.Label(caja, text=titulo, font=("Helvetica", 12, "bold")).pack(anchor="w")
         canvas = tk.Canvas(
             caja, width=ancho, height=alto,
@@ -97,10 +92,7 @@ class DashboardManager:
             highlightbackground=self.app.ui_foreground,
         )
         canvas.pack()
-        if columna == 0:
-            self._canvas_tipo = canvas
-        elif columna == 1:
-            self._canvas_dotacion = canvas
+        setattr(self, f"_canvas_{attr}", canvas)
 
     def _crear_tarjeta(self, parent, titulo):
         marco = tk.Frame(
@@ -141,6 +133,7 @@ class DashboardManager:
         self._dibujar_por_tipo()
         self._dibujar_por_dotacion()
         self._dibujar_tendencia()
+        self._dibujar_por_dia_semana()
         from datetime import datetime
         self.lbl_actualizado.config(text=f"Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
@@ -153,7 +146,7 @@ class DashboardManager:
 
     def _dibujar_por_tipo(self):
         datos = self.app.records_service.dashboard_por_tipo(self.tendencia_dias)
-        self._dibujar_barras_h(self._canvas_tipo, datos, self._color("primary", "#4682b4"))
+        self._dibujar_barras_h(self._canvas_tipo, datos[:self.MAX_TIPOS], self._color("primary", "#4682b4"))
 
     def _dibujar_por_dotacion(self):
         datos = self.app.records_service.dashboard_por_dotacion(self.tendencia_dias)
@@ -166,10 +159,15 @@ class DashboardManager:
             self._color("primary", "#4682b4"), self._color("info", "#5bc0de"),
         )
 
+    def _dibujar_por_dia_semana(self):
+        datos = self.app.records_service.dashboard_por_dia_semana(self.tendencia_dias)
+        self._dibujar_barras_h(self._canvas_dia, datos, self._color("warning", "#f0ad4e"))
+
     def _dibujar_barras_h(self, canvas, datos, color):
         canvas.delete("all")
         fg = self.app.ui_foreground
-        ancho, alto = self.ANCHO_CANVAS, self.ALTO_CANVAS
+        ancho = int(canvas["width"])
+        alto = int(canvas["height"])
         if not datos:
             canvas.create_text(ancho // 2, alto // 2, text="Sin datos", fill=fg)
             return
@@ -181,7 +179,7 @@ class DashboardManager:
         for indice, (label, valor) in enumerate(datos):
             y = indice * altura_fila + altura_fila / 2
             canvas.create_text(
-                margen_izq - 6, y, text=str(label)[:14], anchor="e",
+                margen_izq - 6, y, text=str(label)[:18], anchor="e",
                 fill=fg, font=("Calibri", 9),
             )
             largo = max(2, area_ancho * (valor / maximo))
