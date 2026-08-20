@@ -167,7 +167,7 @@ class FormularioExcelApp:
             self.labelCarga.config(text="Su usuario no tiene módulos habilitados.")
         
         # Refresh periódico
-        self.root.after(60000, self.refrescar_excel_periodicamente)
+        self.refresh_after = self.root.after(60000, self.refrescar_excel_periodicamente)
         self.session_active = True
         self.session_last_activity = time.monotonic()
         self.session_timeout_after = None
@@ -281,6 +281,17 @@ class FormularioExcelApp:
         if self.session_timeout_after:
             self.root.after_cancel(self.session_timeout_after)
             self.session_timeout_after = None
+        if getattr(self, "refresh_after", None):
+            self.root.after_cancel(self.refresh_after)
+            self.refresh_after = None
+        if getattr(self, "_toast_after", None):
+            self.root.after_cancel(self._toast_after)
+            self._toast_after = None
+        for atributo in ("filtro_after_novedades", "filtro_after_cambios"):
+            timer = getattr(self, atributo, None)
+            if timer:
+                self.root.after_cancel(timer)
+                setattr(self, atributo, None)
         self.root.unbind_all("<Any-KeyPress>")
         self.root.unbind_all("<Any-Button>")
         self.root.config(menu="")
@@ -423,31 +434,39 @@ class FormularioExcelApp:
     def cargar_excel(self):
         """Actualiza las vistas leyendo SQLite."""
         try:
-            self.labelCarga.config(text="Actualizando base de datos...")
+            self._set_label_carga("Actualizando base de datos...")
             self.actualizar_cache_base()
 
             if hasattr(self, "tabla_novedades") or hasattr(self, "table_cambios"):
                 self.tables_manager.actualizar_tabla()
             if self.current_view == 'table':
                 print("Novedades actualizadas correctamente.")
-                self.labelCarga.config(text="Novedades actualizadas correctamente.")
+                self._set_label_carga("Novedades actualizadas correctamente.")
             elif self.current_view == 'table_cambios':
                 print("Cambios de turnos actualizados correctamente.")
-                self.labelCarga.config(text="Cambios de turnos actualizados correctamente.")
+                self._set_label_carga("Cambios de turnos actualizados correctamente.")
             elif self.current_view == 'dashboard':
                 self.dashboard_manager.actualizar_dashboard()
-                self.labelCarga.config(text="Panel de control actualizado.")
+                self._set_label_carga("Panel de control actualizado.")
             return True
         except Exception as e:
             print(f"Error cargando la base de datos: {e}")
-            self.labelCarga.config(text="Error al cargar la base de datos.")
+            self._set_label_carga("Error al cargar la base de datos.")
             return False
+
+    def _set_label_carga(self, texto):
+        try:
+            self.labelCarga.config(text=texto)
+        except tk.TclError:
+            pass
 
     def refrescar_excel_periodicamente(self):
         """Refresca las vistas desde SQLite cada 60 segundos."""
+        if not self.session_active:
+            return
         self.cargar_excel()
         self._recalcular_registros_nuevos()
-        self.root.after(60000, self.refrescar_excel_periodicamente)
+        self.refresh_after = self.root.after(60000, self.refrescar_excel_periodicamente)
 
     def _parsear_registrado_en(self, valor):
         if valor is None or str(valor).strip() == "":
