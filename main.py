@@ -134,6 +134,7 @@ class FormularioExcelApp:
         # Marcos principales
         main_frame = ttk.Frame(self.root)
         main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid_columnconfigure(0, weight=1)
 
         self.form_frame = ttk.Frame(main_frame)
         self.form_cambios_frame = ttk.Frame(main_frame)
@@ -144,7 +145,7 @@ class FormularioExcelApp:
         self.form_cambios_creado = False
         self.tabla_novedades_creada = False
         self.tabla_cambios_creada = False
-        self.table_frame.grid(row=0, column=0, padx=10, pady=10)
+        self.table_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
 
         self.root.grid_rowconfigure(0, weight=1) 
         self.root.grid_columnconfigure(0, weight=1)
@@ -896,17 +897,17 @@ class FormularioExcelApp:
         self.current_view = target_view
 
         if self.current_view == "form":
-            self.form_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.form_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
             if not self.form_novedades_creado:
                 self.forms_manager.mostrar_formulario_novedades()
                 self.form_novedades_creado = True
         elif self.current_view == "form_cambios":
-            self.form_cambios_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.form_cambios_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
             if not self.form_cambios_creado:
                 self.forms_manager.mostrar_formulario_cambios()
                 self.form_cambios_creado = True
         elif self.current_view == "table_cambios":
-            self.table_cambios_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.table_cambios_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
             if not self.tabla_cambios_creada:
                 self.tables_manager.crear_tabla_cambios()
             else:
@@ -915,7 +916,7 @@ class FormularioExcelApp:
             self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
             self.dashboard_manager.actualizar_dashboard()
         else:
-            self.table_frame.grid(row=0, column=0, padx=10, pady=10)
+            self.table_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
             if not self.tabla_novedades_creada:
                 self.tables_manager.crear_tabla_novedades()
             else:

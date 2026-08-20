@@ -8,14 +8,16 @@ class DashboardManager:
     """Gestor del panel de control.
 
     Arma el dashboard dentro de `app.dashboard_frame`: tarjetas de resumen,
-    navegación rápida y una grilla 2x2 de gráficos de barras (tk.Canvas) para
+    navegación rápida y una fila de gráficos de barras (tk.Canvas) para
     novedades por tipo, registros por dotación, tendencia diaria y registros
-    por día de semana. Los datos se recalculan en cada `actualizar_dashboard()`
-    (al entrar a la vista y en el refresh de 60s).
+    por día de semana. La fila se centra si entra y usa scroll horizontal si no.
+    Los datos se recalculan en cada `actualizar_dashboard()` (al entrar a la
+    vista y en el refresh de 60s).
     """
 
     ANCHO_CANVAS = 340
     ALTO_CANVAS = 300
+    ALTO_CONTENEDOR = 365
     MAX_TIPOS = 12
 
     def __init__(self, app):
@@ -71,13 +73,26 @@ class DashboardManager:
         graficos = ttk.Frame(frame)
         graficos.grid(row=3, column=0, columnspan=2, pady=8, padx=6, sticky="nsew")
 
-        cajas = ttk.Frame(graficos)
-        cajas.pack(anchor="n")
+        graficos.grid_rowconfigure(0, weight=1)
+        graficos.grid_columnconfigure(0, weight=1)
+        self._canvas_grafico = tk.Canvas(
+            graficos, height=self.ALTO_CONTENEDOR,
+            background=self.app.ui_background, highlightthickness=0,
+        )
+        self._canvas_grafico.grid(row=0, column=0, sticky="nsew")
+        self._scroll_grafico = ttk.Scrollbar(graficos, orient="horizontal", command=self._canvas_grafico.xview)
+        self._canvas_grafico.configure(xscrollcommand=self._scroll_grafico.set)
+        self._scroll_grafico.grid(row=1, column=0, sticky="ew")
+
+        cajas = ttk.Frame(self._canvas_grafico)
+        self._ventana_cajas = self._canvas_grafico.create_window((0, 0), window=cajas, anchor="nw")
+        cajas.bind("<Configure>", self._centrar_cajas)
+        self._canvas_grafico.bind("<Configure>", self._centrar_cajas)
 
         self._crear_grafico_caja(cajas, 0, 0, "Novedades por tipo", self.ANCHO_CANVAS, self.ALTO_CANVAS, "tipo")
         self._crear_grafico_caja(cajas, 0, 1, "Registros por dotación (top 10)", self.ANCHO_CANVAS, self.ALTO_CANVAS, "dotacion")
-        self._crear_grafico_caja(cajas, 1, 0, "Tendencia", self.ANCHO_CANVAS, self.ALTO_CANVAS, "tendencia")
-        self._crear_grafico_caja(cajas, 1, 1, "Registros por día de semana", self.ANCHO_CANVAS, self.ALTO_CANVAS, "dia")
+        self._crear_grafico_caja(cajas, 0, 2, "Tendencia", self.ANCHO_CANVAS, self.ALTO_CANVAS, "tendencia")
+        self._crear_grafico_caja(cajas, 0, 3, "Registros por día de semana", self.ANCHO_CANVAS, self.ALTO_CANVAS, "dia")
 
         self._creado = True
         self.actualizar_dashboard()
@@ -93,6 +108,18 @@ class DashboardManager:
         )
         canvas.pack()
         setattr(self, f"_canvas_{attr}", canvas)
+
+    def _centrar_cajas(self, _event=None):
+        canvas = self._canvas_grafico
+        contenido = canvas.bbox("all")
+        ancho_contenido = (contenido[2] - contenido[0]) if contenido else 0
+        if ancho_contenido and ancho_contenido <= canvas.winfo_width():
+            canvas.coords(self._ventana_cajas, (canvas.winfo_width() - ancho_contenido) / 2, 0)
+            self._scroll_grafico.grid_remove()
+        else:
+            canvas.coords(self._ventana_cajas, 0, 0)
+            self._scroll_grafico.grid()
+        canvas.configure(scrollregion=canvas.bbox("all"))
 
     def _crear_tarjeta(self, parent, titulo):
         marco = tk.Frame(
