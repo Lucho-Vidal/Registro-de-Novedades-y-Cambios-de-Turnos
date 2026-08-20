@@ -835,6 +835,33 @@ class AdminViews:
         ttk.Button(buttons, text="Editar / activar", command=edit).pack(side="left", padx=3)
         refresh()
 
+    def mostrar_configuracion_clave(self):
+        if not self.app.requerir_permiso("sesion.configurar"):
+            return
+        dias = simpledialog.askinteger(
+            "Contraseñas y recuperación",
+            "Días de validez de la contraseña (0 = sin caducidad):",
+            initialvalue=int(self.app.db_store.get_configuracion("clave_expiracion_dias", "90")),
+            minvalue=0, maxvalue=3650, parent=self.app.root,
+        )
+        if dias is None:
+            return
+        dominio = simpledialog.askstring(
+            "Contraseñas y recuperación",
+            "Dominio de correo para recuperar contraseña (se concatena al usuario):",
+            initialvalue=str(self.app.db_store.get_configuracion("correo_dominio", "@trenesargentinos.gob.ar")),
+            parent=self.app.root,
+        )
+        if dominio is None:
+            return
+        self.app.db_store.set_configuracion("clave_expiracion_dias", dias)
+        self.app.db_store.set_configuracion("correo_dominio", dominio.strip())
+        messagebox.showinfo(
+            "Contraseñas y recuperación",
+            f"La contraseña caducará a los {dias} días." if dias > 0 else "La contraseña no caducará.",
+            parent=self.app.root,
+        )
+
     def mostrar_configuracion_sesion(self):
         if not self.app.requerir_permiso("sesion.configurar"):
             return

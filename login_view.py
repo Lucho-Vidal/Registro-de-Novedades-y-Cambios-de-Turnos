@@ -6,6 +6,7 @@ from tkinter import ttk
 from ttkbootstrap import Style
 
 from auth import AuthService, CuentaBloqueadaError
+from outlook_mailer import enviar_informe_outlook
 
 
 class LoginView:
@@ -18,8 +19,8 @@ class LoginView:
         self.window = tk.Toplevel(root)
         self.window.configure(background=str(self.style.colors.bg))
         self.window.title("Inicio de sesión")
-        self.window.geometry("420x375")
-        self.window.minsize(420, 375)
+        self.window.geometry("420x430")
+        self.window.minsize(420, 430)
         self.window.resizable(False, False)
         self.window.protocol("WM_DELETE_WINDOW", root.destroy)
         self.window.grab_set()
@@ -47,6 +48,8 @@ class LoginView:
         self.admin_button = None
 
         ttk.Button(content, text="Ingresar", command=self.login).pack(pady=(14, 5))
+        if self._hay_usuarios():
+            ttk.Button(content, text="¿Olvidó su contraseña?", command=self.recuperar_password).pack(pady=(4, 5))
         self.password.bind("<Return>", lambda _event: self.login())
         self.window.after(50, self._dar_foco_inicial)
 
@@ -104,10 +107,116 @@ class LoginView:
         if not user:
             messagebox.showerror("Inicio de sesión", "Usuario o contraseña incorrectos.", parent=self.window)
             return
+        if self.auth.requiere_cambio_clave(user["id"]):
+            if not self._cambiar_clave_obligatorio(user["id"]):
+                messagebox.showwarning(
+                    "Inicio de sesión", "Debe cambiar su contraseña para poder ingresar.", parent=self.window
+                )
+                return
         self.window.grab_release()
         self.window.destroy()
         self.root.deiconify()
         self.on_authenticated(user, self.store)
+
+    def recuperar_password(self):
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Recuperar contraseña")
+        dialog.geometry("360x190")
+        dialog.configure(background=str(self.style.colors.bg))
+        dialog.transient(self.window)
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(dialog, text="Ingrese su usuario para recibir una contraseña temporal.").grid(
+            row=0, column=0, padx=15, pady=(15, 5), sticky="w"
+        )
+        ttk.Label(dialog, text="Usuario").grid(row=1, column=0, padx=15, pady=(8, 3), sticky="w")
+        entrada = ttk.Entry(dialog, width=30)
+        entrada.grid(row=2, column=0, padx=15, sticky="ew")
+        entrada.focus_set()
+
+        def enviar():
+            usuario = entrada.get().strip()
+            if not usuario:
+                messagebox.showwarning("Recuperar contraseña", "Ingrese su usuario.", parent=dialog)
+                return
+            try:
+                email, temporal = self.auth.resetear_password(usuario)
+            except Exception as error:
+                messagebox.showerror("Recuperar contraseña", str(error), parent=dialog)
+                return
+            cuerpo = "\n".join([
+                "Se generó una contraseña temporal para su cuenta.",
+                f"Usuario: {usuario}",
+                f"Contraseña temporal: {temporal}",
+                "",
+                "Al ingresar se le pedirá cambiar la contraseña.",
+                "Si usted no solicitó este cambio, contacte al administrador.",
+            ])
+            try:
+                enviar_informe_outlook([email], "Restablecimiento de contraseña", cuerpo)
+            except Exception as error:
+                messagebox.showerror(
+                    "Recuperar contraseña",
+                    f"No se pudo enviar el correo. Contacte al administrador.\n\n{error}",
+                    parent=dialog,
+                )
+                return
+            messagebox.showinfo(
+                "Recuperar contraseña", f"Se envió una contraseña temporal a {email}.", parent=dialog
+            )
+            dialog.destroy()
+
+        botones = ttk.Frame(dialog)
+        botones.grid(row=3, column=0, pady=(15, 10))
+        ttk.Button(botones, text="Enviar", command=enviar).pack(side="left", padx=6)
+        ttk.Button(botones, text="Cancelar", command=dialog.destroy).pack(side="left", padx=6)
+        entrada.bind("<Return>", lambda _event: enviar())
+
+    def _cambiar_clave_obligatorio(self, user_id):
+        resultado = {"ok": False}
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Cambio de contraseña obligatorio")
+        dialog.geometry("380x220")
+        dialog.configure(background=str(self.style.colors.bg))
+        dialog.transient(self.window)
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(dialog, text="Debe cambiar su contraseña para continuar.").grid(
+            row=0, column=0, padx=15, pady=(15, 5), sticky="w"
+        )
+        ttk.Label(dialog, text="Nueva contraseña").grid(row=1, column=0, padx=15, pady=(8, 3), sticky="w")
+        nueva = ttk.Entry(dialog, show="*", width=30)
+        nueva.grid(row=2, column=0, padx=15, sticky="ew")
+        ttk.Label(dialog, text="Repita la nueva contraseña").grid(row=3, column=0, padx=15, pady=(8, 3), sticky="w")
+        confirmar = ttk.Entry(dialog, show="*", width=30)
+        confirmar.grid(row=4, column=0, padx=15, sticky="ew")
+        nueva.focus_set()
+
+        def guardar():
+            if not nueva.get():
+                messagebox.showwarning("Cambio de contraseña", "La contraseña no puede estar vacía.", parent=dialog)
+                return
+            if nueva.get() != confirmar.get():
+                messagebox.showwarning("Cambio de contraseña", "Las contraseñas no coinciden.", parent=dialog)
+                return
+            try:
+                self.auth.cambiar_password(user_id, nueva.get())
+            except Exception as error:
+                messagebox.showerror("Cambio de contraseña", str(error), parent=dialog)
+                return
+            resultado["ok"] = True
+            dialog.destroy()
+
+        botones = ttk.Frame(dialog)
+        botones.grid(row=5, column=0, pady=(15, 10))
+        ttk.Button(botones, text="Guardar", command=guardar).pack(side="left", padx=6)
+        ttk.Button(botones, text="Salir", command=dialog.destroy).pack(side="left", padx=6)
+        confirmar.bind("<Return>", lambda _event: guardar())
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        self.window.wait_window(dialog)
+        return resultado["ok"]
 
     def crear_administrador_inicial(self):
         username = self.username.get().strip()

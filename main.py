@@ -367,6 +367,8 @@ class FormularioExcelApp:
                 self.administracion_menu.add_command(label="Tiempos de edición", command=self.admin_views.mostrar_configuracion_tiempos)
             if self.tiene_permiso("sesion.configurar"):
                 self.administracion_menu.add_command(label="Notificaciones", command=self.admin_views.mostrar_configuracion_notificaciones)
+            if self.tiene_permiso("sesion.configurar"):
+                self.administracion_menu.add_command(label="Contraseñas y recuperación", command=self.admin_views.mostrar_configuracion_clave)
             if self.tiene_permiso("registros.recuperar"):
                 self.administracion_menu.add_command(label="Registros eliminados", command=self.admin_views.mostrar_registros_eliminados)
             if self.tiene_permiso("backup.gestionar"):

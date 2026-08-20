@@ -1,7 +1,9 @@
 """Funciones de autenticación preparadas para la futura pantalla de login."""
 
+import json
+import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import bcrypt
 
@@ -34,9 +36,9 @@ class AuthService:
         password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         with self.store.write_transaction() as connection:
             cursor = connection.execute(
-                """INSERT INTO usuarios(username, nombre, legajo, password_hash, creado_en)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (username.strip(), nombre.strip(), legajo, password_hash, self.store.now()),
+                """INSERT INTO usuarios(username, nombre, legajo, password_hash, creado_en, password_cambiado_en)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (username.strip(), nombre.strip(), legajo, password_hash, self.store.now(), self.store.now()),
             )
             user_id = cursor.lastrowid
             for role in roles:
@@ -188,7 +190,74 @@ class AuthService:
             raise ValueError("La contraseña no puede estar vacía.")
         password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         with self.store.write_transaction() as connection:
-            connection.execute("UPDATE usuarios SET password_hash=? WHERE id=?", (password_hash, user_id))
+            connection.execute(
+                "UPDATE usuarios SET password_hash=?, password_cambiado_en=?, debe_cambiar_clave=0 WHERE id=?",
+                (password_hash, self.store.now(), user_id),
+            )
+
+    def resetear_password(self, username):
+        """Genera una contraseña temporal para un usuario y la devuelve con su correo.
+
+        El correo se arma como usuario + dominio (config `correo_dominio`).
+        Levanta ValueError si el usuario no existe o está inactivo, y RuntimeError
+        si no se puede armar el correo.
+        """
+        nombre = (username or "").strip()
+        with self.store.read_connection() as connection:
+            user = connection.execute(
+                "SELECT * FROM usuarios WHERE username=? COLLATE NOCASE AND activo=1", (nombre,)
+            ).fetchone()
+        if not user:
+            raise ValueError("Usuario no encontrado.")
+        dominio = str(self.store.get_configuracion("correo_dominio", "@trenesargentinos.gob.ar") or "")
+        email = (nombre + dominio).strip()
+        if not email or "@" not in email:
+            raise RuntimeError("No se pudo armar el correo electrónico para ese usuario.")
+        temporal = secrets.token_urlsafe(9)
+        password_hash = bcrypt.hashpw(temporal.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        now = self.store.now()
+        with self.store.write_transaction() as connection:
+            connection.execute(
+                "UPDATE usuarios SET password_hash=?, password_cambiado_en=?, debe_cambiar_clave=1 WHERE id=?",
+                (password_hash, now, user["id"]),
+            )
+            connection.execute(
+                """INSERT INTO auditoria
+                   (usuario_id, usuario_windows, accion, entidad, entidad_id,
+                    datos_anteriores, datos_nuevos, creado_en)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user["id"], None, "resetear_clave", "usuarios", user["id"],
+                    None,
+                    json.dumps({"metodo": "email", "correo": email}, ensure_ascii=False),
+                    now,
+                ),
+            )
+        return email, temporal
+
+    def requiere_cambio_clave(self, user_id):
+        """Indica si el usuario debe cambiar su contraseña (flag o caducidad)."""
+        with self.store.read_connection() as connection:
+            row = connection.execute(
+                "SELECT password_cambiado_en, debe_cambiar_clave FROM usuarios WHERE id=?", (user_id,)
+            ).fetchone()
+        if not row:
+            return False
+        if int(row["debe_cambiar_clave"] or 0) == 1:
+            return True
+        try:
+            dias = max(0, int(self.store.get_configuracion("clave_expiracion_dias", "90")))
+        except (TypeError, ValueError):
+            dias = 0
+        if dias <= 0:
+            return False
+        if not row["password_cambiado_en"]:
+            return True
+        try:
+            cambiado = datetime.fromisoformat(str(row["password_cambiado_en"]))
+        except ValueError:
+            return True
+        return (datetime.now() - cambiado).days >= dias
 
     def inicializar_permisos(self, permissions):
         with self.store.write_transaction() as connection:
@@ -224,8 +293,8 @@ class AuthService:
         with self.store.write_transaction() as connection:
             password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
             user_id = connection.execute(
-                "INSERT INTO usuarios(username, nombre, legajo, password_hash, creado_en) VALUES (?, ?, ?, ?, ?)",
-                (username.strip(), username.strip(), legajo, password_hash, self.store.now()),
+                "INSERT INTO usuarios(username, nombre, legajo, password_hash, creado_en, password_cambiado_en) VALUES (?, ?, ?, ?, ?, ?)",
+                (username.strip(), username.strip(), legajo, password_hash, self.store.now(), self.store.now()),
             ).lastrowid
             role_id = connection.execute("INSERT INTO roles(nombre) VALUES ('Administrador')").lastrowid
             for permission in permissions:

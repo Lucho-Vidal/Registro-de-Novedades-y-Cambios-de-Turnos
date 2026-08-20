@@ -277,6 +277,10 @@ class SQLiteStore:
             user_columns = {row[1] for row in connection.execute("PRAGMA table_info(usuarios)").fetchall()}
             if "legajo" not in user_columns:
                 connection.execute("ALTER TABLE usuarios ADD COLUMN legajo INTEGER")
+            if "password_cambiado_en" not in user_columns:
+                connection.execute("ALTER TABLE usuarios ADD COLUMN password_cambiado_en TEXT")
+            if "debe_cambiar_clave" not in user_columns:
+                connection.execute("ALTER TABLE usuarios ADD COLUMN debe_cambiar_clave INTEGER NOT NULL DEFAULT 0")
             for table in ("novedades", "cambios_turno"):
                 columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
                 if "activo" not in columns:
@@ -304,6 +308,12 @@ class SQLiteStore:
             )
             connection.execute(
                 "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('fila_alto', '30')"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('clave_expiracion_dias', '90')"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('correo_dominio', '@trenesargentinos.gob.ar')"
             )
             connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre) VALUES ('Informe')")
             for nombre in ("PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"):
