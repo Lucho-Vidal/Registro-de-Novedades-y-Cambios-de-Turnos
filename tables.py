@@ -193,11 +193,23 @@ class TablesManager:
 
         registrado_en = novedad[1] if len(novedad) > 1 else None
         if vista == "novedad":
-            puede_editar = self.app.tiene_permiso("novedades.editar") and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
-            puede_eliminar = self.app.tiene_permiso("novedades.eliminar") and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+            puede_editar = (
+                self.app.tiene_permiso("novedades.editar") or
+                self.app.tiene_permiso("registros.modificar")
+            ) and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+            puede_eliminar = (
+                self.app.tiene_permiso("novedades.eliminar") or
+                self.app.tiene_permiso("registros.modificar")
+            ) and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
         else:
-            puede_editar = self.app.tiene_permiso("cambios_turno.editar") and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
-            puede_eliminar = self.app.tiene_permiso("cambios_turno.eliminar") and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+            puede_editar = (
+                self.app.tiene_permiso("cambios_turno.editar") or
+                self.app.tiene_permiso("registros.modificar")
+            ) and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+            puede_eliminar = (
+                self.app.tiene_permiso("cambios_turno.eliminar") or
+                self.app.tiene_permiso("registros.modificar")
+            ) and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
 
         if puede_editar:
             ttk.Button(botones, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "novedad" if vista == "novedad" else "cambio"))).pack(side="left", padx=5)

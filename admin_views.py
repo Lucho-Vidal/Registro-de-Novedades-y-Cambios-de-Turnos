@@ -20,7 +20,7 @@ PERMISOS_BASE = (
     "tiposNovedad.administrar",
     "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
     "personalEstacion.importar", "personalEstacion.exportar",
-    "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
+    "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar", "registros.modificar",
     "backup.gestionar",
 )
 
@@ -53,11 +53,13 @@ ACCIONES_PERMISO = {
     "ver": "Ver", "crear": "Crear", "editar": "Editar", "eliminar": "Eliminar",
     "importar": "Importar", "exportar": "Exportar", "administrar": "Administrar",
     "configurar": "Configurar", "recuperar": "Recuperar", "gestionar": "Gestionar",
+    "modificar": "Modificar",
 }
 
 _ORDEN_ACCION = {
     "ver": 0, "crear": 1, "editar": 2, "eliminar": 3, "importar": 4,
     "exportar": 5, "administrar": 6, "configurar": 7, "recuperar": 8, "gestionar": 9,
+    "modificar": 10,
 }
 
 

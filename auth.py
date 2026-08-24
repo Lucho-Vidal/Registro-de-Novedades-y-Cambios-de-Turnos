@@ -287,7 +287,7 @@ class AuthService:
             "dotaciones.administrar",
             "tiposNovedad.administrar",
             "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
-            "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar",
+            "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar", "registros.modificar",
             "backup.gestionar",
         )
         with self.store.write_transaction() as connection:
