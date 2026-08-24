@@ -6,7 +6,7 @@ from tkinter import ttk
 from ttkbootstrap import Style
 
 from auth import AuthService, CuentaBloqueadaError
-from outlook_mailer import enviar_informe_outlook
+from outlook_mailer import enviar_sin_rastro
 
 
 class LoginView:
@@ -141,6 +141,16 @@ class LoginView:
                 messagebox.showwarning("Recuperar contraseña", "Ingrese su usuario.", parent=dialog)
                 return
             try:
+                with self.store.read_connection() as _conn:
+                    _conn.execute("SELECT 1")
+            except Exception:
+                messagebox.showerror(
+                    "Recuperar contraseña",
+                    "No hay conexión a la base de datos. Verifique la red e intente más tarde.",
+                    parent=dialog,
+                )
+                return
+            try:
                 email, temporal = self.auth.resetear_password(usuario)
             except Exception as error:
                 messagebox.showerror("Recuperar contraseña", str(error), parent=dialog)
@@ -154,7 +164,7 @@ class LoginView:
                 "Si usted no solicitó este cambio, contacte al administrador.",
             ])
             try:
-                enviar_informe_outlook([email], "Restablecimiento de contraseña", cuerpo)
+                enviar_sin_rastro([email], "Restablecimiento de contraseña", cuerpo)
             except Exception as error:
                 messagebox.showerror(
                     "Recuperar contraseña",
