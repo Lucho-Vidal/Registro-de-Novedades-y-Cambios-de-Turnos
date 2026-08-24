@@ -39,6 +39,7 @@ class FormsManager:
             app: Instancia de FormularioExcelApp con acceso a root, base_rows, etc.
         """
         self.app = app
+        self._personal_estacion_lista = []
     
     def mostrar_modal(self, boton=1):
         """Muestra un modal para seleccionar personal por legajo.
@@ -222,6 +223,7 @@ class FormsManager:
             self.app.fecha_fin_novedad_entry.entry.delete(0, tk.END)
         if self.app.error_novedades_label is not None:
             self.app.error_novedades_label.config(text="")
+        self._restaurar_combobox_personal_estacion()
 
     def limpiar_fecha_fin_novedad(self):
         """Limpia el campo de fecha de fin de novedad."""
@@ -251,6 +253,27 @@ class FormsManager:
             self.app.observaciones_cambios_text.delete("1.0", "end")
         if self.app.error_cambios_label is not None:
             self.app.error_cambios_label.config(text="")
+        self._restaurar_combobox_personal_estacion()
+
+    def _filtrar_combobox_personal_estacion(self, combobox, event=None):
+        """Filtra los valores del combobox de personal de estación según el texto ingresado."""
+        if not hasattr(self, "_personal_estacion_lista_original") or not self._personal_estacion_lista_original:
+            return
+        texto = combobox.get().strip().lower()
+        if not texto:
+            combobox["values"] = self._personal_estacion_lista_original
+        else:
+            combobox["values"] = [v for v in self._personal_estacion_lista_original if texto in v.lower()]
+        if texto:
+            combobox.event_generate("<Down>")
+
+    def _restaurar_combobox_personal_estacion(self):
+        """Restaura la lista completa en los combobox de personal de estación."""
+        self._personal_estacion_lista_original = [row[1] for row in self.app.personal_estacion]
+        for attr in ("referencia_estacion_novedades_entry", "referencia_estacion_cambios_entry"):
+            combobox = getattr(self.app, attr, None)
+            if combobox:
+                combobox["values"] = self._personal_estacion_lista_original
 
     def guardar_datos_novedades(self):
         self.app.fecha_inicio_novedad_var.set(self.app.fecha_inicio_novedad_entry.entry.get())
@@ -265,6 +288,14 @@ class FormsManager:
         if not es_valido:
             self.mostrar_error_novedades(mensaje_error)
             return
+        # Validar que la referencia estación sea válida (case-insensitive)
+        if hasattr(self, "_personal_estacion_lista_original") and self._personal_estacion_lista_original:
+            ref = self.app.referencia_estacion_var.get().strip()
+            if ref and not any(ref.casefold() == v.casefold() for v in self._personal_estacion_lista_original):
+                self.mostrar_error_novedades("La estación de referencia debe ser un valor de la lista.")
+                if hasattr(self.app, "referencia_estacion_novedades_entry"):
+                    self.app.referencia_estacion_novedades_entry.focus_set()
+                return
         try:
             record_id = self.app.db_store.insert_novedad((
                 None, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(self.app.legajo_var.get().strip()),
@@ -307,6 +338,14 @@ class FormsManager:
         if not es_valido:
             self.mostrar_error_cambios(mensaje_error)
             return
+        # Validar que la referencia estación sea válida (case-insensitive)
+        if hasattr(self, "_personal_estacion_lista_original") and self._personal_estacion_lista_original:
+            ref = self.app.referencia_estacion_var.get().strip()
+            if ref and not any(ref.casefold() == v.casefold() for v in self._personal_estacion_lista_original):
+                self.mostrar_error_cambios("La estación de referencia debe ser un valor de la lista.")
+                if hasattr(self.app, "referencia_estacion_cambios_entry"):
+                    self.app.referencia_estacion_cambios_entry.focus_set()
+                return
         try:
             record_id = self.app.db_store.insert_cambio_turno((
                 None, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(self.app.legajo_var.get().strip()),
@@ -433,11 +472,16 @@ class FormsManager:
         # Referencia Estación
         ttk.Label(self.app.form_frame, text="   REFERENCIA ESTACIÓN").grid(row=7, column=0, sticky="w")
         ttk.Label(self.app.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=7, column=0, sticky="w")
+        self._personal_estacion_lista_original = [row[1] for row in self.app.personal_estacion]
         self.app.referencia_estacion_novedades_entry = ttk.Combobox(
             self.app.form_frame, textvariable=self.app.referencia_estacion_var,
-            values=[row[1] for row in self.app.personal_estacion], width=40,
-            state="readonly" if self.app.tiene_permiso("personalEstacion.ver") else "disabled",
+            values=self._personal_estacion_lista_original, width=40,
+            state="normal" if self.app.tiene_permiso("personalEstacion.ver") else "disabled",
         )
+        if self.app.tiene_permiso("personalEstacion.ver"):
+            self.app.referencia_estacion_novedades_entry.bind(
+                "<KeyRelease>", lambda e: self._filtrar_combobox_personal_estacion(self.app.referencia_estacion_novedades_entry, e)
+            )
         self.app.referencia_estacion_entry = self.app.referencia_estacion_novedades_entry
         self.app.referencia_estacion_entry.grid(row=8, column=0, columnspan=2, sticky="w", pady=5)
 
@@ -582,9 +626,13 @@ class FormsManager:
         ttk.Label(self.app.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=11, column=0, sticky="w")
         self.app.referencia_estacion_cambios_entry = ttk.Combobox(
             self.app.form_cambios_frame, textvariable=self.app.referencia_estacion_var,
-            values=[row[1] for row in self.app.personal_estacion], width=40,
-            state="readonly" if self.app.tiene_permiso("personalEstacion.ver") else "disabled",
+            values=self._personal_estacion_lista_original, width=40,
+            state="normal" if self.app.tiene_permiso("personalEstacion.ver") else "disabled",
         )
+        if self.app.tiene_permiso("personalEstacion.ver"):
+            self.app.referencia_estacion_cambios_entry.bind(
+                "<KeyRelease>", lambda e: self._filtrar_combobox_personal_estacion(self.app.referencia_estacion_cambios_entry, e)
+            )
         self.app.referencia_estacion_entry = self.app.referencia_estacion_cambios_entry
         self.app.referencia_estacion_entry.grid(row=12, column=0, columnspan=2, sticky="w", pady=5)
 
