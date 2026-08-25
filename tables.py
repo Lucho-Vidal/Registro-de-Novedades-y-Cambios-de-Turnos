@@ -192,24 +192,29 @@ class TablesManager:
         ttk.Button(botones, text="Cerrar", command=modal.destroy).pack(side="left", padx=5)
 
         registrado_en = novedad[1] if len(novedad) > 1 else None
+        puede_modificar_todo = self.app.tiene_permiso("registros.modificar")
         if vista == "novedad":
             puede_editar = (
-                self.app.tiene_permiso("novedades.editar") or
-                self.app.tiene_permiso("registros.modificar")
-            ) and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+                self.app.tiene_permiso("novedades.editar") or puede_modificar_todo
+            ) and (
+                puede_modificar_todo or self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+            )
             puede_eliminar = (
-                self.app.tiene_permiso("novedades.eliminar") or
-                self.app.tiene_permiso("registros.modificar")
-            ) and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+                self.app.tiene_permiso("novedades.eliminar") or puede_modificar_todo
+            ) and (
+                puede_modificar_todo or self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+            )
         else:
             puede_editar = (
-                self.app.tiene_permiso("cambios_turno.editar") or
-                self.app.tiene_permiso("registros.modificar")
-            ) and self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+                self.app.tiene_permiso("cambios_turno.editar") or puede_modificar_todo
+            ) and (
+                puede_modificar_todo or self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+            )
             puede_eliminar = (
-                self.app.tiene_permiso("cambios_turno.eliminar") or
-                self.app.tiene_permiso("registros.modificar")
-            ) and self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+                self.app.tiene_permiso("cambios_turno.eliminar") or puede_modificar_todo
+            ) and (
+                puede_modificar_todo or self.app.records_service.dentro_de_ventana(registrado_en, "eliminar_horas")
+            )
 
         if puede_editar:
             ttk.Button(botones, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "novedad" if vista == "novedad" else "cambio"))).pack(side="left", padx=5)
@@ -225,10 +230,10 @@ class TablesManager:
                     return
                 try:
                     if vista == "novedad":
-                        self.app.records_service.eliminar_novedad(int(novedad[0]), self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                        self.app.records_service.eliminar_novedad(int(novedad[0]), self.app.current_user.get("id"), self.app.obtener_usuario_windows(), bypass_window=puede_modificar_todo)
                         self.cargar_datos_completos_novedades()
                     else:
-                        self.app.records_service.eliminar_cambio(int(novedad[0]), self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                        self.app.records_service.eliminar_cambio(int(novedad[0]), self.app.current_user.get("id"), self.app.obtener_usuario_windows(), bypass_window=puede_modificar_todo)
                         self.cargar_datos_completos_cambios()
                     modal.destroy()
                 except Exception as error:
@@ -273,6 +278,11 @@ class TablesManager:
             variables[field] = variable
             if field == "novedad":
                 widget = ttk.Combobox(window, textvariable=variable, values=self.app.tipo_novedades, width=42)
+            elif field == "referencia_estacion":
+                widget = ttk.Combobox(window, textvariable=variable, values=self.app.nombres_personal_estacion(), width=42)
+                if not hasattr(self.app.forms_manager, "_personal_estacion_lista_original") or not self.app.forms_manager._personal_estacion_lista_original:
+                    self.app.forms_manager._personal_estacion_lista_original = self.app.nombres_personal_estacion()
+                widget.bind("<KeyRelease>", lambda e, w=widget: self.app.forms_manager._filtrar_combobox_personal_estacion(w, e))
             elif field == "observaciones":
                 widget = tk.Text(window, height=4, width=48)
                 widget.insert("1.0", value)
@@ -283,6 +293,7 @@ class TablesManager:
 
         def save():
             data = {}
+            bypass_window = self.app.tiene_permiso("registros.modificar")
             for field, _label in fields:
                 if field == "observaciones":
                     data[field] = widgets[field].get("1.0", "end-1c")
@@ -297,10 +308,10 @@ class TablesManager:
                         return
             try:
                 if record_type == "novedad":
-                    self.app.records_service.actualizar_novedad(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.records_service.actualizar_novedad(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows(), bypass_window=bypass_window)
                     self.cargar_datos_completos_novedades()
                 else:
-                    self.app.records_service.actualizar_cambio(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.records_service.actualizar_cambio(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows(), bypass_window=bypass_window)
                     self.cargar_datos_completos_cambios()
                 window.destroy()
             except Exception as error:

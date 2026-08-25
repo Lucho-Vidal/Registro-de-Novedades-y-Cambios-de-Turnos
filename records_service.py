@@ -260,48 +260,48 @@ class RecordsService:
         with self.store.read_connection() as connection:
             return connection.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone()
 
-    def actualizar_novedad(self, record_id, data, user_id=None, windows_user=None):
+    def actualizar_novedad(self, record_id, data, user_id=None, windows_user=None, bypass_window=False):
         fields = ("legajo", "apellidos_nombres", "especialidad", "dotacion", "turnos", "franco", "novedad", "fecha_inicio", "fecha_fin", "referencia_estacion", "supervisor", "observaciones")
         with self.store.write_transaction() as connection:
             before = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
             if not before:
                 raise ValueError("La novedad no existe.")
-            if not self._dentro_de_ventana(connection, before["registrado_en"], "editar_horas", 24):
+            if not bypass_window and not self._dentro_de_ventana(connection, before["registrado_en"], "editar_horas", 24):
                 raise ValueError("El registro superó el tiempo permitido para editar.")
             assignments = ", ".join(f"{field}=?" for field in fields)
             connection.execute(f"UPDATE novedades SET {assignments} WHERE id=?", tuple(data[field] for field in fields) + (record_id,))
             after = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
             self._audit(connection, user_id, windows_user, "modificar", "novedad", record_id, dict(before), dict(after))
 
-    def actualizar_cambio(self, record_id, data, user_id=None, windows_user=None):
+    def actualizar_cambio(self, record_id, data, user_id=None, windows_user=None, bypass_window=False):
         fields = ("legajo_1", "apellidos_nombres_1", "especialidad_1", "dotacion_1", "turnos_1", "franco_1", "legajo_2", "apellidos_nombres_2", "especialidad_2", "dotacion_2", "turnos_2", "franco_2", "fecha_cambio", "referencia_estacion", "supervisor", "observaciones")
         with self.store.write_transaction() as connection:
             before = connection.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone()
             if not before:
                 raise ValueError("El cambio de turno no existe.")
-            if not self._dentro_de_ventana(connection, before["registrado_en"], "editar_horas", 24):
+            if not bypass_window and not self._dentro_de_ventana(connection, before["registrado_en"], "editar_horas", 24):
                 raise ValueError("El registro superó el tiempo permitido para editar.")
             assignments = ", ".join(f"{field}=?" for field in fields)
             connection.execute(f"UPDATE cambios_turno SET {assignments} WHERE id=?", tuple(data[field] for field in fields) + (record_id,))
             after = connection.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone()
             self._audit(connection, user_id, windows_user, "modificar", "cambio_turno", record_id, dict(before), dict(after))
 
-    def eliminar_novedad(self, record_id, user_id=None, windows_user=None):
+    def eliminar_novedad(self, record_id, user_id=None, windows_user=None, bypass_window=False):
         with self.store.write_transaction() as connection:
             before = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
             if not before:
                 raise ValueError("La novedad no existe.")
-            if not self._dentro_de_ventana(connection, before["registrado_en"], "eliminar_horas", 72):
+            if not bypass_window and not self._dentro_de_ventana(connection, before["registrado_en"], "eliminar_horas", 72):
                 raise ValueError("El registro superó el tiempo permitido para eliminar.")
             connection.execute("UPDATE novedades SET activo=0 WHERE id=?", (record_id,))
             self._audit(connection, user_id, windows_user, "eliminar", "novedad", record_id, dict(before), {"activo": 0})
 
-    def eliminar_cambio(self, record_id, user_id=None, windows_user=None):
+    def eliminar_cambio(self, record_id, user_id=None, windows_user=None, bypass_window=False):
         with self.store.write_transaction() as connection:
             before = connection.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone()
             if not before:
                 raise ValueError("El cambio de turno no existe.")
-            if not self._dentro_de_ventana(connection, before["registrado_en"], "eliminar_horas", 72):
+            if not bypass_window and not self._dentro_de_ventana(connection, before["registrado_en"], "eliminar_horas", 72):
                 raise ValueError("El registro superó el tiempo permitido para eliminar.")
             connection.execute("UPDATE cambios_turno SET activo=0 WHERE id=?", (record_id,))
             self._audit(connection, user_id, windows_user, "eliminar", "cambio_turno", record_id, dict(before), {"activo": 0})
