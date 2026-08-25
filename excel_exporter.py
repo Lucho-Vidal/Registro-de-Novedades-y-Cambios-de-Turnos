@@ -78,9 +78,9 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
             common_params,
         ).fetchall() if "Cambio de Turnos" in selected_tables else []
         personal = [
-            {"NOMBRE": fila["nombre"], "ACTIVO": "Sí" if fila["activo"] else "No"}
+            {"NOMBRE": fila["nombre"], "DOTACION": fila["dotacion"] or "", "ACTIVO": "Sí" if fila["activo"] else "No"}
             for fila in connection.execute(
-                "SELECT nombre, activo FROM personal_estacion ORDER BY nombre"
+                "SELECT nombre, dotacion, activo FROM personal_estacion ORDER BY nombre"
             ).fetchall()
         ] if "PersonalEstacion" in selected_tables else []
 
@@ -122,7 +122,7 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
             "Observaciones", "USUARIO WINDOWS"
         ], cambios)
     if "PersonalEstacion" in selected_tables:
-        _write_sheet(workbook, "PersonalEstacion", ["NOMBRE", "ACTIVO"], personal)
+        _write_sheet(workbook, "PersonalEstacion", ["NOMBRE", "DOTACION", "ACTIVO"], personal)
 
     fd, temporary_path = tempfile.mkstemp(prefix="registro_export_", suffix=".xlsx", dir=output_path.parent)
     os.close(fd)

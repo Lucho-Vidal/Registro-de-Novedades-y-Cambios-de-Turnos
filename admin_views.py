@@ -690,6 +690,46 @@ class AdminViews:
         ttk.Button(buttons, text="Cerrar", command=window.destroy).pack(side="right", padx=3)
         refresh()
 
+    def _formulario_personal_estacion(self, parent, titulo, nombre="", dotacion=""):
+        """Diálogo de alta/edición de personal de estación. Devuelve (nombre, dotacion) o None."""
+        window = tk.Toplevel(parent)
+        window.title(titulo)
+        window.resizable(False, False)
+        window.transient(parent)
+        window.grab_set()
+        self.app.aplicar_tema_ventana(window)
+        frame = ttk.Frame(window, padding=15)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Nombre *").grid(row=0, column=0, sticky="w", pady=5)
+        nombre_entry = ttk.Entry(frame, width=40)
+        nombre_entry.insert(0, nombre)
+        nombre_entry.grid(row=0, column=1, pady=5)
+        ttk.Label(frame, text="Dotación").grid(row=1, column=0, sticky="w", pady=5)
+        dotacion_combo = ttk.Combobox(frame, values=self.app.dotaciones, state="readonly", width=38)
+        if dotacion:
+            dotacion_combo.set(dotacion)
+        dotacion_combo.grid(row=1, column=1, pady=5)
+        resultado = []
+
+        def guardar():
+            valor = nombre_entry.get().strip()
+            if not valor:
+                messagebox.showwarning(titulo, "El nombre es obligatorio.", parent=window)
+                nombre_entry.focus_set()
+                return
+            resultado.append((valor, dotacion_combo.get().strip() or None))
+            window.destroy()
+
+        botones = ttk.Frame(frame)
+        botones.grid(row=2, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(botones, text="Guardar", command=guardar).pack(side="left", padx=3)
+        ttk.Button(botones, text="Cancelar", command=window.destroy).pack(side="left", padx=3)
+        nombre_entry.focus_set()
+        window.bind("<Return>", lambda evento: guardar())
+        window.bind("<Escape>", lambda evento: window.destroy())
+        window.wait_window()
+        return resultado[0] if resultado else None
+
     def mostrar_personal_estacion(self):
         if not self.app.requerir_permiso("personalEstacion.ver"):
             return
@@ -697,8 +737,8 @@ class AdminViews:
         window.title("Personal de estación")
         window.geometry("720x440")
         self.app.aplicar_tema_ventana(window)
-        tree = ttk.Treeview(window, columns=("id", "nombre", "activo"), show="headings")
-        for column, title, width in (("id", "ID", 55), ("nombre", "Nombre", 350), ("activo", "Activo", 80)):
+        tree = ttk.Treeview(window, columns=("id", "nombre", "dotacion", "activo"), show="headings")
+        for column, title, width in (("id", "ID", 55), ("nombre", "Nombre", 300), ("dotacion", "Dotación", 100), ("activo", "Activo", 80)):
             tree.heading(column, text=title)
             tree.column(column, width=width, stretch=column != "id")
         tree.pack(fill="both", expand=True, padx=10, pady=10)
@@ -706,15 +746,16 @@ class AdminViews:
         def refresh():
             tree.delete(*tree.get_children())
             for row in self.app.records_service.listar_personal_estacion(True):
-                tree.insert("", "end", values=(row[0], row[1], "Sí" if row[2] else "No"))
+                tree.insert("", "end", values=(row[0], row[1], row[2] or "", "Sí" if row[3] else "No"))
 
         def add():
             if not self.app.requerir_permiso("personalEstacion.crear"):
                 return
-            name = simpledialog.askstring("Personal de estación", "Nombre:", parent=window)
-            if name:
+            datos = self._formulario_personal_estacion(window, "Nuevo personal de estación")
+            if datos:
+                nombre, dotacion = datos
                 try:
-                    self.app.records_service.crear_personal_estacion(name, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.records_service.crear_personal_estacion(nombre, dotacion, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
                     self.app.cargarPersonalEstacion()
                     refresh()
                 except Exception as error:
@@ -728,7 +769,7 @@ class AdminViews:
                 return
             values = tree.item(selection[0], "values")
             try:
-                self.app.records_service.actualizar_personal_estacion(int(values[0]), values[1], values[2] != "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                self.app.records_service.actualizar_personal_estacion(int(values[0]), values[1], values[3] != "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
                 self.app.cargarPersonalEstacion()
                 refresh()
             except Exception as error:
@@ -741,10 +782,15 @@ class AdminViews:
             if not selection:
                 return
             values = tree.item(selection[0], "values")
-            name = simpledialog.askstring("Personal de estación", "Nombre:", initialvalue=values[1], parent=window)
-            if name:
+            datos = self._formulario_personal_estacion(window, "Editar personal de estación", nombre=values[1], dotacion=values[2])
+            if datos:
+                nombre, dotacion = datos
                 try:
-                    self.app.records_service.actualizar_personal_estacion(int(values[0]), name, values[2] == "Sí", self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.records_service.actualizar_personal_estacion(
+                        int(values[0]), nombre, values[3] == "Sí",
+                        self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                        dotacion=dotacion, cambiar_dotacion=True,
+                    )
                     self.app.cargarPersonalEstacion()
                     refresh()
                 except Exception as error:

@@ -125,23 +125,32 @@ class RecordsService:
     def listar_personal_estacion(self, incluir_inactivos=True):
         return self.store.get_personal_estacion(incluir_inactivos)
 
-    def crear_personal_estacion(self, nombre, user_id=None, windows_user=None):
+    def crear_personal_estacion(self, nombre, dotacion=None, user_id=None, windows_user=None):
         nombre = nombre.strip()
         if not nombre:
             raise ValueError("El nombre no puede estar vacío.")
+        dotacion = (dotacion or "").strip() or None
         with self.store.write_transaction() as connection:
-            cursor = connection.execute("INSERT INTO personal_estacion(nombre) VALUES (?)", (nombre,))
-            self._audit(connection, user_id, windows_user, "crear", "personal_estacion", cursor.lastrowid, None, {"nombre": nombre})
+            cursor = connection.execute(
+                "INSERT INTO personal_estacion(nombre, dotacion) VALUES (?, ?)", (nombre, dotacion)
+            )
+            self._audit(connection, user_id, windows_user, "crear", "personal_estacion", cursor.lastrowid, None, {"nombre": nombre, "dotacion": dotacion})
             return cursor.lastrowid
 
-    def actualizar_personal_estacion(self, item_id, nombre, activo, user_id=None, windows_user=None):
+    def actualizar_personal_estacion(self, item_id, nombre, activo, user_id=None, windows_user=None, *, dotacion=None, cambiar_dotacion=False):
         nombre = nombre.strip()
+        if cambiar_dotacion:
+            dotacion = (dotacion or "").strip() or None
         with self.store.write_transaction() as connection:
-            before = connection.execute("SELECT id, nombre, activo FROM personal_estacion WHERE id=?", (item_id,)).fetchone()
+            before = connection.execute("SELECT id, nombre, dotacion, activo FROM personal_estacion WHERE id=?", (item_id,)).fetchone()
             if not before:
                 raise ValueError("El personal de estación no existe.")
-            connection.execute("UPDATE personal_estacion SET nombre=?, activo=? WHERE id=?", (nombre, int(activo), item_id))
-            self._audit(connection, user_id, windows_user, "modificar", "personal_estacion", item_id, dict(before), {"nombre": nombre, "activo": int(activo)})
+            despues_dotacion = dotacion if cambiar_dotacion else before[2]
+            connection.execute(
+                "UPDATE personal_estacion SET nombre=?, dotacion=?, activo=? WHERE id=?",
+                (nombre, despues_dotacion, int(activo), item_id),
+            )
+            self._audit(connection, user_id, windows_user, "modificar", "personal_estacion", item_id, dict(before), {"nombre": nombre, "dotacion": despues_dotacion, "activo": int(activo)})
 
     def listar_empleados(self, incluir_inactivos=True):
         with self.store.read_connection() as connection:

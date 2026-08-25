@@ -959,9 +959,16 @@ class FormularioExcelApp:
             if tree is not None:
                 tree.configure(values=self.DOTACIONES)
 
+    def nombres_personal_estacion(self):
+        """Devuelve los nombres activos con su dotación entre paréntesis (ej: 'Juan Perez (TY)')."""
+        return [
+            f"{row[1]} ({row[2]})" if row[2] else row[1]
+            for row in self.personal_estacion
+        ]
+
     def cargarPersonalEstacion(self):
         self.personal_estacion = self.db_store.get_personal_estacion(False)
-        valores = [row[1] for row in self.personal_estacion]
+        valores = self.nombres_personal_estacion()
         for widget_name in ("referencia_estacion_novedades_entry", "referencia_estacion_cambios_entry"):
             widget = getattr(self, widget_name, None)
             if widget is not None:

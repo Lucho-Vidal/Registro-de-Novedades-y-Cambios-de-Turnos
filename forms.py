@@ -39,7 +39,6 @@ class FormsManager:
             app: Instancia de FormularioExcelApp con acceso a root, base_rows, etc.
         """
         self.app = app
-        self._personal_estacion_lista = []
     
     def mostrar_modal(self, boton=1):
         """Muestra un modal para seleccionar personal por legajo.
@@ -257,6 +256,8 @@ class FormsManager:
 
     def _filtrar_combobox_personal_estacion(self, combobox, event=None):
         """Filtra los valores del combobox de personal de estación según el texto ingresado."""
+        if event is not None and event.keysym in ("Down", "Up", "Return", "Escape", "Tab", "Left", "Right", "Home", "End"):
+            return
         if not hasattr(self, "_personal_estacion_lista_original") or not self._personal_estacion_lista_original:
             return
         texto = combobox.get().strip().lower()
@@ -264,12 +265,10 @@ class FormsManager:
             combobox["values"] = self._personal_estacion_lista_original
         else:
             combobox["values"] = [v for v in self._personal_estacion_lista_original if texto in v.lower()]
-        if texto:
-            combobox.event_generate("<Down>")
 
     def _restaurar_combobox_personal_estacion(self):
         """Restaura la lista completa en los combobox de personal de estación."""
-        self._personal_estacion_lista_original = [row[1] for row in self.app.personal_estacion]
+        self._personal_estacion_lista_original = self.app.nombres_personal_estacion()
         for attr in ("referencia_estacion_novedades_entry", "referencia_estacion_cambios_entry"):
             combobox = getattr(self.app, attr, None)
             if combobox:
@@ -472,7 +471,7 @@ class FormsManager:
         # Referencia Estación
         ttk.Label(self.app.form_frame, text="   REFERENCIA ESTACIÓN").grid(row=7, column=0, sticky="w")
         ttk.Label(self.app.form_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=7, column=0, sticky="w")
-        self._personal_estacion_lista_original = [row[1] for row in self.app.personal_estacion]
+        self._personal_estacion_lista_original = self.app.nombres_personal_estacion()
         self.app.referencia_estacion_novedades_entry = ttk.Combobox(
             self.app.form_frame, textvariable=self.app.referencia_estacion_var,
             values=self._personal_estacion_lista_original, width=40,
@@ -626,7 +625,7 @@ class FormsManager:
         ttk.Label(self.app.form_cambios_frame, text="*", foreground="red", font=('Helvetica', 12, 'bold')).grid(row=11, column=0, sticky="w")
         self.app.referencia_estacion_cambios_entry = ttk.Combobox(
             self.app.form_cambios_frame, textvariable=self.app.referencia_estacion_var,
-            values=self._personal_estacion_lista_original, width=40,
+            values=self.app.nombres_personal_estacion(), width=40,
             state="normal" if self.app.tiene_permiso("personalEstacion.ver") else "disabled",
         )
         if self.app.tiene_permiso("personalEstacion.ver"):

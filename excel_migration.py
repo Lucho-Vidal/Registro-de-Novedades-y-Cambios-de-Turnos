@@ -306,10 +306,34 @@ def _migrar_catalogo(workbook_path, store, tabla, prefijos_encabezado, clear_exi
 
 
 def migrate_personal_estacion_sheet(workbook_path, store, clear_existing=False):
-    """Importa la 1ª columna de la 1ª hoja como nombres de personal de estación."""
-    return _migrar_catalogo(
-        workbook_path, store, "personal_estacion", ("NOMBRE", "PERSONAL"), clear_existing=clear_existing
-    )
+    """Importa la 1ª columna de la 1ª hoja como nombres de personal de estación.
+
+    La 2ª columna (opcional) se importa como dotación. Los nombres ya existentes se
+    reactivan y conservan su dotación si la fila importada no trae una.
+    """
+    workbook = openpyxl.load_workbook(workbook_path, read_only=True, data_only=True)
+    store.initialize()
+    count = 0
+    with store.write_transaction() as connection:
+        if clear_existing:
+            connection.execute("UPDATE personal_estacion SET activo=0")
+        ws = workbook.worksheets[0]
+        for index, row in enumerate(ws.iter_rows(min_row=1, values_only=True)):
+            nombre = _texto(row[0] if row else None)
+            if not nombre:
+                continue
+            if index == 0 and _es_encabezado_catalogo(nombre, ("NOMBRE", "PERSONAL")):
+                continue
+            dotacion = _texto(row[1]) if len(row) > 1 else ""
+            connection.execute(
+                "INSERT INTO personal_estacion(nombre, dotacion, activo) VALUES (?, ?, 1) "
+                "ON CONFLICT(nombre) DO UPDATE SET activo=1, "
+                "dotacion=COALESCE(excluded.dotacion, personal_estacion.dotacion)",
+                (nombre, dotacion or None),
+            )
+            count += 1
+    workbook.close()
+    return count
 
 
 def migrate_tipos_novedad_sheet(workbook_path, store, clear_existing=False):

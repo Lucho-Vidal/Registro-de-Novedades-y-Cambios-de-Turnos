@@ -248,6 +248,7 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS personal_estacion (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     nombre TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    dotacion TEXT,
                     activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
                 );
 
@@ -285,6 +286,9 @@ class SQLiteStore:
                 columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
                 if "activo" not in columns:
                     connection.execute(f"ALTER TABLE {table} ADD COLUMN activo INTEGER NOT NULL DEFAULT 1")
+            pe_columns = {row[1] for row in connection.execute("PRAGMA table_info(personal_estacion)").fetchall()}
+            if "dotacion" not in pe_columns:
+                connection.execute("ALTER TABLE personal_estacion ADD COLUMN dotacion TEXT")
             connection.execute(
                 "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('sesion_minutos', '30')"
             )
@@ -401,7 +405,7 @@ class SQLiteStore:
 
     def get_personal_estacion(self, incluir_inactivos=False):
         with self.read_connection() as connection:
-            query = "SELECT id, nombre, activo FROM personal_estacion"
+            query = "SELECT id, nombre, dotacion, activo FROM personal_estacion"
             if not incluir_inactivos:
                 query += " WHERE activo=1"
             return connection.execute(query + " ORDER BY nombre").fetchall()
