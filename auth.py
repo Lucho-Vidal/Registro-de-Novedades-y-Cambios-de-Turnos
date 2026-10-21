@@ -11,6 +11,21 @@ import bcrypt
 MAX_INTENTOS_FALLIDOS = 5
 BLOQUEO_SEGUNDOS = 30
 
+PERMISOS_BASE = (
+    "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
+    "novedades.importar", "novedades.exportar",
+    "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
+    "cambios_turno.importar", "cambios_turno.exportar",
+    "usuarios.administrar", "roles.administrar", "empleados.importar", "empleados.administrar",
+    "auditoria.ver",
+    "dotaciones.administrar",
+    "tiposNovedad.administrar",
+    "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
+    "personalEstacion.importar", "personalEstacion.exportar",
+    "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar", "registros.modificar",
+    "backup.gestionar",
+)
+
 
 class CuentaBloqueadaError(Exception):
     """Se levanta cuando una cuenta está bloqueada temporalmente por intentos fallidos."""
@@ -195,12 +210,13 @@ class AuthService:
                 (password_hash, self.store.now(), user_id),
             )
 
-    def resetear_password(self, username):
+    def resetear_password(self, username, send_fn=None):
         """Genera una contraseña temporal para un usuario y la devuelve con su correo.
 
         El correo se arma como usuario + dominio (config `correo_dominio`).
-        Levanta ValueError si el usuario no existe o está inactivo, y RuntimeError
-        si no se puede armar el correo.
+        Si se pasa `send_fn(email, temporal)`, se invoca antes de persistir
+        la nueva clave en la base de datos; si el envío falla, la contraseña
+        anterior del usuario permanece inalterada.
         """
         nombre = (username or "").strip()
         with self.store.read_connection() as connection:
@@ -214,6 +230,11 @@ class AuthService:
         if not email or "@" not in email:
             raise RuntimeError("No se pudo armar el correo electrónico para ese usuario.")
         temporal = secrets.token_urlsafe(9)
+
+        # Si se especificó función de envío (ej. Outlook), enviamos ANTES de cambiar el hash
+        if send_fn is not None:
+            send_fn(email, temporal)
+
         password_hash = bcrypt.hashpw(temporal.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         now = self.store.now()
         with self.store.write_transaction() as connection:
@@ -277,19 +298,7 @@ class AuthService:
         with self.store.read_connection() as connection:
             if connection.execute("SELECT 1 FROM usuarios LIMIT 1").fetchone():
                 raise ValueError("Ya existe un usuario administrador.")
-        permissions = (
-            "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
-            "novedades.importar", "novedades.exportar",
-            "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
-            "cambios_turno.importar", "cambios_turno.exportar",
-            "usuarios.administrar", "roles.administrar", "empleados.importar", "empleados.administrar",
-            "auditoria.ver",
-            "dotaciones.administrar",
-            "tiposNovedad.administrar",
-            "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
-            "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar", "registros.modificar",
-            "backup.gestionar",
-        )
+        permissions = PERMISOS_BASE
         with self.store.write_transaction() as connection:
             password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
             user_id = connection.execute(

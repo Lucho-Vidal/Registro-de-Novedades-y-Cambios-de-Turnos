@@ -7,6 +7,9 @@ from ttkbootstrap import Style
 
 from auth import AuthService, CuentaBloqueadaError
 from outlook_mailer import enviar_sin_rastro
+from ttk_patch import aplicar_patch_ttkbootstrap
+
+aplicar_patch_ttkbootstrap()
 
 
 class LoginView:
@@ -86,7 +89,10 @@ class LoginView:
             }.get(theme, "flatly")
         if theme not in set(style.theme_names()):
             theme = "flatly"
-        style.theme_use(theme)
+        try:
+            style.theme_use(theme)
+        except Exception:
+            pass
         background = str(style.colors.bg)
         foreground = str(style.colors.fg)
         style.configure("TFrame", background=background)
@@ -150,28 +156,28 @@ class LoginView:
                     parent=dialog,
                 )
                 return
+
+            def enviar_correo(dest_email, temp_pwd):
+                cuerpo = "\n".join([
+                    "Se generó una contraseña temporal para su cuenta.",
+                    f"Usuario: {usuario}",
+                    f"Contraseña temporal: {temp_pwd}",
+                    "",
+                    "Al ingresar se le pedirá cambiar la contraseña.",
+                    "Si usted no solicitó este cambio, contacte al administrador.",
+                ])
+                enviar_sin_rastro([dest_email], "Restablecimiento de contraseña", cuerpo)
+
             try:
-                email, temporal = self.auth.resetear_password(usuario)
-            except Exception as error:
-                messagebox.showerror("Recuperar contraseña", str(error), parent=dialog)
-                return
-            cuerpo = "\n".join([
-                "Se generó una contraseña temporal para su cuenta.",
-                f"Usuario: {usuario}",
-                f"Contraseña temporal: {temporal}",
-                "",
-                "Al ingresar se le pedirá cambiar la contraseña.",
-                "Si usted no solicitó este cambio, contacte al administrador.",
-            ])
-            try:
-                enviar_sin_rastro([email], "Restablecimiento de contraseña", cuerpo)
+                email, temporal = self.auth.resetear_password(usuario, send_fn=enviar_correo)
             except Exception as error:
                 messagebox.showerror(
                     "Recuperar contraseña",
-                    f"No se pudo enviar el correo. Contacte al administrador.\n\n{error}",
+                    f"No se pudo completar la recuperación de contraseña:\n\n{error}",
                     parent=dialog,
                 )
                 return
+
             messagebox.showinfo(
                 "Recuperar contraseña", f"Se envió una contraseña temporal a {email}.", parent=dialog
             )

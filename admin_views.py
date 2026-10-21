@@ -6,23 +6,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from excel_exporter import export_auditoria, export_database
 from excel_migration import migrate_dotaciones_sheet, migrate_personal_estacion_sheet, migrate_tipos_novedad_sheet
 from backups import crear_backup, listar_backups, restaurar_backup
+from auth import PERMISOS_BASE
 import os
-
-
-PERMISOS_BASE = (
-    "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
-    "novedades.importar", "novedades.exportar",
-    "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
-    "cambios_turno.importar", "cambios_turno.exportar",
-    "usuarios.administrar", "roles.administrar", "empleados.importar", "empleados.administrar",
-    "auditoria.ver",
-    "dotaciones.administrar",
-    "tiposNovedad.administrar",
-    "personalEstacion.ver", "personalEstacion.crear", "personalEstacion.editar",
-    "personalEstacion.importar", "personalEstacion.exportar",
-    "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar", "registros.modificar",
-    "backup.gestionar",
-)
 
 
 ESPECIALIDADES_EMPLEADO = (
@@ -370,10 +355,13 @@ class AdminViews:
             return
         window = tk.Toplevel(self.app.root)
         window.title("Tipos de novedad")
-        window.geometry("640x400")
+        window.geometry("720x420")
         self.app.aplicar_tema_ventana(window)
-        tree = ttk.Treeview(window, columns=("id", "nombre", "activo"), show="headings")
-        for column, title, width in (("id", "ID", 60), ("nombre", "Nombre", 300), ("activo", "Activo", 80)):
+        tree = ttk.Treeview(window, columns=("id", "nombre", "dias", "exportar", "activo"), show="headings")
+        for column, title, width in (
+            ("id", "ID", 60), ("nombre", "Nombre", 260), ("dias", "Días", 70),
+            ("exportar", "Turno sin cubrir", 130), ("activo", "Activo", 80)
+        ):
             tree.heading(column, text=title)
             tree.column(column, width=width)
         tree.pack(fill="both", expand=True, padx=10, pady=10)
@@ -381,13 +369,74 @@ class AdminViews:
         def refresh():
             tree.delete(*tree.get_children())
             for row in self.app.records_service.listar_tipos():
-                tree.insert("", "end", values=(row[0], row[1], "Sí" if row[2] else "No"))
+                tree.insert("", "end", values=(
+                    row[0], row[1], row[2],
+                    "Sí" if row[3] else "No",
+                    "Sí" if row[4] else "No",
+                ))
+
+        def _formulario_tipo_novedad(titulo, initial=None):
+            dlg = tk.Toplevel(window)
+            dlg.title(titulo)
+            dlg.geometry("440x260")
+            dlg.transient(window)
+            dlg.grab_set()
+            self.app.aplicar_tema_ventana(dlg)
+
+            nombre_var = tk.StringVar(value=initial["nombre"] if initial else "")
+            dias_var = tk.StringVar(value=str(initial["dias"]) if initial else "0")
+            exportar_var = tk.BooleanVar(value=bool(initial["exportar"]) if initial else True)
+
+            ttk.Label(dlg, text="Nombre del tipo de novedad:").pack(anchor="w", padx=20, pady=(15, 2))
+            nombre_entry = ttk.Entry(dlg, textvariable=nombre_var, width=42)
+            nombre_entry.pack(anchor="w", padx=20, pady=(0, 10))
+            nombre_entry.focus_set()
+
+            ttk.Label(dlg, text="Días de duración (0 = no autocompletar, 1 = mismo día):").pack(anchor="w", padx=20, pady=(0, 2))
+            dias_spin = ttk.Spinbox(dlg, from_=0, to=365, textvariable=dias_var, width=12)
+            dias_spin.pack(anchor="w", padx=20, pady=(0, 10))
+
+            ttk.Checkbutton(dlg, text="¿Genera turno sin cubrir para exportación?", variable=exportar_var).pack(anchor="w", padx=20, pady=(0, 15))
+
+            resultado = [False]
+
+            def on_guardar():
+                if not nombre_var.get().strip():
+                    messagebox.showerror("Error", "El nombre es obligatorio.", parent=dlg)
+                    return
+                try:
+                    int(dias_var.get().strip())
+                except ValueError:
+                    messagebox.showerror("Error", "Los días deben ser un número entero.", parent=dlg)
+                    return
+                resultado[0] = True
+                dlg.destroy()
+
+            btn_frame = ttk.Frame(dlg)
+            btn_frame.pack(anchor="e", padx=20, pady=5)
+            ttk.Button(btn_frame, text="Cancelar", command=dlg.destroy).pack(side="right", padx=5)
+            ttk.Button(btn_frame, text="Guardar", command=on_guardar).pack(side="right")
+
+            dlg.wait_window()
+            if resultado[0]:
+                return {
+                    "nombre": nombre_var.get().strip(),
+                    "dias": max(0, int(dias_var.get().strip())),
+                    "exportar": exportar_var.get(),
+                }
+            return None
 
         def add_type():
-            name = simpledialog.askstring("Tipo de novedad", "Nombre:", parent=window)
-            if name:
+            datos = _formulario_tipo_novedad("Nuevo tipo de novedad")
+            if datos:
                 try:
-                    self.app.records_service.crear_tipo(name, self.app.current_user.get("id"), self.app.obtener_usuario_windows())
+                    self.app.records_service.crear_tipo(
+                        datos["nombre"],
+                        dias=datos["dias"],
+                        exportar_descubierto=datos["exportar"],
+                        user_id=self.app.current_user.get("id"),
+                        windows_user=self.app.obtener_usuario_windows(),
+                    )
                     self.app.cargarTipoNovedades()
                     refresh()
                 except Exception as error:
@@ -398,12 +447,22 @@ class AdminViews:
             if not selection:
                 return
             values = tree.item(selection[0], "values")
-            name = simpledialog.askstring("Tipo de novedad", "Nombre:", initialvalue=values[1], parent=window)
-            if name:
+            initial = {
+                "nombre": values[1],
+                "dias": int(values[2]),
+                "exportar": values[3] == "Sí",
+            }
+            datos = _formulario_tipo_novedad("Editar tipo de novedad", initial=initial)
+            if datos:
                 try:
                     self.app.records_service.actualizar_tipo(
-                        int(values[0]), name, values[2] == "Sí",
-                        self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
+                        int(values[0]),
+                        datos["nombre"],
+                        dias=datos["dias"],
+                        exportar_descubierto=datos["exportar"],
+                        activo=values[4] == "Sí",
+                        user_id=self.app.current_user.get("id"),
+                        windows_user=self.app.obtener_usuario_windows(),
                     )
                     self.app.cargarTipoNovedades()
                     refresh()
@@ -415,12 +474,20 @@ class AdminViews:
             if not selection:
                 return
             values = tree.item(selection[0], "values")
-            self.app.records_service.actualizar_tipo(
-                int(values[0]), values[1], values[2] != "Sí",
-                self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
-            )
-            self.app.cargarTipoNovedades()
-            refresh()
+            try:
+                self.app.records_service.actualizar_tipo(
+                    int(values[0]),
+                    values[1],
+                    dias=int(values[2]),
+                    exportar_descubierto=values[3] == "Sí",
+                    activo=values[4] != "Sí",
+                    user_id=self.app.current_user.get("id"),
+                    windows_user=self.app.obtener_usuario_windows(),
+                )
+                self.app.cargarTipoNovedades()
+                refresh()
+            except Exception as error:
+                messagebox.showerror("Tipos de novedad", str(error), parent=window)
 
         buttons = ttk.Frame(window)
         buttons.pack(fill="x", padx=10, pady=5)

@@ -147,6 +147,8 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS tipos_novedad (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     nombre TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    dias INTEGER NOT NULL DEFAULT 0,
+                    exportar_descubierto INTEGER NOT NULL DEFAULT 1 CHECK (exportar_descubierto IN (0, 1)),
                     activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
                 );
 
@@ -289,6 +291,13 @@ class SQLiteStore:
             pe_columns = {row[1] for row in connection.execute("PRAGMA table_info(personal_estacion)").fetchall()}
             if "dotacion" not in pe_columns:
                 connection.execute("ALTER TABLE personal_estacion ADD COLUMN dotacion TEXT")
+            tn_columns = {row[1] for row in connection.execute("PRAGMA table_info(tipos_novedad)").fetchall()}
+            if "dias" not in tn_columns:
+                connection.execute("ALTER TABLE tipos_novedad ADD COLUMN dias INTEGER NOT NULL DEFAULT 0")
+                connection.execute("UPDATE tipos_novedad SET dias=1 WHERE LOWER(nombre) IN ('dona sangre', 'donar sangre', 'donacion de sangre', 'informe')")
+            if "exportar_descubierto" not in tn_columns:
+                connection.execute("ALTER TABLE tipos_novedad ADD COLUMN exportar_descubierto INTEGER NOT NULL DEFAULT 1")
+                connection.execute("UPDATE tipos_novedad SET exportar_descubierto=0 WHERE LOWER(nombre) = 'informe'")
             connection.execute(
                 "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('sesion_minutos', '30')"
             )
@@ -319,7 +328,8 @@ class SQLiteStore:
             connection.execute(
                 "INSERT OR IGNORE INTO configuracion(clave, valor) VALUES ('correo_dominio', '@trenesargentinos.gob.ar')"
             )
-            connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre) VALUES ('Informe')")
+            connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre, dias, exportar_descubierto) VALUES ('Informe', 1, 0)")
+            connection.execute("INSERT OR IGNORE INTO tipos_novedad(nombre, dias, exportar_descubierto) VALUES ('Dona sangre', 1, 1)")
             for nombre in ("PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"):
                 connection.execute("INSERT OR IGNORE INTO dotaciones(nombre) VALUES (?)", (nombre,))
             connection.execute(
@@ -396,6 +406,20 @@ class SQLiteStore:
             return [row[0] for row in connection.execute(
                 "SELECT nombre FROM tipos_novedad WHERE activo=1 ORDER BY nombre"
             ).fetchall()]
+
+    def get_tipo_novedades_dict(self):
+        with self.read_connection() as connection:
+            rows = connection.execute(
+                "SELECT id, nombre, dias, exportar_descubierto FROM tipos_novedad WHERE activo=1 ORDER BY nombre"
+            ).fetchall()
+            return {
+                row["nombre"]: {
+                    "id": row["id"],
+                    "dias": row["dias"],
+                    "exportar_descubierto": row["exportar_descubierto"],
+                }
+                for row in rows
+            }
 
     def get_dotaciones(self):
         with self.read_connection() as connection:

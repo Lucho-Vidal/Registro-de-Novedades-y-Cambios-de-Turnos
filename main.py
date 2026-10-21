@@ -1,12 +1,16 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
-from ttkbootstrap import Style
+from ttkbootstrap import Style, DateEntry
+from ttkbootstrap.publisher import Publisher
 import ctypes
 import math
 import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+
+from ttk_patch import aplicar_patch_ttkbootstrap
+aplicar_patch_ttkbootstrap()
 
 from config import (
     PLACEHOLDER_BUSCAR_NOMBRE, DOTACIONES
@@ -16,7 +20,7 @@ from forms import FormsManager
 from tables import TablesManager
 from sqlite_store import SQLiteSheetAdapter
 from excel_migration import migrate_operational_sheet, migrate_empleados_sheet
-from excel_exporter import export_database
+from excel_exporter import export_database, export_turnos_sin_cubrir
 from auth import AuthService
 from admin_views import AdminViews
 from database_bootstrap import open_configured_store
@@ -73,6 +77,7 @@ class FormularioExcelApp:
         
         # Cargar tipos de novedad
         self.tipo_novedades = []
+        self.tipo_novedades_dict = {}
         self.cargarTipoNovedades()
         self.dotaciones = []
         self.cargarDotaciones()
@@ -297,6 +302,7 @@ class FormularioExcelApp:
         self.root.config(menu="")
         for child in list(self.root.winfo_children()):
             child.destroy()
+        Publisher.clear_subscribers()
         self.root.withdraw()
         LoginView(self.root, self.db_store, lambda user, store: FormularioExcelApp(self.root, db_store=store, current_user=user))
 
@@ -338,6 +344,8 @@ class FormularioExcelApp:
             self.archivo_menu.add_command(label="Importar empleados", command=lambda: self.importar_excel_operativo("BASE"))
         if self.tiene_permiso("novedades.exportar") or self.tiene_permiso("cambios_turno.exportar"):
             self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
+        if self.tiene_permiso("novedades.exportar"):
+            self.archivo_menu.add_command(label="Exportar turnos sin cubrir", command=self.exportar_turnos_sin_cubrir)
 
         # Menú Opciones
         self.opciones_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -469,22 +477,14 @@ class FormularioExcelApp:
         self.refresh_after = self.root.after(60000, self.refrescar_excel_periodicamente)
 
     def _parsear_registrado_en(self, valor):
+        if hasattr(self, "records_service") and self.records_service is not None:
+            return self.records_service.parsear_registrado_en(valor)
         if valor is None or str(valor).strip() == "":
             return None
-        texto = str(valor).strip()
         try:
-            return datetime.fromisoformat(texto)
+            return datetime.fromisoformat(str(valor).strip())
         except ValueError:
-            pass
-        for formato in (
-            "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
-            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
-        ):
-            try:
-                return datetime.strptime(texto, formato)
-            except ValueError:
-                continue
-        return None
+            return None
 
     def _es_registro_propio(self, fila):
         user_id = self.current_user.get("id")
@@ -718,6 +718,8 @@ class FormularioExcelApp:
         try:
             with open("path_base", "r", encoding="utf-8") as file:
                 self.excel_file = file.read().strip()
+        except (FileNotFoundError, OSError):
+            self.excel_file = r'RENO.xlsx'
         except Exception as e:
             print(f"Error leyendo el archivo: {e}")
             self.excel_file = r'RENO.xlsx'
@@ -806,6 +808,62 @@ class FormularioExcelApp:
                 messagebox.showerror("Exportación", f"No se pudo exportar: {error}", parent=window)
 
         ttk.Button(window, text="Exportar", command=run_export).pack(pady=10)
+
+    def exportar_turnos_sin_cubrir(self):
+        """Abre un diálogo para seleccionar fecha y dotación y exportar los turnos sin cubrir a Excel."""
+        if not self.tiene_permiso("novedades.exportar"):
+            self.requerir_permiso("novedades.exportar")
+            return
+        window = tk.Toplevel(self.root)
+        window.title("Exportar turnos sin cubrir")
+        window.geometry("450x240")
+        self.aplicar_tema_ventana(window)
+
+        form = ttk.Frame(window)
+        form.pack(fill="both", expand=True, padx=20, pady=20)
+
+        ttk.Label(form, text="Fecha de consulta").grid(row=0, column=0, sticky="w", pady=8)
+        fecha_entry = DateEntry(form, dateformat='%d/%m/%Y', bootstyle="primary")
+        fecha_entry.grid(row=0, column=1, sticky="w", pady=8)
+        fecha_entry.entry.bind("<Key>", lambda e: "break")
+
+        ttk.Label(form, text="Dotación").grid(row=1, column=0, sticky="w", pady=8)
+        dotacion_var = tk.StringVar(value="Todas")
+        dotacion_combo = ttk.Combobox(
+            form, textvariable=dotacion_var,
+            values=self.DOTACIONES, state="readonly", width=18
+        )
+        dotacion_combo.grid(row=1, column=1, sticky="w", pady=8)
+
+        def run_export():
+            try:
+                fecha_str = fecha_entry.entry.get().strip()
+                if not fecha_str:
+                    raise ValueError("Debe ingresar una fecha de consulta.")
+                dot_sel = dotacion_var.get().strip()
+                dot_filtro = None if dot_sel in ("", "Todas") else dot_sel
+
+                destino = filedialog.asksaveasfilename(
+                    title="Exportar turnos sin cubrir a Excel", parent=window,
+                    defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")],
+                    initialfile=f"Turnos_Sin_Cubrir_{fecha_str.replace('/', '-')}.xlsx",
+                )
+                if not destino:
+                    return
+                export_turnos_sin_cubrir(
+                    self.records_service, destino,
+                    fecha_str, dotacion=dot_filtro
+                )
+                window.destroy()
+                messagebox.showinfo("Exportación exitosa", f"Turnos sin cubrir exportados correctamente a:\n{destino}", parent=self.root)
+            except ValueError as error:
+                messagebox.showerror("Exportación", str(error), parent=window)
+            except PermissionError:
+                messagebox.showerror("Exportación", "No se pudo reemplazar el archivo Excel. Verifique que no esté abierto.", parent=window)
+            except Exception as error:
+                messagebox.showerror("Exportación", f"No se pudo exportar: {error}", parent=window)
+
+        ttk.Button(form, text="Exportar", command=run_export).grid(row=2, column=0, columnspan=2, pady=15)
 
     def importar_excel_operativo(self, sheet_name):
         """Importa solo una tabla operativa desde un Excel seleccionado."""
@@ -897,18 +955,25 @@ class FormularioExcelApp:
             print(f"Error al cargar el tema: {e}")
             return "flatly"
 
-    def toggle_view(self, target_view=None):
+    def toggle_view(self, target_view=None, edicion=False):
         """Alterna entre las vistas (panel, tabla/formulario)."""
         self.renovar_sesion()
         target_view = target_view or "table"
+        if not edicion and hasattr(self, "forms_manager") and getattr(self.forms_manager, "edicion", None):
+            self.forms_manager.salir_edicion()
         required_permissions = {
             "table": "novedades.ver",
             "form": "novedades.crear",
             "table_cambios": "cambios_turno.ver",
             "form_cambios": "cambios_turno.crear",
         }
-        if target_view != "dashboard" and not self.requerir_permiso(required_permissions.get(target_view, "")):
-            return
+        if edicion:
+            permiso_necesario = "novedades.editar" if target_view == "form" else "cambios_turno.editar"
+            if not (self.tiene_permiso(permiso_necesario) or self.tiene_permiso("registros.modificar")):
+                messagebox.showerror("Acceso Denegado", "No tiene permisos para editar este registro.", parent=self.root)
+                return False
+        elif target_view != "dashboard" and not self.requerir_permiso(required_permissions.get(target_view, "")):
+            return False
         self.form_frame.grid_forget()
         self.table_frame.grid_forget()
         self.form_cambios_frame.grid_forget()
@@ -942,13 +1007,17 @@ class FormularioExcelApp:
                 self.tables_manager.crear_tabla_novedades()
             else:
                 self.tables_manager.cargar_datos_completos_novedades()
+        return True
     
     def cargarTipoNovedades(self):
         """Carga los tipos de novedad desde SQLite."""
         self.tipo_novedades = self.db_store.get_tipo_novedades()
+        self.tipo_novedades_dict = self.db_store.get_tipo_novedades_dict()
         combo = getattr(self, "tipo_filter_novedades", None)
         if combo is not None:
             combo.configure(values=["Todos", *self.tipo_novedades])
+        if hasattr(self, "forms_manager") and hasattr(self.forms_manager, "novedad_entry") and self.forms_manager.novedad_entry is not None:
+            self.forms_manager.novedad_entry.configure(values=self.tipo_novedades)
 
     def cargarDotaciones(self):
         """Carga las dotaciones activas y actualiza las tablas de filtros."""
@@ -969,6 +1038,8 @@ class FormularioExcelApp:
     def cargarPersonalEstacion(self):
         self.personal_estacion = self.db_store.get_personal_estacion(False)
         valores = self.nombres_personal_estacion()
+        if hasattr(self, "forms_manager") and self.forms_manager is not None:
+            self.forms_manager._personal_estacion_lista_original = valores
         for widget_name in ("referencia_estacion_novedades_entry", "referencia_estacion_cambios_entry"):
             widget = getattr(self, widget_name, None)
             if widget is not None:

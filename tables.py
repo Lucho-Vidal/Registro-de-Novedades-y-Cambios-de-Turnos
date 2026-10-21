@@ -3,6 +3,7 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+from validators import validar_datos_edicion_novedad, validar_datos_edicion_cambio
 
 
 ANCHOS_NOVEDADES = {
@@ -194,10 +195,13 @@ class TablesManager:
         registrado_en = novedad[1] if len(novedad) > 1 else None
         puede_modificar_todo = self.app.tiene_permiso("registros.modificar")
         if vista == "novedad":
+            # Si le falta fecha de fin se permite editar independientemente del tiempo de edición
+            fecha_fin_valor = novedad[10] if len(novedad) > 10 else None
+            falta_fecha_fin = not fecha_fin_valor or str(fecha_fin_valor).strip() in ("", "-")
             puede_editar = (
                 self.app.tiene_permiso("novedades.editar") or puede_modificar_todo
             ) and (
-                puede_modificar_todo or self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+                puede_modificar_todo or falta_fecha_fin or self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
             )
             puede_eliminar = (
                 self.app.tiene_permiso("novedades.eliminar") or puede_modificar_todo
@@ -217,7 +221,16 @@ class TablesManager:
             )
 
         if puede_editar:
-            ttk.Button(botones, text="Editar", command=lambda: (modal.destroy(), self.mostrar_editor(int(novedad[0]), "novedad" if vista == "novedad" else "cambio"))).pack(side="left", padx=5)
+            def editar_registro():
+                modal.destroy()
+                if vista == "novedad":
+                    dentro_ventana = puede_modificar_todo or self.app.records_service.dentro_de_ventana(registrado_en, "editar_horas")
+                    modo = "completa" if dentro_ventana else "fecha_fin"
+                    self.app.forms_manager.iniciar_edicion_novedad(int(novedad[0]), modo=modo)
+                else:
+                    self.app.forms_manager.iniciar_edicion_cambio(int(novedad[0]))
+
+            ttk.Button(botones, text="Editar", command=editar_registro).pack(side="left", padx=5)
 
         if puede_eliminar:
             def eliminar_registro():
@@ -239,85 +252,6 @@ class TablesManager:
                 except Exception as error:
                     messagebox.showerror("Eliminar", str(error), parent=modal)
             ttk.Button(botones, text="Eliminar", command=eliminar_registro).pack(side="left", padx=5)
-
-    def mostrar_editor(self, record_id, record_type):
-        """Edita un registro y registra el antes/después en auditoría."""
-        if record_type == "novedad":
-            row = self.app.records_service.obtener_novedad(record_id)
-            fields = [
-                ("legajo", "Legajo"), ("apellidos_nombres", "Apellidos y nombres"),
-                ("especialidad", "Especialidad"), ("dotacion", "Dotación"), ("turnos", "Turnos"),
-                ("franco", "Franco"), ("novedad", "Tipo de novedad"), ("fecha_inicio", "Fecha inicio"),
-                ("fecha_fin", "Fecha fin"), ("referencia_estacion", "Referencia estación"),
-                ("supervisor", "Supervisor"), ("observaciones", "Observaciones"),
-            ]
-        else:
-            row = self.app.records_service.obtener_cambio(record_id)
-            fields = [
-                ("legajo_1", "Legajo 1"), ("apellidos_nombres_1", "Apellidos y nombres 1"),
-                ("especialidad_1", "Especialidad 1"), ("dotacion_1", "Dotación 1"),
-                ("turnos_1", "Turnos 1"), ("franco_1", "Franco 1"), ("legajo_2", "Legajo 2"),
-                ("apellidos_nombres_2", "Apellidos y nombres 2"), ("especialidad_2", "Especialidad 2"),
-                ("dotacion_2", "Dotación 2"), ("turnos_2", "Turnos 2"), ("franco_2", "Franco 2"),
-                ("fecha_cambio", "Fecha cambio"), ("referencia_estacion", "Referencia estación"),
-                ("supervisor", "Supervisor"), ("observaciones", "Observaciones"),
-            ]
-        if not row:
-            messagebox.showerror("Edición", "El registro ya no existe.", parent=self.app.root)
-            return
-        window = tk.Toplevel(self.app.root)
-        window.title("Editar registro")
-        window.geometry("720x680")
-        self.app.aplicar_tema_ventana(window)
-        variables = {}
-        widgets = {}
-        for index, (field, label) in enumerate(fields):
-            ttk.Label(window, text=label).grid(row=index, column=0, sticky="w", padx=12, pady=4)
-            value = "" if row[field] is None else str(row[field])
-            variable = tk.StringVar(value=value)
-            variables[field] = variable
-            if field == "novedad":
-                widget = ttk.Combobox(window, textvariable=variable, values=self.app.tipo_novedades, width=42)
-            elif field == "referencia_estacion":
-                widget = ttk.Combobox(window, textvariable=variable, values=self.app.nombres_personal_estacion(), width=42)
-                if not hasattr(self.app.forms_manager, "_personal_estacion_lista_original") or not self.app.forms_manager._personal_estacion_lista_original:
-                    self.app.forms_manager._personal_estacion_lista_original = self.app.nombres_personal_estacion()
-                widget.bind("<KeyRelease>", lambda e, w=widget: self.app.forms_manager._filtrar_combobox_personal_estacion(w, e))
-            elif field == "observaciones":
-                widget = tk.Text(window, height=4, width=48)
-                widget.insert("1.0", value)
-            else:
-                widget = ttk.Entry(window, textvariable=variable, width=45)
-            widget.grid(row=index, column=1, sticky="ew", padx=12, pady=4)
-            widgets[field] = widget
-
-        def save():
-            data = {}
-            bypass_window = self.app.tiene_permiso("registros.modificar")
-            for field, _label in fields:
-                if field == "observaciones":
-                    data[field] = widgets[field].get("1.0", "end-1c")
-                else:
-                    data[field] = variables[field].get().strip()
-            for field in ("legajo", "legajo_1", "legajo_2"):
-                if field in data:
-                    try:
-                        data[field] = int(data[field])
-                    except ValueError:
-                        messagebox.showerror("Edición", f"{field} debe ser numérico.", parent=window)
-                        return
-            try:
-                if record_type == "novedad":
-                    self.app.records_service.actualizar_novedad(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows(), bypass_window=bypass_window)
-                    self.cargar_datos_completos_novedades()
-                else:
-                    self.app.records_service.actualizar_cambio(record_id, data, self.app.current_user.get("id"), self.app.obtener_usuario_windows(), bypass_window=bypass_window)
-                    self.cargar_datos_completos_cambios()
-                window.destroy()
-            except Exception as error:
-                messagebox.showerror("Edición", str(error), parent=window)
-
-        ttk.Button(window, text="Guardar cambios", command=save).grid(row=len(fields), column=0, columnspan=2, pady=15)
     
     def cargar_datos_completos_novedades(self):
         """Carga todos los datos de novedades en la tabla sin filtros.
@@ -534,35 +468,21 @@ class TablesManager:
         )
 
     def actualizar_tabla(self):
-        """Actualiza las tablas si es necesario (llamado en cada refresh de Excel)."""
+        """Actualiza las tablas manteniendo los filtros activos (llamado en cada refresh periódico)."""
         if self.app.sheet_novedades and self.app.current_view == 'table' and hasattr(self.app, "tabla_novedades"):
-            if not hasattr(self.app, "apellido_filter_novedades_var") or not hasattr(self.app, "dotacion_filter_novedades_var") or not hasattr(self.app, "tipo_filter_novedades_var"):
-                return
-            if self.app.apellido_filter_novedades_var.get() != self.app.PLACEHOLDER_BUSCAR_NOMBRE or self.app.dotacion_filter_novedades_var.get() != "Todas" or self.app.tipo_filter_novedades_var.get() != "Todos":
-                return
-            self.app.tabla_novedades.delete(*self.app.tabla_novedades.get_children())
-            total = 0
-            for row in self.app.sheet_novedades.iter_rows(min_row=2, values_only=True):
-                row_data = ["-" if celda is None else celda for celda in row]
-                self.app.tabla_novedades.insert("", "end", values=row_data[:COLUMNAS_NOVEDADES_VISIBLES])
-                total += 1
-            if hasattr(self.app, "resultados_novedades_label"):
-                self.actualizar_contador_resultados(self.app.resultados_novedades_label, total)
+            if hasattr(self.app, "apellido_filter_novedades_var") and hasattr(self.app, "dotacion_filter_novedades_var") and hasattr(self.app, "tipo_filter_novedades_var"):
+                self.filtrar_datos_novedades(
+                    self.app.apellido_filter_novedades_var.get(),
+                    self.app.dotacion_filter_novedades_var.get(),
+                    self.app.tipo_filter_novedades_var.get()
+                )
         
         if self.app.sheet_cambio_turnos and self.app.current_view == "table_cambios" and hasattr(self.app, "table_cambios"):
-            if not hasattr(self.app, "apellido_filter_cambios_var") or not hasattr(self.app, "dotacion_filter_cambios_var"):
-                return
-            if self.app.apellido_filter_cambios_var.get() != self.app.PLACEHOLDER_BUSCAR_NOMBRE or self.app.dotacion_filter_cambios_var.get() != "Todas":
-                return
-            total = 0
-            for item in self.app.table_cambios.get_children():
-                self.app.table_cambios.delete(item)
-            for row in self.app.sheet_cambio_turnos.iter_rows(min_row=2, values_only=True):
-                row_data = ["-" if celda is None else celda for celda in row]
-                self.app.table_cambios.insert("", "end", values=row_data[:COLUMNAS_CAMBIOS_VISIBLES])
-                total += 1
-            if hasattr(self.app, "resultados_cambios_label"):
-                self.actualizar_contador_resultados(self.app.resultados_cambios_label, total)
+            if hasattr(self.app, "apellido_filter_cambios_var") and hasattr(self.app, "dotacion_filter_cambios_var"):
+                self.filtrar_datos_cambios(
+                    self.app.apellido_filter_cambios_var.get(),
+                    self.app.dotacion_filter_cambios_var.get()
+                )
     
     def crear_tabla_novedades(self):
         """Crea la interfaz de tabla de novedades con filtros y botones."""
@@ -640,6 +560,10 @@ class TablesManager:
             ttk.Button(self.app.table_frame, text="Nuevo cambio de turno", command=lambda: self.app.toggle_view("form_cambios")).grid(
                 row=0, column=8, pady=10, padx=10, sticky="e"
             )
+        if self.app.tiene_permiso("novedades.exportar"):
+            ttk.Button(self.app.table_frame, text="Turnos sin cubrir", command=self.app.exportar_turnos_sin_cubrir).grid(
+                row=0, column=9, pady=10, padx=5, sticky="e"
+            )
 
         apellido_filter.insert(0, self.app.PLACEHOLDER_BUSCAR_NOMBRE)
         dotacion_filter.insert(0, "Todas")
@@ -655,7 +579,7 @@ class TablesManager:
         
         # Contenedor del Treeview
         self.app.tree_frame = ttk.Frame(self.app.table_frame, width=self.app.WIDTH, height=self.app.HEIGHT)
-        self.app.tree_frame.grid(row=1, column=0, columnspan=9, sticky="nsew")
+        self.app.tree_frame.grid(row=1, column=0, columnspan=10, sticky="nsew")
         self.app.tree_frame.grid_propagate(False)
 
         self.app.tree_frame.grid_rowconfigure(0, weight=1)

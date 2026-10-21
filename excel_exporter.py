@@ -167,3 +167,48 @@ def export_auditoria(store, output_path, text_filter=""):
         if os.path.exists(temporary_path):
             os.remove(temporary_path)
     return str(output_path)
+
+
+def export_turnos_sin_cubrir(records_service, output_path, fecha_consulta, dotacion=None):
+    """Exporta los turnos sin cubrir correspondientes a una fecha dada a un archivo Excel."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    filas = records_service.obtener_turnos_sin_cubrir(fecha_consulta, dotacion=dotacion)
+
+    rows = []
+    for fila in filas:
+        rows.append({
+            "LEGAJO": fila["legajo"],
+            "APELLIDOS Y NOMBRES": fila["apellidos_nombres"],
+            "ESPECIALIDAD": fila["especialidad"],
+            "DOTACION": fila["dotacion"],
+            "TURNO": fila["turnos"],
+            "FRANCO": fila["franco"],
+            "NOVEDAD": fila["novedad"],
+            "FECHA INICIO": fila["fecha_inicio"],
+            "FECHA FIN": fila["fecha_fin"] or "",
+            "REFERENCIA ESTACIÓN": fila["referencia_estacion"],
+            "SUPERVISOR": fila["supervisor"],
+            "OBSERVACIONES": fila["observaciones"] or "",
+        })
+
+    workbook = openpyxl.Workbook()
+    del workbook[workbook.sheetnames[0]]
+    _write_sheet(
+        workbook,
+        "Turnos Sin Cubrir",
+        [
+            "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", "TURNO", "FRANCO",
+            "NOVEDAD", "FECHA INICIO", "FECHA FIN", "REFERENCIA ESTACIÓN", "SUPERVISOR", "OBSERVACIONES",
+        ],
+        rows,
+    )
+    fd, temporary_path = tempfile.mkstemp(prefix="turnos_sin_cubrir_", suffix=".xlsx", dir=output_path.parent)
+    os.close(fd)
+    try:
+        workbook.save(temporary_path)
+        os.replace(temporary_path, output_path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
+    return str(output_path), len(rows)

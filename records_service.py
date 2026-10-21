@@ -29,14 +29,35 @@ class RecordsService:
             ),
         )
 
-    def _parsear_registrado_en(self, valor):
-        if valor is None or str(valor).strip() == "":
+    def parsear_registrado_en(self, valor):
+        if valor is None:
             return None
         texto = str(valor).strip()
-        try:
-            return datetime.fromisoformat(texto)
-        except ValueError:
-            pass
+        if not texto:
+            return None
+        # Vía rápida formato ISO: YYYY-MM-DD...
+        if len(texto) >= 10 and texto[4] == "-" and texto[7] == "-":
+            try:
+                return datetime.fromisoformat(texto)
+            except ValueError:
+                pass
+        # Vía rápida formato DD/MM/YYYY...
+        elif len(texto) >= 10 and texto[2] == "/" and texto[5] == "/":
+            if len(texto) == 10:
+                try:
+                    return datetime.strptime(texto, "%d/%m/%Y")
+                except ValueError:
+                    pass
+            elif len(texto) == 16:
+                try:
+                    return datetime.strptime(texto, "%d/%m/%Y %H:%M")
+                except ValueError:
+                    pass
+            elif len(texto) >= 19:
+                try:
+                    return datetime.strptime(texto[:19], "%d/%m/%Y %H:%M:%S")
+                except ValueError:
+                    pass
         for formato in (
             "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
             "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
@@ -49,6 +70,9 @@ class RecordsService:
             return datetime(1899, 12, 30) + timedelta(days=float(texto))
         except ValueError:
             return None
+
+    def _parsear_registrado_en(self, valor):
+        return self.parsear_registrado_en(valor)
 
     def _horas_limite(self, connection, clave, default):
         row = connection.execute("SELECT valor FROM configuracion WHERE clave=?", (clave,)).fetchone()
@@ -71,7 +95,7 @@ class RecordsService:
 
     def listar_tipos(self, incluir_inactivos=True):
         with self.store.read_connection() as connection:
-            query = "SELECT id, nombre, activo FROM tipos_novedad"
+            query = "SELECT id, nombre, dias, exportar_descubierto, activo FROM tipos_novedad"
             if not incluir_inactivos:
                 query += " WHERE activo=1"
             query += " ORDER BY nombre"
@@ -81,19 +105,47 @@ class RecordsService:
         with self.store.write_transaction() as connection:
             self._audit(connection, user_id, windows_user, action, entity, entity_id, before, after)
 
-    def crear_tipo(self, nombre, user_id=None, windows_user=None):
+    def crear_tipo(self, nombre, dias=0, exportar_descubierto=1, user_id=None, windows_user=None):
+        nombre = (nombre or "").strip()
+        if not nombre:
+            raise ValueError("El nombre no puede estar vacío.")
+        try:
+            dias_val = max(0, int(dias or 0))
+        except (ValueError, TypeError):
+            dias_val = 0
+        exportar_val = 1 if exportar_descubierto else 0
         with self.store.write_transaction() as connection:
-            cursor = connection.execute("INSERT INTO tipos_novedad(nombre) VALUES (?)", (nombre.strip(),))
-            self._audit(connection, user_id, windows_user, "crear", "tipo_novedad", cursor.lastrowid, None, {"nombre": nombre})
+            cursor = connection.execute(
+                "INSERT INTO tipos_novedad(nombre, dias, exportar_descubierto) VALUES (?, ?, ?)",
+                (nombre, dias_val, exportar_val),
+            )
+            self._audit(
+                connection, user_id, windows_user, "crear", "tipo_novedad", cursor.lastrowid, None,
+                {"nombre": nombre, "dias": dias_val, "exportar_descubierto": exportar_val},
+            )
             return cursor.lastrowid
 
-    def actualizar_tipo(self, type_id, nombre, activo, user_id=None, windows_user=None):
+    def actualizar_tipo(self, type_id, nombre, dias=0, exportar_descubierto=1, activo=1, user_id=None, windows_user=None):
+        nombre = (nombre or "").strip()
+        if not nombre:
+            raise ValueError("El nombre no puede estar vacío.")
+        try:
+            dias_val = max(0, int(dias or 0))
+        except (ValueError, TypeError):
+            dias_val = 0
+        exportar_val = 1 if exportar_descubierto else 0
         with self.store.write_transaction() as connection:
-            before = connection.execute("SELECT id, nombre, activo FROM tipos_novedad WHERE id=?", (type_id,)).fetchone()
+            before = connection.execute("SELECT * FROM tipos_novedad WHERE id=?", (type_id,)).fetchone()
             if not before:
                 raise ValueError("El tipo de novedad no existe.")
-            connection.execute("UPDATE tipos_novedad SET nombre=?, activo=? WHERE id=?", (nombre.strip(), int(activo), type_id))
-            self._audit(connection, user_id, windows_user, "modificar", "tipo_novedad", type_id, dict(before), {"nombre": nombre, "activo": int(activo)})
+            connection.execute(
+                "UPDATE tipos_novedad SET nombre=?, dias=?, exportar_descubierto=?, activo=? WHERE id=?",
+                (nombre, dias_val, exportar_val, int(activo), type_id),
+            )
+            self._audit(
+                connection, user_id, windows_user, "modificar", "tipo_novedad", type_id, dict(before),
+                {"nombre": nombre, "dias": dias_val, "exportar_descubierto": exportar_val, "activo": int(activo)},
+            )
 
     def listar_dotaciones(self, incluir_inactivos=True):
         with self.store.read_connection() as connection:
@@ -273,6 +325,37 @@ class RecordsService:
             after = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
             self._audit(connection, user_id, windows_user, "modificar", "novedad", record_id, dict(before), dict(after))
 
+    def actualizar_fecha_fin_novedad(self, record_id, fecha_fin, nueva_observacion=None, user_id=None, windows_user=None):
+        import validators
+        fecha_fin_str = (fecha_fin or "").strip()
+        if not fecha_fin_str:
+            raise ValueError("Debe ingresar la fecha de fin.")
+        val_fin = validators.parsear_fecha(fecha_fin_str, "Fecha de Fin", obligatorio=True)
+        with self.store.write_transaction() as connection:
+            before = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
+            if not before:
+                raise ValueError("La novedad no existe.")
+            fecha_fin_anterior = (before["fecha_fin"] or "").strip()
+            if fecha_fin_anterior and fecha_fin_anterior != "-":
+                raise ValueError("El registro ya cuenta con una fecha de fin.")
+            fecha_inicio_str = (before["fecha_inicio"] or "").strip()
+            if fecha_inicio_str:
+                val_ini = validators.parsear_fecha(fecha_inicio_str, "Fecha de Inicio", obligatorio=False)
+                if val_ini and val_fin < val_ini:
+                    raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio.")
+            obs_existente = (before["observaciones"] or "").strip()
+            nueva_obs = (nueva_observacion or "").strip()
+            if nueva_obs:
+                obs_final = f"{obs_existente}\n{nueva_obs}".strip() if obs_existente else nueva_obs
+            else:
+                obs_final = before["observaciones"]
+            connection.execute(
+                "UPDATE novedades SET fecha_fin=?, observaciones=? WHERE id=?",
+                (fecha_fin_str, obs_final, record_id),
+            )
+            after = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
+            self._audit(connection, user_id, windows_user, "modificar", "novedad", record_id, dict(before), dict(after))
+
     def actualizar_cambio(self, record_id, data, user_id=None, windows_user=None, bypass_window=False):
         fields = ("legajo_1", "apellidos_nombres_1", "especialidad_1", "dotacion_1", "turnos_1", "franco_1", "legajo_2", "apellidos_nombres_2", "especialidad_2", "dotacion_2", "turnos_2", "franco_2", "fecha_cambio", "referencia_estacion", "supervisor", "observaciones")
         with self.store.write_transaction() as connection:
@@ -305,6 +388,49 @@ class RecordsService:
                 raise ValueError("El registro superó el tiempo permitido para eliminar.")
             connection.execute("UPDATE cambios_turno SET activo=0 WHERE id=?", (record_id,))
             self._audit(connection, user_id, windows_user, "eliminar", "cambio_turno", record_id, dict(before), {"activo": 0})
+
+    def obtener_turnos_sin_cubrir(self, fecha_consulta, dotacion=None):
+        """Devuelve las novedades activas que corresponden a turnos sin cubrir en la fecha dada."""
+        import validators
+        f_sol = validators.parsear_fecha(fecha_consulta, "Fecha a consultar", obligatorio=True)
+        with self.store.read_connection() as connection:
+            query = """
+                SELECT n.id, n.registrado_en, n.legajo, n.apellidos_nombres, n.especialidad,
+                       n.dotacion, n.turnos, n.franco, n.novedad, n.fecha_inicio, n.fecha_fin,
+                       n.referencia_estacion, n.supervisor, n.observaciones
+                FROM novedades n
+                JOIN tipos_novedad t ON LOWER(n.novedad) = LOWER(t.nombre)
+                WHERE n.activo = 1 AND t.exportar_descubierto = 1
+            """
+            params = []
+            if dotacion and dotacion != "Todas":
+                query += " AND n.dotacion = ?"
+                params.append(dotacion)
+            query += " ORDER BY n.dotacion, n.turnos, n.apellidos_nombres"
+            filas = connection.execute(query, params).fetchall()
+
+        descubiertos = []
+        for fila in filas:
+            try:
+                f_ini = validators.parsear_fecha(fila["fecha_inicio"], "Fecha de Inicio", obligatorio=False)
+            except Exception:
+                f_ini = None
+            if not f_ini:
+                continue
+
+            fecha_fin_raw = (fila["fecha_fin"] or "").strip()
+            f_fin = None
+            if fecha_fin_raw and fecha_fin_raw != "-":
+                try:
+                    f_fin = validators.parsear_fecha(fecha_fin_raw, "Fecha de Fin", obligatorio=False)
+                except Exception:
+                    f_fin = None
+
+            if f_ini.date() <= f_sol.date():
+                if f_fin is None or f_sol.date() <= f_fin.date():
+                    descubiertos.append(fila)
+
+        return descubiertos
 
     def _tabla_entidad(self, tipo):
         if tipo == "Novedad":
@@ -366,115 +492,93 @@ class RecordsService:
         texto = "".join(c for c in texto if not unicodedata.combining(c)).lower().strip()
         return texto in _DIAS_SEMANA_NORM
 
-    def dashboard_por_dia_semana(self, dias=30):
-        """Novedades y cambios por día de la semana dentro de la ventana indicada."""
-        desde = self._desde_hace(dias)
-        conteo = {dia: 0 for dia in _DIAS_SEMANA}
-
-        def sumar(fecha, fila):
-            if fecha < desde:
-                return
-            conteo[_DIAS_SEMANA[fecha.weekday()]] += 1
-
-        self._contar_por_fecha("novedades", ("registrado_en",), sumar)
-        self._contar_por_fecha("cambios_turno", ("registrado_en",), sumar)
-        return list(conteo.items())
-
-    def _contar_por_fecha(self, tabla, columnas_registrado, funcion):
-        with self.store.read_connection() as connection:
-            columnas = ", ".join(columnas_registrado)
-            filas = connection.execute(
-                f"SELECT {columnas} FROM {tabla} WHERE activo=1"
-            ).fetchall()
-        for fila in filas:
-            fecha = self._parsear_registrado_en(fila["registrado_en"])
-            if fecha is None:
-                continue
-            funcion(fecha, fila)
-
-    def dashboard_resumen(self):
-        """Totales de hoy y del mes actual para el panel de control."""
-        hoy = datetime.now()
-        resumen = {
-            "novedades_hoy": 0, "cambios_hoy": 0,
-            "novedades_mes": 0, "cambios_mes": 0, "total_mes": 0,
-        }
-
-        def contar_novedades(fecha, fila):
-            if fecha.date() == hoy.date():
-                resumen["novedades_hoy"] += 1
-            if fecha.year == hoy.year and fecha.month == hoy.month:
-                resumen["novedades_mes"] += 1
-
-        def contar_cambios(fecha, fila):
-            if fecha.date() == hoy.date():
-                resumen["cambios_hoy"] += 1
-            if fecha.year == hoy.year and fecha.month == hoy.month:
-                resumen["cambios_mes"] += 1
-
-        self._contar_por_fecha("novedades", ("registrado_en",), contar_novedades)
-        self._contar_por_fecha("cambios_turno", ("registrado_en",), contar_cambios)
-        resumen["total_mes"] = resumen["novedades_mes"] + resumen["cambios_mes"]
-        return resumen
-
-    def dashboard_por_tipo(self, dias=30):
-        """Cantidad de novedades por tipo dentro de la ventana indicada."""
-        desde = self._desde_hace(dias)
-        conteo = {}
-
-        def sumar(fecha, fila):
-            if fecha < desde:
-                return
-            tipo = (fila["novedad"] or "").strip() or "Sin tipo"
-            conteo[tipo] = conteo.get(tipo, 0) + 1
-
-        self._contar_por_fecha("novedades", ("registrado_en", "novedad"), sumar)
-        return sorted(conteo.items(), key=lambda item: item[1], reverse=True)
-
-    def dashboard_por_dotacion(self, dias=30, limite=10):
-        """Cantidad de registros (novedades + cambios) por dotación, top N."""
-        desde = self._desde_hace(dias)
-        conteo = {}
-
-        def sumar_dotacion(dotacion):
-            valor = (dotacion or "").strip()
-            if not valor or self._es_dia_semana(valor):
-                return
-            conteo[valor] = conteo.get(valor, 0) + 1
-
-        def sumar_novedad(fecha, fila):
-            if fecha < desde:
-                return
-            sumar_dotacion(fila["dotacion"])
-
-        def sumar_cambio(fecha, fila):
-            if fecha < desde:
-                return
-            sumar_dotacion(fila["dotacion_1"])
-            sumar_dotacion(fila["dotacion_2"])
-
-        self._contar_por_fecha("novedades", ("registrado_en", "dotacion"), sumar_novedad)
-        self._contar_por_fecha("cambios_turno", ("registrado_en", "dotacion_1", "dotacion_2"), sumar_cambio)
-        return sorted(conteo.items(), key=lambda item: item[1], reverse=True)[:max(1, int(limite))]
-
-    def dashboard_tendencia(self, dias=30):
-        """Novedades y cambios por día para los últimos N días (incluye hoy)."""
+    def obtener_metricas_dashboard(self, dias=30):
+        """Calcula todas las métricas del panel en una sola lectura optimizada."""
         dias = max(1, int(dias))
         hoy = datetime.now()
         desde = hoy - timedelta(days=dias - 1)
         fechas = [(desde + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(dias)]
         serie = {fecha: {"novedades": 0, "cambios": 0} for fecha in fechas}
 
-        def sumar_novedad(fecha, fila):
-            clave = fecha.strftime("%Y-%m-%d")
-            if clave in serie:
-                serie[clave]["novedades"] += 1
+        conteo_tipo = {}
+        conteo_dotacion = {}
+        conteo_dia_semana = {dia: 0 for dia in _DIAS_SEMANA}
 
-        def sumar_cambio(fecha, fila):
-            clave = fecha.strftime("%Y-%m-%d")
-            if clave in serie:
-                serie[clave]["cambios"] += 1
+        resumen = {
+            "novedades_hoy": 0, "cambios_hoy": 0,
+            "novedades_mes": 0, "cambios_mes": 0, "total_mes": 0,
+        }
 
-        self._contar_por_fecha("novedades", ("registrado_en",), sumar_novedad)
-        self._contar_por_fecha("cambios_turno", ("registrado_en",), sumar_cambio)
-        return [(fecha, serie[fecha]["novedades"], serie[fecha]["cambios"]) for fecha in fechas]
+        def sumar_dotacion(dotacion):
+            valor = (dotacion or "").strip()
+            if not valor or self._es_dia_semana(valor):
+                return
+            conteo_dotacion[valor] = conteo_dotacion.get(valor, 0) + 1
+
+        with self.store.read_connection() as connection:
+            filas_nov = connection.execute(
+                "SELECT registrado_en, novedad, dotacion FROM novedades WHERE activo=1"
+            ).fetchall()
+            filas_cam = connection.execute(
+                "SELECT registrado_en, dotacion_1, dotacion_2 FROM cambios_turno WHERE activo=1"
+            ).fetchall()
+
+        for fila in filas_nov:
+            fecha = self._parsear_registrado_en(fila["registrado_en"])
+            if fecha is None:
+                continue
+            if fecha.date() == hoy.date():
+                resumen["novedades_hoy"] += 1
+            if fecha.year == hoy.year and fecha.month == hoy.month:
+                resumen["novedades_mes"] += 1
+
+            if fecha >= desde:
+                conteo_dia_semana[_DIAS_SEMANA[fecha.weekday()]] += 1
+                tipo = (fila["novedad"] or "").strip() or "Sin tipo"
+                conteo_tipo[tipo] = conteo_tipo.get(tipo, 0) + 1
+                sumar_dotacion(fila["dotacion"])
+                clave = fecha.strftime("%Y-%m-%d")
+                if clave in serie:
+                    serie[clave]["novedades"] += 1
+
+        for fila in filas_cam:
+            fecha = self._parsear_registrado_en(fila["registrado_en"])
+            if fecha is None:
+                continue
+            if fecha.date() == hoy.date():
+                resumen["cambios_hoy"] += 1
+            if fecha.year == hoy.year and fecha.month == hoy.month:
+                resumen["cambios_mes"] += 1
+
+            if fecha >= desde:
+                conteo_dia_semana[_DIAS_SEMANA[fecha.weekday()]] += 1
+                sumar_dotacion(fila["dotacion_1"])
+                sumar_dotacion(fila["dotacion_2"])
+                clave = fecha.strftime("%Y-%m-%d")
+                if clave in serie:
+                    serie[clave]["cambios"] += 1
+
+        resumen["total_mes"] = resumen["novedades_mes"] + resumen["cambios_mes"]
+
+        return {
+            "resumen": resumen,
+            "por_tipo": sorted(conteo_tipo.items(), key=lambda item: item[1], reverse=True),
+            "por_dotacion": sorted(conteo_dotacion.items(), key=lambda item: item[1], reverse=True)[:10],
+            "tendencia": [(f, serie[f]["novedades"], serie[f]["cambios"]) for f in fechas],
+            "por_dia_semana": list(conteo_dia_semana.items()),
+        }
+
+    def dashboard_por_dia_semana(self, dias=30):
+        return self.obtener_metricas_dashboard(dias)["por_dia_semana"]
+
+    def dashboard_resumen(self):
+        return self.obtener_metricas_dashboard(30)["resumen"]
+
+    def dashboard_por_tipo(self, dias=30):
+        return self.obtener_metricas_dashboard(dias)["por_tipo"]
+
+    def dashboard_por_dotacion(self, dias=30, limite=10):
+        return self.obtener_metricas_dashboard(dias)["por_dotacion"][:max(1, int(limite))]
+
+    def dashboard_tendencia(self, dias=30):
+        return self.obtener_metricas_dashboard(dias)["tendencia"]

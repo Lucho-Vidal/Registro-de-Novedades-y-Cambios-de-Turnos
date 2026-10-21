@@ -151,3 +151,77 @@ def validar_campos_requeridos_cambios(legajo_var, apellidos_nombres_var, legajo_
         return False, str(e)
 
     return True, None
+
+
+def validar_datos_edicion_novedad(data, tipo_novedades=None, personal_estacion=None):
+    """Valida los datos de edición de una novedad."""
+    legajo = str(data.get("legajo", "")).strip()
+    if not legajo:
+        return False, "El campo 'Legajo' es obligatorio."
+    try:
+        int(legajo)
+    except ValueError:
+        return False, "El legajo debe ser un número entero."
+
+    if not str(data.get("apellidos_nombres", "")).strip():
+        return False, "El campo 'Apellido y Nombre' es obligatorio."
+
+    novedad = str(data.get("novedad", "")).strip()
+    if not novedad:
+        return False, "El campo 'Tipo de Novedad' es obligatorio."
+    if tipo_novedades and novedad not in tipo_novedades:
+        return False, "Seleccione un valor válido en 'Tipo de Novedad'."
+
+    ref = str(data.get("referencia_estacion", "")).strip()
+    if not ref:
+        return False, "El campo 'Referencia Estación' es obligatorio."
+    if personal_estacion and not any(ref.casefold() == p.casefold() for p in personal_estacion):
+        return False, "La estación de referencia debe ser un valor de la lista."
+
+    if not str(data.get("supervisor", "")).strip():
+        return False, "El campo 'Supervisor' es obligatorio."
+
+    try:
+        fecha_ini = parsear_fecha(data.get("fecha_inicio"), "Fecha de inicio novedad", obligatorio=True)
+        fecha_fin = parsear_fecha(data.get("fecha_fin"), "Fecha de fin novedad", obligatorio=False)
+    except ValueError as e:
+        return False, str(e)
+
+    if fecha_fin and fecha_fin < fecha_ini:
+        return False, "'Fecha de Fin Novedad' no puede ser anterior a 'Fecha de Inicio Novedad'."
+
+    return True, None
+
+
+def validar_datos_edicion_cambio(data, personal_estacion=None):
+    """Valida los datos de edición de un cambio de turno."""
+    for campo_leg, label in (("legajo_1", "Legajo 1"), ("legajo_2", "Legajo 2")):
+        val = str(data.get(campo_leg, "")).strip()
+        if not val:
+            return False, f"El campo '{label}' es obligatorio."
+        try:
+            int(val)
+        except ValueError:
+            return False, f"{label} debe ser un número entero."
+
+    if not str(data.get("apellidos_nombres_1", "")).strip():
+        return False, "El campo 'Apellido y Nombre 1' es obligatorio."
+    if not str(data.get("apellidos_nombres_2", "")).strip():
+        return False, "El campo 'Apellido y Nombre 2' es obligatorio."
+
+    ref = str(data.get("referencia_estacion", "")).strip()
+    if not ref:
+        return False, "El campo 'Referencia Estación' es obligatorio."
+    if personal_estacion and not any(ref.casefold() == p.casefold() for p in personal_estacion):
+        return False, "La estación de referencia debe ser un valor de la lista."
+
+    if not str(data.get("supervisor", "")).strip():
+        return False, "El campo 'Supervisor' es obligatorio."
+
+    try:
+        parsear_fecha(data.get("fecha_cambio"), "Fecha de cambio de turno", obligatorio=True)
+    except ValueError as e:
+        return False, str(e)
+
+    return True, None
+
