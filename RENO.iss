@@ -32,13 +32,13 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesAssociations=yes
 DisableProgramGroupPage=yes
-LicenseFile=C:\Users\Lucia\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\LICENSE.txt
-InfoBeforeFile=C:\Users\Lucia\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\beforeInstalation.txt
-InfoAfterFile=C:\Users\Lucia\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\afterInstalation.txt
+LicenseFile=C:\Users\Luciano.vidal\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\LICENSE.txt
+InfoBeforeFile=C:\Users\Luciano.vidal\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\beforeInstalation.txt
+InfoAfterFile=C:\Users\Luciano.vidal\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\afterInstalation.txt
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-OutputDir=C:\Users\Lucia\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\Instalador
+OutputDir=C:\Users\Luciano.vidal\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\Instalador
 OutputBaseFilename=RENO
 
 Compression=lzma
@@ -48,7 +48,7 @@ WizardStyle=modern
 [Code]
 
 const
-  FECHA_VENCIMIENTO = '20260831';
+  FECHA_VENCIMIENTO = '20261031';
 
 function FormatearFecha(const Fecha: String): String;
 begin
@@ -83,7 +83,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "C:\Users\Lucia\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\Luciano.vidal\workspace\Registro-de-Novedades-y-Cambios-de-Turnos\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Registry]
