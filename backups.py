@@ -103,6 +103,14 @@ def restaurar_backup(store, nombre):
     origen = os.path.join(_ruta_backups(store), nombre)
     if not os.path.isfile(origen):
         raise FileNotFoundError("La copia de seguridad no existe.")
+    # Verificar integridad de la copia antes de aplicarla
+    con = sqlite3.connect(origen)
+    try:
+        check = con.execute("PRAGMA integrity_check").fetchone()
+        if not check or check[0].lower() != "ok":
+            raise RuntimeError(f"La copia de seguridad está dañada ({check[0] if check else 'desconocido'}).")
+    finally:
+        con.close()
     temporal = store.database_path + ".restaurar"
     shutil.copy2(origen, temporal)
     os.replace(temporal, store.database_path)

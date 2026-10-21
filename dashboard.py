@@ -151,16 +151,21 @@ class DashboardManager:
     def actualizar_dashboard(self):
         if not self._creado:
             return
-        resumen = self.app.records_service.dashboard_resumen()
+        metricas = self.app.records_service.obtener_metricas_dashboard(self.tendencia_dias)
+        resumen = metricas["resumen"]
         self.tarjeta_novedades_hoy.config(text=str(resumen["novedades_hoy"]))
         if self.tarjeta_cambios_hoy is not None:
             self.tarjeta_cambios_hoy.config(text=str(resumen["cambios_hoy"]))
         self.tarjeta_total_mes.config(text=str(resumen["total_mes"]))
         self.tarjeta_sin_revisar.config(text=str(getattr(self.app, "_no_revisados", 0)))
-        self._dibujar_por_tipo()
-        self._dibujar_por_dotacion()
-        self._dibujar_tendencia()
-        self._dibujar_por_dia_semana()
+
+        self._dibujar_barras_h(self._canvas_tipo, metricas["por_tipo"][:self.MAX_TIPOS], self._color("primary", "#4682b4"))
+        self._dibujar_barras_h(self._canvas_dotacion, metricas["por_dotacion"], self._color("success", "#3cb371"))
+        self._dibujar_barras_v(
+            self._canvas_tendencia, metricas["tendencia"],
+            self._color("primary", "#4682b4"), self._color("info", "#5bc0de"),
+        )
+        self._dibujar_barras_h(self._canvas_dia, metricas["por_dia_semana"], self._color("warning", "#f0ad4e"))
         from datetime import datetime
         self.lbl_actualizado.config(text=f"Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
@@ -169,26 +174,7 @@ class DashboardManager:
             self.tendencia_dias = int(self.tendencia_dias_var.get())
         except (TypeError, ValueError):
             self.tendencia_dias = 30
-        self._dibujar_tendencia()
-
-    def _dibujar_por_tipo(self):
-        datos = self.app.records_service.dashboard_por_tipo(self.tendencia_dias)
-        self._dibujar_barras_h(self._canvas_tipo, datos[:self.MAX_TIPOS], self._color("primary", "#4682b4"))
-
-    def _dibujar_por_dotacion(self):
-        datos = self.app.records_service.dashboard_por_dotacion(self.tendencia_dias)
-        self._dibujar_barras_h(self._canvas_dotacion, datos, self._color("success", "#3cb371"))
-
-    def _dibujar_tendencia(self):
-        datos = self.app.records_service.dashboard_tendencia(self.tendencia_dias)
-        self._dibujar_barras_v(
-            self._canvas_tendencia, datos,
-            self._color("primary", "#4682b4"), self._color("info", "#5bc0de"),
-        )
-
-    def _dibujar_por_dia_semana(self):
-        datos = self.app.records_service.dashboard_por_dia_semana(self.tendencia_dias)
-        self._dibujar_barras_h(self._canvas_dia, datos, self._color("warning", "#f0ad4e"))
+        self.actualizar_dashboard()
 
     def _dibujar_barras_h(self, canvas, datos, color):
         canvas.delete("all")
