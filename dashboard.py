@@ -45,6 +45,8 @@ class DashboardManager:
             ttk.Button(barra, text="Novedades", command=lambda: self.app.toggle_view("table")).pack(side="left", padx=3)
         if self.app.tiene_permiso("cambios_turno.ver"):
             ttk.Button(barra, text="Cambios de turno", command=lambda: self.app.toggle_view("table_cambios")).pack(side="left", padx=3)
+        if self.app.tiene_permiso("reemplazos.ver"):
+            ttk.Button(barra, text="Personal de Ciclo", command=lambda: self.app.toggle_view("ciclo")).pack(side="left", padx=3)
         if self.app.tiene_permiso("novedades.crear"):
             ttk.Button(barra, text="Nueva novedad", command=lambda: self.app.toggle_view("form")).pack(side="left", padx=3)
         if self.app.tiene_permiso("cambios_turno.crear"):

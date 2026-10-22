@@ -140,6 +140,7 @@ class SQLiteStore:
                     dotacion TEXT NOT NULL DEFAULT '',
                     turnos TEXT NOT NULL DEFAULT '',
                     franco TEXT NOT NULL DEFAULT '',
+                    franco_horario TEXT NOT NULL DEFAULT '',
                     activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
                     actualizado_en TEXT NOT NULL
                 );
@@ -266,8 +267,25 @@ class SQLiteStore:
                     valor TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS novedad_reemplazos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    novedad_id INTEGER NOT NULL REFERENCES novedades(id),
+                    legajo_reemplazo INTEGER NOT NULL,
+                    apellidos_nombres_reemplazo TEXT NOT NULL DEFAULT '',
+                    turnos_reemplazo TEXT NOT NULL DEFAULT '',
+                    franco_reemplazo TEXT NOT NULL DEFAULT '',
+                    fecha_inicio TEXT NOT NULL,
+                    fecha_fin TEXT,
+                    usuario_windows TEXT,
+                    usuario_id INTEGER REFERENCES usuarios(id),
+                    creado_en TEXT NOT NULL,
+                    activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_novedades_legajo ON novedades(legajo);
                 CREATE INDEX IF NOT EXISTS idx_novedades_registrado ON novedades(registrado_en DESC);
+                CREATE INDEX IF NOT EXISTS idx_reemplazos_novedad ON novedad_reemplazos(novedad_id, activo);
+                CREATE INDEX IF NOT EXISTS idx_reemplazos_legajo ON novedad_reemplazos(legajo_reemplazo, activo);
                 CREATE INDEX IF NOT EXISTS idx_cambios_legajo_1 ON cambios_turno(legajo_1);
                 CREATE INDEX IF NOT EXISTS idx_cambios_legajo_2 ON cambios_turno(legajo_2);
                 CREATE INDEX IF NOT EXISTS idx_cambios_registrado ON cambios_turno(registrado_en DESC);
@@ -291,6 +309,9 @@ class SQLiteStore:
             pe_columns = {row[1] for row in connection.execute("PRAGMA table_info(personal_estacion)").fetchall()}
             if "dotacion" not in pe_columns:
                 connection.execute("ALTER TABLE personal_estacion ADD COLUMN dotacion TEXT")
+            emp_columns = {row[1] for row in connection.execute("PRAGMA table_info(empleados)").fetchall()}
+            if "franco_horario" not in emp_columns:
+                connection.execute("ALTER TABLE empleados ADD COLUMN franco_horario TEXT NOT NULL DEFAULT ''")
             tn_columns = {row[1] for row in connection.execute("PRAGMA table_info(tipos_novedad)").fetchall()}
             if "dias" not in tn_columns:
                 connection.execute("ALTER TABLE tipos_novedad ADD COLUMN dias INTEGER NOT NULL DEFAULT 0")
@@ -397,7 +418,7 @@ class SQLiteStore:
     def get_base_rows(self):
         with self.read_connection() as connection:
             return connection.execute(
-                """SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco
+                """SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario
                    FROM empleados WHERE activo=1 ORDER BY apellidos_nombres"""
             ).fetchall()
 

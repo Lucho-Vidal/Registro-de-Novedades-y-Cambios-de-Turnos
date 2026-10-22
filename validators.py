@@ -225,3 +225,74 @@ def validar_datos_edicion_cambio(data, personal_estacion=None):
 
     return True, None
 
+
+def es_turno_ciclo(turno_str):
+    """Indica si el turno corresponde a personal de CICLO (comienza con 'CICLO')."""
+    return str(turno_str or "").strip().upper().startswith("CICLO")
+
+
+def validar_tramos_reemplazo(fecha_inicio_nov, fecha_fin_nov, turno_titular, tramos):
+    """Valida la lista de tramos de reemplazo para una novedad.
+
+    Verifica:
+    - Que el titular no sea de turno CICLO si se asignan reemplazos.
+    - Que cada reemplazo tenga turno que comience con CICLO (si se informa el turno).
+    - Que las fechas de cada tramo sean válidas y estén dentro del rango de la novedad.
+    - Que los tramos no se solapen entre sí.
+    """
+    if not tramos:
+        return True, None
+
+    if es_turno_ciclo(turno_titular):
+        return False, "El personal cuyo turno comienza con CICLO no puede tener reemplazo."
+
+    try:
+        f_ini_nov = parsear_fecha(fecha_inicio_nov, "Fecha de inicio novedad", obligatorio=True)
+        f_fin_nov = parsear_fecha(fecha_fin_nov, "Fecha de fin novedad", obligatorio=False)
+    except ValueError as e:
+        return False, str(e)
+
+    intervalos = []
+    for idx, tramo in enumerate(tramos, start=1):
+        leg = str(tramo.get("legajo_reemplazo") or tramo.get("legajo") or "").strip()
+        if not leg:
+            return False, f"El reemplazo #{idx} debe tener un legajo válido."
+        try:
+            int(leg)
+        except ValueError:
+            return False, f"El legajo del reemplazo #{idx} debe ser numérico."
+
+        turno_remp = tramo.get("turnos_reemplazo") or tramo.get("turnos")
+        if turno_remp is not None and str(turno_remp).strip() != "" and not es_turno_ciclo(turno_remp):
+            return False, f"El reemplazo #{idx} debe pertenecer a un turno que comience con CICLO."
+
+        try:
+            t_ini = parsear_fecha(tramo.get("fecha_inicio"), f"Fecha de inicio del reemplazo #{idx}", obligatorio=True)
+            t_fin = parsear_fecha(tramo.get("fecha_fin"), f"Fecha de fin del reemplazo #{idx}", obligatorio=False)
+        except ValueError as e:
+            return False, str(e)
+
+        if t_fin and t_fin < t_ini:
+            return False, f"En el reemplazo #{idx}, la fecha de fin no puede ser anterior a la fecha de inicio."
+
+        if t_ini < f_ini_nov:
+            return False, f"En el reemplazo #{idx}, la fecha de inicio ({tramo.get('fecha_inicio')}) no puede ser anterior al inicio de la novedad ({fecha_inicio_nov})."
+
+        if f_fin_nov:
+            if t_fin is None:
+                return False, f"El reemplazo #{idx} debe tener fecha de fin porque la novedad finaliza el {fecha_fin_nov}."
+            if t_fin > f_fin_nov:
+                return False, f"En el reemplazo #{idx}, la fecha de fin ({tramo.get('fecha_fin')}) no puede superar el fin de la novedad ({fecha_fin_nov})."
+
+        intervalos.append((t_ini, t_fin or datetime.max, idx))
+
+    intervalos.sort(key=lambda item: (item[0], item[1]))
+    for i in range(len(intervalos) - 1):
+        actual_ini, actual_fin, idx_a = intervalos[i]
+        sig_ini, sig_fin, idx_b = intervalos[i + 1]
+        if actual_fin >= sig_ini:
+            return False, f"Los tramos de reemplazo #{idx_a} y #{idx_b} se solapan en las fechas seleccionadas."
+
+    return True, None
+
+

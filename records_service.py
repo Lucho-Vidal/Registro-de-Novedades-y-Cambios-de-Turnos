@@ -1,9 +1,10 @@
 """Operaciones de negocio para registros operativos, tipos y auditoría."""
 
+import calendar
 import json
 import sqlite3
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 _DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 _DIAS_SEMANA_NORM = {
@@ -206,7 +207,7 @@ class RecordsService:
 
     def listar_empleados(self, incluir_inactivos=True):
         with self.store.read_connection() as connection:
-            query = "SELECT id, legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, activo FROM empleados"
+            query = "SELECT id, legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario, activo FROM empleados"
             if not incluir_inactivos:
                 query += " WHERE activo=1"
             return connection.execute(query + " ORDER BY apellidos_nombres").fetchall()
@@ -234,14 +235,15 @@ class RecordsService:
             "dotacion": (data.get("dotacion") or "").strip(),
             "turnos": (data.get("turnos") or "").strip(),
             "franco": (data.get("franco") or "").strip(),
+            "franco_horario": (data.get("franco_horario") or "").strip(),
         }
         with self.store.write_transaction() as connection:
             try:
                 cursor = connection.execute(
-                    """INSERT INTO empleados(legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, actualizado_en)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO empleados(legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario, actualizado_en)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (valores["legajo"], valores["apellidos_nombres"], valores["especialidad"],
-                     valores["dotacion"], valores["turnos"], valores["franco"], self.store.now()),
+                     valores["dotacion"], valores["turnos"], valores["franco"], valores["franco_horario"], self.store.now()),
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"Ya existe un empleado con el legajo {legajo}.")
@@ -257,6 +259,7 @@ class RecordsService:
             "dotacion": (data.get("dotacion") or "").strip(),
             "turnos": (data.get("turnos") or "").strip(),
             "franco": (data.get("franco") or "").strip(),
+            "franco_horario": (data.get("franco_horario") or "").strip(),
         }
         with self.store.write_transaction() as connection:
             before = connection.execute("SELECT * FROM empleados WHERE id=?", (empleado_id,)).fetchone()
@@ -265,9 +268,9 @@ class RecordsService:
             try:
                 connection.execute(
                     """UPDATE empleados SET legajo=?, apellidos_nombres=?, especialidad=?, dotacion=?,
-                          turnos=?, franco=?, actualizado_en=? WHERE id=?""",
+                          turnos=?, franco=?, franco_horario=?, actualizado_en=? WHERE id=?""",
                     (valores["legajo"], valores["apellidos_nombres"], valores["especialidad"],
-                     valores["dotacion"], valores["turnos"], valores["franco"], self.store.now(), empleado_id),
+                     valores["dotacion"], valores["turnos"], valores["franco"], valores["franco_horario"], self.store.now(), empleado_id),
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"Ya existe un empleado con el legajo {legajo}.")
@@ -328,30 +331,36 @@ class RecordsService:
     def actualizar_fecha_fin_novedad(self, record_id, fecha_fin, nueva_observacion=None, user_id=None, windows_user=None):
         import validators
         fecha_fin_str = (fecha_fin or "").strip()
-        if not fecha_fin_str:
-            raise ValueError("Debe ingresar la fecha de fin.")
-        val_fin = validators.parsear_fecha(fecha_fin_str, "Fecha de Fin", obligatorio=True)
+        nueva_obs = (nueva_observacion or "").strip()
+        if not fecha_fin_str and not nueva_obs:
+            raise ValueError("Debe ingresar la fecha de fin o una observación.")
+        val_fin = None
+        if fecha_fin_str:
+            val_fin = validators.parsear_fecha(fecha_fin_str, "Fecha de Fin", obligatorio=True)
         with self.store.write_transaction() as connection:
             before = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
             if not before:
                 raise ValueError("La novedad no existe.")
             fecha_fin_anterior = (before["fecha_fin"] or "").strip()
-            if fecha_fin_anterior and fecha_fin_anterior != "-":
-                raise ValueError("El registro ya cuenta con una fecha de fin.")
-            fecha_inicio_str = (before["fecha_inicio"] or "").strip()
-            if fecha_inicio_str:
-                val_ini = validators.parsear_fecha(fecha_inicio_str, "Fecha de Inicio", obligatorio=False)
-                if val_ini and val_fin < val_ini:
-                    raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio.")
+            if fecha_fin_str:
+                if fecha_fin_anterior and fecha_fin_anterior != "-":
+                    raise ValueError("El registro ya cuenta con una fecha de fin.")
+                fecha_inicio_str = (before["fecha_inicio"] or "").strip()
+                if fecha_inicio_str:
+                    val_ini = validators.parsear_fecha(fecha_inicio_str, "Fecha de Inicio", obligatorio=False)
+                    if val_ini and val_fin < val_ini:
+                        raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio.")
+                fecha_guardar = fecha_fin_str
+            else:
+                fecha_guardar = before["fecha_fin"]
             obs_existente = (before["observaciones"] or "").strip()
-            nueva_obs = (nueva_observacion or "").strip()
             if nueva_obs:
                 obs_final = f"{obs_existente}\n{nueva_obs}".strip() if obs_existente else nueva_obs
             else:
                 obs_final = before["observaciones"]
             connection.execute(
                 "UPDATE novedades SET fecha_fin=?, observaciones=? WHERE id=?",
-                (fecha_fin_str, obs_final, record_id),
+                (fecha_guardar, obs_final, record_id),
             )
             after = connection.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone()
             self._audit(connection, user_id, windows_user, "modificar", "novedad", record_id, dict(before), dict(after))
@@ -389,8 +398,325 @@ class RecordsService:
             connection.execute("UPDATE cambios_turno SET activo=0 WHERE id=?", (record_id,))
             self._audit(connection, user_id, windows_user, "eliminar", "cambio_turno", record_id, dict(before), {"activo": 0})
 
+    def obtener_candidatos_ciclo(self, dotacion, especialidad, excluir_legajo=None):
+        """Devuelve los empleados activos con igual dotación, igual especialidad y turno que comienza con CICLO."""
+        dot_norm = (dotacion or "").strip()
+        esp_norm = (especialidad or "").strip()
+        if not dot_norm or not esp_norm:
+            return []
+        with self.store.read_connection() as connection:
+            query = """
+                SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario
+                FROM empleados
+                WHERE activo = 1
+                  AND LOWER(TRIM(dotacion)) = LOWER(TRIM(?))
+                  AND LOWER(TRIM(especialidad)) = LOWER(TRIM(?))
+                  AND UPPER(TRIM(turnos)) LIKE 'CICLO%'
+            """
+            params = [dot_norm, esp_norm]
+            if excluir_legajo is not None:
+                try:
+                    query += " AND legajo != ?"
+                    params.append(int(excluir_legajo))
+                except (ValueError, TypeError):
+                    pass
+            query += " ORDER BY apellidos_nombres"
+            return [dict(r) for r in connection.execute(query, params).fetchall()]
+
+    def listar_reemplazos_por_novedad(self, novedad_id):
+        """Lista los tramos de reemplazo activos para una novedad dada."""
+        with self.store.read_connection() as connection:
+            rows = connection.execute(
+                """SELECT id, novedad_id, legajo_reemplazo, apellidos_nombres_reemplazo,
+                          turnos_reemplazo, franco_reemplazo, fecha_inicio, fecha_fin,
+                          usuario_windows, usuario_id, creado_en
+                   FROM novedad_reemplazos
+                   WHERE novedad_id = ? AND activo = 1
+                   ORDER BY id ASC""",
+                (novedad_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def _rango_fechas_reemplazo(self, fecha_ini_str, fecha_fin_str, fecha_fin_nov_str=None):
+        import validators
+        try:
+            dt_ini = validators.parsear_fecha(fecha_ini_str, "Fecha inicio reemplazo", obligatorio=False)
+        except Exception:
+            dt_ini = None
+        if not dt_ini:
+            return None, None
+        f_ini = dt_ini.date()
+
+        f_fin = None
+        raw_fin = (fecha_fin_str or "").strip()
+        if raw_fin and raw_fin != "-":
+            try:
+                dt_fin = validators.parsear_fecha(raw_fin, "Fecha fin reemplazo", obligatorio=False)
+                if dt_fin:
+                    f_fin = dt_fin.date()
+            except Exception:
+                f_fin = None
+        elif fecha_fin_nov_str and str(fecha_fin_nov_str).strip() not in ("", "-"):
+            try:
+                dt_fin_nov = validators.parsear_fecha(fecha_fin_nov_str, "Fecha fin novedad", obligatorio=False)
+                if dt_fin_nov:
+                    f_fin = dt_fin_nov.date()
+            except Exception:
+                f_fin = None
+        return f_ini, f_fin
+
+    def _validar_disponibilidad_ciclo_conn(self, connection, legajo_reemplazo, fecha_inicio, fecha_fin, excluir_novedad_id=None):
+        import validators
+        dt_ini = validators.parsear_fecha(fecha_inicio, "Fecha inicio reemplazo", obligatorio=True)
+        dt_fin = validators.parsear_fecha(fecha_fin, "Fecha fin reemplazo", obligatorio=False)
+        t_ini = dt_ini.date()
+        t_fin = dt_fin.date() if dt_fin else date.max
+
+        query = """
+            SELECT nr.*, n.legajo AS legajo_titular, n.apellidos_nombres AS apellidos_titular,
+                   n.novedad AS tipo_novedad, n.fecha_fin AS fecha_fin_novedad
+            FROM novedad_reemplazos nr
+            JOIN novedades n ON n.id = nr.novedad_id
+            WHERE nr.legajo_reemplazo = ? AND nr.activo = 1 AND n.activo = 1
+        """
+        params = [int(legajo_reemplazo)]
+        if excluir_novedad_id is not None:
+            query += " AND nr.novedad_id != ?"
+            params.append(int(excluir_novedad_id))
+
+        existentes = connection.execute(query, params).fetchall()
+        for row in existentes:
+            r_ini, r_fin_opt = self._rango_fechas_reemplazo(row["fecha_inicio"], row["fecha_fin"], row["fecha_fin_novedad"])
+            if not r_ini:
+                continue
+            r_fin = r_fin_opt if r_fin_opt is not None else date.max
+            if t_ini <= r_fin and r_ini <= t_fin:
+                hasta_txt = row["fecha_fin"] or row["fecha_fin_novedad"] or "sin fecha fin"
+                raise ValueError(
+                    f"El personal de ciclo {row['apellidos_nombres_reemplazo']} (Leg. {legajo_reemplazo}) "
+                    f"ya reemplaza a {row['apellidos_titular']} (Novedad #{row['novedad_id']}) "
+                    f"del {row['fecha_inicio']} al {hasta_txt}."
+                )
+
+    def validar_disponibilidad_ciclo(self, legajo_reemplazo, fecha_inicio, fecha_fin, excluir_novedad_id=None):
+        """Verifica que el empleado de CICLO no tenga otro reemplazo activo superpuesto en esas fechas."""
+        with self.store.read_connection() as connection:
+            self._validar_disponibilidad_ciclo_conn(
+                connection, legajo_reemplazo, fecha_inicio, fecha_fin, excluir_novedad_id=excluir_novedad_id
+            )
+
+    def guardar_reemplazos_novedad(self, novedad_id, tramos, user_id=None, windows_user=None):
+        """Valida y reemplaza los tramos de cobertura de una novedad."""
+        import validators
+        tramos_norm = []
+        with self.store.write_transaction() as connection:
+            nov = connection.execute("SELECT * FROM novedades WHERE id = ?", (novedad_id,)).fetchone()
+            if not nov:
+                raise ValueError("La novedad no existe.")
+
+            fecha_fin_nov = (nov["fecha_fin"] or "").strip()
+            if fecha_fin_nov == "-":
+                fecha_fin_nov = ""
+
+            for tramo in (tramos or []):
+                leg = int(str(tramo.get("legajo_reemplazo") or tramo.get("legajo")).strip())
+                f_ini = str(tramo.get("fecha_inicio") or nov["fecha_inicio"] or "").strip()
+                f_fin = str(tramo.get("fecha_fin") or "").strip()
+                if f_fin == "-":
+                    f_fin = ""
+                if not f_fin and fecha_fin_nov and len(tramos) == 1:
+                    f_fin = fecha_fin_nov
+
+                emp = connection.execute(
+                    "SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco FROM empleados WHERE legajo = ?",
+                    (leg,),
+                ).fetchone()
+
+                nombre = str(tramo.get("apellidos_nombres_reemplazo") or tramo.get("apellidos_nombres") or (emp["apellidos_nombres"] if emp else "")).strip()
+                turno_r = str(tramo.get("turnos_reemplazo") or tramo.get("turnos") or (emp["turnos"] if emp else "")).strip()
+                franco_r = str(tramo.get("franco_reemplazo") or tramo.get("franco") or (emp["franco"] if emp else "")).strip()
+
+                if emp:
+                    if (emp["dotacion"] or "").strip().casefold() != (nov["dotacion"] or "").strip().casefold():
+                        raise ValueError(f"El reemplazo {nombre} (Leg. {leg}) no pertenece a la misma dotación ({nov['dotacion']}).")
+                    if (emp["especialidad"] or "").strip().casefold() != (nov["especialidad"] or "").strip().casefold():
+                        raise ValueError(f"El reemplazo {nombre} (Leg. {leg}) no tiene la misma especialidad ({nov['especialidad']}).")
+                    if not validators.es_turno_ciclo(emp["turnos"]):
+                        raise ValueError(f"El reemplazo {nombre} (Leg. {leg}) no tiene un turno que comience con CICLO.")
+                elif not validators.es_turno_ciclo(turno_r):
+                    raise ValueError(f"El reemplazo {nombre} (Leg. {leg}) debe pertenecer a un turno que comience con CICLO.")
+
+                tramos_norm.append({
+                    "legajo_reemplazo": leg,
+                    "apellidos_nombres_reemplazo": nombre,
+                    "turnos_reemplazo": turno_r,
+                    "franco_reemplazo": franco_r,
+                    "fecha_inicio": f_ini,
+                    "fecha_fin": f_fin or None,
+                })
+
+            es_valido, err = validators.validar_tramos_reemplazo(
+                nov["fecha_inicio"], fecha_fin_nov or None, nov["turnos"], tramos_norm
+            )
+            if not es_valido:
+                raise ValueError(err)
+
+            for t in tramos_norm:
+                self._validar_disponibilidad_ciclo_conn(
+                    connection, t["legajo_reemplazo"], t["fecha_inicio"], t["fecha_fin"], excluir_novedad_id=novedad_id
+                )
+
+            anteriores = [
+                dict(r) for r in connection.execute(
+                    "SELECT legajo_reemplazo, apellidos_nombres_reemplazo, fecha_inicio, fecha_fin FROM novedad_reemplazos WHERE novedad_id=? AND activo=1",
+                    (novedad_id,),
+                ).fetchall()
+            ]
+            connection.execute("UPDATE novedad_reemplazos SET activo = 0 WHERE novedad_id = ? AND activo = 1", (novedad_id,))
+            ahora = self.store.now()
+            for t in tramos_norm:
+                connection.execute(
+                    """INSERT INTO novedad_reemplazos
+                       (novedad_id, legajo_reemplazo, apellidos_nombres_reemplazo, turnos_reemplazo,
+                        franco_reemplazo, fecha_inicio, fecha_fin, usuario_windows, usuario_id, creado_en, activo)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                    (
+                        novedad_id, t["legajo_reemplazo"], t["apellidos_nombres_reemplazo"],
+                        t["turnos_reemplazo"], t["franco_reemplazo"], t["fecha_inicio"],
+                        t["fecha_fin"], windows_user, user_id, ahora,
+                    ),
+                )
+            self._audit(
+                connection, user_id, windows_user, "reemplazos", "novedad", novedad_id,
+                {"reemplazos": anteriores}, {"reemplazos": tramos_norm},
+            )
+
+    def calcular_estado_cobertura(self, fila_novedad, tramos_o_fecha_ini=None, fecha_fin=None, turnos=None):
+        """Calcula el estado de cobertura ('Sí', 'Parcial', 'No', 'N/A (Ciclo)') y textos descriptivos.
+
+        Acepta dos formas de invocación:
+        1) `calcular_estado_cobertura(fila_row_o_dict, lista_tramos)` -> devuelve dict `{"estado", "resumen", "detalle"}`
+        2) `calcular_estado_cobertura(novedad_id, fecha_inicio, fecha_fin, turnos)` -> devuelve tupla `(estado, detalle)`
+        """
+        import validators
+        modo_tupla = isinstance(fila_novedad, int) or (turnos is not None or fecha_fin is not None and not isinstance(tramos_o_fecha_ini, list))
+        if modo_tupla:
+            novedad_id = int(fila_novedad)
+            tramos = self.listar_reemplazos_por_novedad(novedad_id)
+            fila_dict = {
+                "id": novedad_id,
+                "fecha_inicio": tramos_o_fecha_ini,
+                "fecha_fin": fecha_fin,
+                "turnos": turnos or "",
+            }
+        else:
+            fila_dict = dict(fila_novedad)
+            tramos = tramos_o_fecha_ini or []
+
+        turno_titular = fila_dict.get("turnos") or ""
+        if validators.es_turno_ciclo(turno_titular):
+            res = {
+                "estado": "N/A (Ciclo)",
+                "resumen": "N/A (Ciclo)",
+                "detalle": "Personal de CICLO (sin reemplazo)",
+            }
+            return (res["estado"], res["detalle"]) if modo_tupla else res
+        if not tramos:
+            res = {
+                "estado": "No",
+                "resumen": "No",
+                "detalle": "Sin reemplazo asignado",
+            }
+            return (res["estado"], res["detalle"]) if modo_tupla else res
+
+        f_ini_nov_str = fila_dict.get("fecha_inicio") or ""
+        f_fin_nov_str = (fila_dict.get("fecha_fin") or "").strip()
+        if f_fin_nov_str == "-":
+            f_fin_nov_str = ""
+
+        try:
+            dt_ini_nov = validators.parsear_fecha(f_ini_nov_str, "Inicio", obligatorio=False)
+            f_ini_nov = dt_ini_nov.date() if dt_ini_nov else None
+        except Exception:
+            f_ini_nov = None
+
+        try:
+            dt_fin_nov = validators.parsear_fecha(f_fin_nov_str, "Fin", obligatorio=False) if f_fin_nov_str else None
+            f_fin_nov = dt_fin_nov.date() if dt_fin_nov else None
+        except Exception:
+            f_fin_nov = None
+
+        intervalos = []
+        nombres_vistos = []
+        partes_detalle = []
+        for t in tramos:
+            leg = t["legajo_reemplazo"]
+            nom = t["apellidos_nombres_reemplazo"]
+            etiqueta = f"{nom} ({leg})"
+            if etiqueta not in nombres_vistos:
+                nombres_vistos.append(etiqueta)
+            hasta_txt = t["fecha_fin"] or "abierto"
+            partes_detalle.append(f"{leg} - {nom} [{t['fecha_inicio']} a {hasta_txt}]")
+            r_ini, r_fin = self._rango_fechas_reemplazo(t["fecha_inicio"], t["fecha_fin"], f_fin_nov_str or None)
+            if r_ini:
+                intervalos.append((r_ini, r_fin))
+
+        intervalos.sort(key=lambda item: (item[0], item[1] or date.max))
+        cubierto_total = False
+        if f_ini_nov and intervalos:
+            primero_ini, _ = intervalos[0]
+            if primero_ini <= f_ini_nov:
+                cursor = intervalos[0][1]
+                sin_huecos = True
+                for sig_ini, sig_fin in intervalos[1:]:
+                    if cursor is None:
+                        break
+                    if sig_ini > cursor + timedelta(days=1):
+                        sin_huecos = False
+                        break
+                    if sig_fin is None or sig_fin > cursor:
+                        cursor = sig_fin
+                if sin_huecos:
+                    if f_fin_nov is not None:
+                        if cursor is None or cursor >= f_fin_nov:
+                            cubierto_total = True
+                    else:
+                        if cursor is None:
+                            cubierto_total = True
+
+        estado = "Sí" if cubierto_total else "Parcial"
+        resumen = f"{estado}: {', '.join(nombres_vistos)}"
+        detalle = " | ".join(partes_detalle)
+        res = {
+            "estado": estado,
+            "resumen": resumen,
+            "detalle": detalle,
+        }
+        return (res["estado"], res["detalle"]) if modo_tupla else res
+
+    def obtener_mapa_cobertura_novedades(self):
+        """Devuelve un diccionario {novedad_id: info_cobertura} para todas las novedades activas."""
+        with self.store.read_connection() as connection:
+            novedades = connection.execute(
+                "SELECT id, turnos, fecha_inicio, fecha_fin FROM novedades WHERE activo = 1"
+            ).fetchall()
+            reemplazos = connection.execute(
+                """SELECT id, novedad_id, legajo_reemplazo, apellidos_nombres_reemplazo,
+                          turnos_reemplazo, franco_reemplazo, fecha_inicio, fecha_fin
+                   FROM novedad_reemplazos WHERE activo = 1 ORDER BY id ASC"""
+            ).fetchall()
+
+        por_novedad = {}
+        for r in reemplazos:
+            por_novedad.setdefault(r["novedad_id"], []).append(dict(r))
+
+        mapa = {}
+        for nov in novedades:
+            mapa[nov["id"]] = self.calcular_estado_cobertura(nov, por_novedad.get(nov["id"], []))
+        return mapa
+
     def obtener_turnos_sin_cubrir(self, fecha_consulta, dotacion=None):
-        """Devuelve las novedades activas que corresponden a turnos sin cubrir en la fecha dada."""
+        """Devuelve las novedades activas que corresponden a turnos en la fecha dada junto con su estado de cobertura."""
         import validators
         f_sol = validators.parsear_fecha(fecha_consulta, "Fecha a consultar", obligatorio=True)
         with self.store.read_connection() as connection:
@@ -408,6 +734,16 @@ class RecordsService:
                 params.append(dotacion)
             query += " ORDER BY n.dotacion, n.turnos, n.apellidos_nombres"
             filas = connection.execute(query, params).fetchall()
+
+            reemplazos_rows = connection.execute(
+                """SELECT id, novedad_id, legajo_reemplazo, apellidos_nombres_reemplazo,
+                          turnos_reemplazo, franco_reemplazo, fecha_inicio, fecha_fin
+                   FROM novedad_reemplazos WHERE activo = 1 ORDER BY id ASC"""
+            ).fetchall()
+
+        reemplazos_por_nov = {}
+        for r in reemplazos_rows:
+            reemplazos_por_nov.setdefault(r["novedad_id"], []).append(dict(r))
 
         descubiertos = []
         for fila in filas:
@@ -428,9 +764,184 @@ class RecordsService:
 
             if f_ini.date() <= f_sol.date():
                 if f_fin is None or f_sol.date() <= f_fin.date():
-                    descubiertos.append(fila)
+                    item = dict(fila)
+                    tramos = reemplazos_por_nov.get(fila["id"], [])
+                    reemplazo_hoy = None
+                    for t in tramos:
+                        r_ini, r_fin_opt = self._rango_fechas_reemplazo(t["fecha_inicio"], t["fecha_fin"], fecha_fin_raw or None)
+                        if r_ini and r_ini <= f_sol.date() and (r_fin_opt is None or f_sol.date() <= r_fin_opt):
+                            reemplazo_hoy = t
+                            break
+                    if validators.es_turno_ciclo(fila["turnos"]):
+                        item["cubierto"] = "N/A (Ciclo)"
+                        item["reemplazo"] = ""
+                    elif reemplazo_hoy:
+                        item["cubierto"] = "Sí"
+                        item["reemplazo"] = f"{reemplazo_hoy['legajo_reemplazo']} - {reemplazo_hoy['apellidos_nombres_reemplazo']} ({reemplazo_hoy['turnos_reemplazo']})"
+                    else:
+                        item["cubierto"] = "No"
+                        item["reemplazo"] = ""
+                    info_cob = self.calcular_estado_cobertura(fila, tramos)
+                    item["cobertura_resumen"] = info_cob["resumen"]
+                    item["reemplazos_detalle"] = info_cob["detalle"]
+                    descubiertos.append(item)
 
         return descubiertos
+
+    def obtener_estado_personal_ciclo(self, fecha_consulta, dotacion=None, especialidad=None):
+        """Separa al personal de CICLO en libres (sin relevo) y ocupados (con relevo) en la fecha consultada."""
+        import validators
+        f_sol = validators.parsear_fecha(fecha_consulta, "Fecha de consulta", obligatorio=True).date()
+        with self.store.read_connection() as connection:
+            query_emp = """
+                SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario
+                FROM empleados
+                WHERE activo = 1 AND UPPER(TRIM(turnos)) LIKE 'CICLO%'
+            """
+            params_emp = []
+            if dotacion and dotacion != "Todas":
+                query_emp += " AND LOWER(TRIM(dotacion)) = LOWER(TRIM(?))"
+                params_emp.append(dotacion)
+            if especialidad and especialidad != "Todas":
+                query_emp += " AND LOWER(TRIM(especialidad)) = LOWER(TRIM(?))"
+                params_emp.append(especialidad)
+            query_emp += " ORDER BY dotacion, apellidos_nombres"
+            empleados_ciclo = [dict(r) for r in connection.execute(query_emp, params_emp).fetchall()]
+
+            reemplazos_activos = connection.execute(
+                """SELECT nr.*, n.legajo AS legajo_titular, n.apellidos_nombres AS apellidos_titular,
+                          n.turnos AS turno_titular, n.novedad AS tipo_novedad,
+                          n.fecha_fin AS fecha_fin_novedad, n.dotacion AS dotacion_titular
+                   FROM novedad_reemplazos nr
+                   JOIN novedades n ON n.id = nr.novedad_id
+                   WHERE nr.activo = 1 AND n.activo = 1"""
+            ).fetchall()
+
+        ocupados_por_legajo = {}
+        for r in reemplazos_activos:
+            r_ini, r_fin_opt = self._rango_fechas_reemplazo(r["fecha_inicio"], r["fecha_fin"], r["fecha_fin_novedad"])
+            if r_ini and r_ini <= f_sol and (r_fin_opt is None or f_sol <= r_fin_opt):
+                ocupados_por_legajo[int(r["legajo_reemplazo"])] = dict(r)
+
+        libres = []
+        ocupados = []
+        for emp in empleados_ciclo:
+            leg = int(emp["legajo"])
+            asignacion = ocupados_por_legajo.get(leg)
+            if asignacion:
+                item = dict(emp)
+                item["novedad_id"] = asignacion["novedad_id"]
+                item["legajo_titular"] = asignacion["legajo_titular"]
+                item["apellidos_titular"] = asignacion["apellidos_titular"]
+                item["reemplazando_legajo"] = asignacion["legajo_titular"]
+                item["reemplazando_nombre"] = asignacion["apellidos_titular"]
+                item["reemplaza_a"] = f"{asignacion['legajo_titular']} - {asignacion['apellidos_titular']}"
+                item["turno_titular"] = asignacion["turno_titular"]
+                item["tipo_novedad"] = asignacion["tipo_novedad"]
+                item["novedad_titular"] = asignacion["tipo_novedad"]
+                item["fecha_inicio_relevo"] = asignacion["fecha_inicio"]
+                item["fecha_fin_relevo"] = asignacion["fecha_fin"] or asignacion["fecha_fin_novedad"] or "-"
+                item["reemplazo_desde"] = asignacion["fecha_inicio"]
+                item["reemplazo_hasta"] = asignacion["fecha_fin"] or asignacion["fecha_fin_novedad"] or "Sin fecha fin"
+                ocupados.append(item)
+            else:
+                libres.append(dict(emp))
+
+        return {"libres": libres, "ocupados": ocupados}
+
+    def obtener_calendario_mensual_ciclo(self, legajo_ciclo, anio, mes):
+        """Genera una fila por cada día del mes indicando a quién reemplaza el empleado de ciclo."""
+        anio = int(anio)
+        mes = int(mes)
+        _, num_dias = calendar.monthrange(anio, mes)
+
+        with self.store.read_connection() as connection:
+            emp = connection.execute(
+                "SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario FROM empleados WHERE legajo = ?",
+                (int(legajo_ciclo),),
+            ).fetchone()
+            reemplazos = connection.execute(
+                """SELECT nr.*, n.legajo AS legajo_titular, n.apellidos_nombres AS apellidos_titular,
+                          n.turnos AS turno_titular, n.novedad AS tipo_novedad,
+                          n.fecha_fin AS fecha_fin_novedad
+                   FROM novedad_reemplazos nr
+                   JOIN novedades n ON n.id = nr.novedad_id
+                   WHERE nr.legajo_reemplazo = ? AND nr.activo = 1 AND n.activo = 1
+                   ORDER BY nr.id ASC""",
+                (int(legajo_ciclo),),
+            ).fetchall()
+
+        tramos_parsed = []
+        for r in reemplazos:
+            r_ini, r_fin_opt = self._rango_fechas_reemplazo(r["fecha_inicio"], r["fecha_fin"], r["fecha_fin_novedad"])
+            if r_ini:
+                tramos_parsed.append((r_ini, r_fin_opt, dict(r)))
+
+        franco_emp = (emp["franco"] if emp else "") or ""
+        franco_horario = ((emp["franco_horario"] if emp and "franco_horario" in emp.keys() else "") or "").strip()
+        franco_norm = unicodedata.normalize("NFKD", franco_emp)
+        franco_norm = "".join(c for c in franco_norm if not unicodedata.combining(c)).lower().strip()
+
+        dias_mes = []
+        for dia_num in range(1, num_dias + 1):
+            f_actual = date(anio, mes, dia_num)
+            dia_semana = _DIAS_SEMANA[f_actual.weekday()]
+            dia_sem_norm = unicodedata.normalize("NFKD", dia_semana)
+            dia_sem_norm = "".join(c for c in dia_sem_norm if not unicodedata.combining(c)).lower().strip()
+            es_franco = bool(franco_norm and franco_norm in dia_sem_norm)
+
+            relevo_dia = None
+            for r_ini, r_fin_opt, r_data in tramos_parsed:
+                if r_ini <= f_actual and (r_fin_opt is None or f_actual <= r_fin_opt):
+                    relevo_dia = r_data
+                    break
+
+            if relevo_dia:
+                estado = "Reemplazando"
+                novedad_id = relevo_dia["novedad_id"]
+                reemplaza_a = f"{relevo_dia['legajo_titular']} - {relevo_dia['apellidos_titular']}"
+                turno_cubierto = relevo_dia["turno_titular"] or "-"
+                motivo = f"#{relevo_dia['novedad_id']} ({relevo_dia['tipo_novedad']})"
+                periodo = f"{relevo_dia['fecha_inicio']} a {relevo_dia['fecha_fin'] or relevo_dia['fecha_fin_novedad'] or 'abierto'}"
+                reemplazando_legajo = relevo_dia["legajo_titular"]
+                reemplazando_nombre = relevo_dia["apellidos_titular"]
+                novedad_titular = relevo_dia["tipo_novedad"]
+                tramo_inicio = relevo_dia["fecha_inicio"]
+                tramo_fin = relevo_dia["fecha_fin"] or relevo_dia["fecha_fin_novedad"]
+            else:
+                novedad_id = ""
+                if es_franco:
+                    estado = f"Franco (desde {franco_horario})" if franco_horario else "Franco"
+                else:
+                    estado = "Disponible"
+                reemplaza_a = "-"
+                turno_cubierto = "-"
+                motivo = "-"
+                periodo = "-"
+                reemplazando_legajo = None
+                reemplazando_nombre = None
+                novedad_titular = None
+                tramo_inicio = None
+                tramo_fin = None
+
+            dias_mes.append({
+                "dia": dia_num,
+                "fecha": f_actual.strftime("%d/%m/%Y"),
+                "dia_semana": dia_semana,
+                "estado": estado,
+                "novedad_id": novedad_id,
+                "reemplaza_a": reemplaza_a,
+                "turno_cubierto": turno_cubierto,
+                "motivo": motivo,
+                "periodo": periodo,
+                "reemplazando_legajo": reemplazando_legajo,
+                "reemplazando_nombre": reemplazando_nombre,
+                "novedad_titular": novedad_titular,
+                "tramo_inicio": tramo_inicio,
+                "tramo_fin": tramo_fin,
+            })
+
+        return dias_mes
 
     def _tabla_entidad(self, tipo):
         if tipo == "Novedad":

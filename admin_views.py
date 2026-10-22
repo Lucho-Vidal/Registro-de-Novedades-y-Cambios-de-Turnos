@@ -30,6 +30,7 @@ PERMISOS_GRUPOS = (
     ("auditoria", "Auditoría"),
     ("sesion", "Sesión"),
     ("registros", "Registros"),
+    ("reemplazos", "Reemplazos / Ciclo"),
     ("backup", "Copias de seguridad"),
     ("excel", "Excel / Archivo"),
 )
@@ -38,13 +39,13 @@ ACCIONES_PERMISO = {
     "ver": "Ver", "crear": "Crear", "editar": "Editar", "eliminar": "Eliminar",
     "importar": "Importar", "exportar": "Exportar", "administrar": "Administrar",
     "configurar": "Configurar", "recuperar": "Recuperar", "gestionar": "Gestionar",
-    "modificar": "Modificar",
+    "modificar": "Modificar", "asignar": "Asignar",
 }
 
 _ORDEN_ACCION = {
     "ver": 0, "crear": 1, "editar": 2, "eliminar": 3, "importar": 4,
     "exportar": 5, "administrar": 6, "configurar": 7, "recuperar": 8, "gestionar": 9,
-    "modificar": 10,
+    "modificar": 10, "asignar": 11,
 }
 
 
@@ -113,6 +114,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Administrar usuarios")
         window.geometry("760x430")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "usuario", "nombre", "legajo", "activo", "roles"), show="headings")
         for column, title, width in (("id", "ID", 50), ("usuario", "Usuario", 150), ("nombre", "Nombre", 190), ("legajo", "Legajo", 80), ("activo", "Activo", 70), ("roles", "Roles", 260)):
@@ -251,6 +256,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Administrar roles y permisos")
         window.geometry("1080x430")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "rol", "permisos"), show="headings")
         for column, title, width in (("id", "ID", 35), ("rol", "Rol", 180), ("permisos", "Permisos", 820)):
@@ -356,6 +365,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Tipos de novedad")
         window.geometry("720x420")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "nombre", "dias", "exportar", "activo"), show="headings")
         for column, title, width in (
@@ -507,6 +520,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Dotaciones")
         window.geometry("640x400")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "nombre", "activo"), show="headings")
         for column, title, width in (("id", "ID", 60), ("nombre", "Nombre", 300), ("activo", "Activo", 80)):
@@ -573,12 +590,16 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Empleados")
         window.geometry("980x460")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
-        tree = ttk.Treeview(window, columns=("id", "legajo", "apellidos", "especialidad", "dotacion", "turnos", "franco", "activo"), show="headings")
+        tree = ttk.Treeview(window, columns=("id", "legajo", "apellidos", "especialidad", "dotacion", "turnos", "franco", "franco_horario", "activo"), show="headings")
         for column, title, width in (
             ("id", "ID", 50), ("legajo", "Legajo", 70), ("apellidos", "Apellidos y nombres", 260),
             ("especialidad", "Especialidad", 150), ("dotacion", "Dotación", 80), ("turnos", "Turnos", 160),
-            ("franco", "Franco", 100), ("activo", "Activo", 70),
+            ("franco", "Franco", 100), ("franco_horario", "Horario Franco", 110), ("activo", "Activo", 70),
         ):
             tree.heading(column, text=title)
             tree.column(column, width=width, stretch=column in {"apellidos", "especialidad", "turnos"})
@@ -641,7 +662,7 @@ class AdminViews:
                     continue
                 if especialidad != "Todas" and (row[3] or "") != especialidad:
                     continue
-                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "-", row[4] or "-", row[5] or "-", row[6] or "-", "Sí" if row[7] else "No"))
+                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "-", row[4] or "-", row[5] or "-", row[6] or "-", row[7] or "-", "Sí" if row[8] else "No"))
 
         def refresh():
             filas_completas.clear()
@@ -656,7 +677,7 @@ class AdminViews:
             self.app.cargarDotaciones()
             dialog = tk.Toplevel(window)
             dialog.title("Nuevo empleado" if valores_iniciales is None else "Editar empleado")
-            dialog.geometry("430x330")
+            dialog.geometry("450x370")
             self.app.aplicar_tema_ventana(dialog)
             dialog.transient(window)
             dialog.grab_set()
@@ -673,6 +694,7 @@ class AdminViews:
             dotacion_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("dotacion") or ""))
             turnos_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("turnos") or ""))
             franco_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("franco") or ""))
+            franco_horario_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("franco_horario") or ""))
 
             ttk.Label(dialog, text="Legajo").grid(row=0, column=0, sticky="w", padx=12, pady=4)
             ttk.Entry(dialog, textvariable=legajo_var, width=30).grid(row=0, column=1, sticky="ew", padx=12, pady=4)
@@ -686,6 +708,8 @@ class AdminViews:
             ttk.Entry(dialog, textvariable=turnos_var, width=30).grid(row=4, column=1, sticky="ew", padx=12, pady=4)
             ttk.Label(dialog, text="Franco").grid(row=5, column=0, sticky="w", padx=12, pady=4)
             ttk.Combobox(dialog, textvariable=franco_var, values=opciones(DIAS_SEMANA, franco_var.get()), state="readonly", width=28).grid(row=5, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Horario Franco (CICLO)").grid(row=6, column=0, sticky="w", padx=12, pady=4)
+            ttk.Entry(dialog, textvariable=franco_horario_var, width=30).grid(row=6, column=1, sticky="ew", padx=12, pady=4)
 
             def guardar():
                 data = {
@@ -695,6 +719,7 @@ class AdminViews:
                     "dotacion": dotacion_var.get(),
                     "turnos": turnos_var.get(),
                     "franco": franco_var.get(),
+                    "franco_horario": franco_horario_var.get().strip(),
                 }
                 try:
                     int(data["legajo"])
@@ -721,7 +746,7 @@ class AdminViews:
                 refresh()
                 dialog.destroy()
 
-            ttk.Button(dialog, text="Guardar", command=guardar).grid(row=6, column=0, columnspan=2, pady=15)
+            ttk.Button(dialog, text="Guardar", command=guardar).grid(row=7, column=0, columnspan=2, pady=15)
 
         def nuevo():
             _dialogo()
@@ -803,6 +828,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Personal de estación")
         window.geometry("720x440")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "nombre", "dotacion", "activo"), show="headings")
         for column, title, width in (("id", "ID", 55), ("nombre", "Nombre", 300), ("dotacion", "Dotación", 100), ("activo", "Activo", 80)):
@@ -908,6 +937,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Destinatarios de informes")
         window.geometry("720x380")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("id", "nombre", "email", "activo"), show="headings")
         for column, title, width in (("id", "ID", 55), ("nombre", "Nombre", 220), ("email", "Correo", 300), ("activo", "Activo", 80)):
@@ -1083,6 +1116,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Registros eliminados")
         window.geometry("1100x480")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("tipo", "id", "fecha", "legajo", "empleado", "dotacion", "detalle", "observaciones"), show="headings")
         for column, title, width in (
@@ -1143,6 +1180,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Copias de seguridad")
         window.geometry("720x420")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         tree = ttk.Treeview(window, columns=("nombre", "tamano", "fecha"), show="headings")
         for column, title, width in (("nombre", "Archivo", 300), ("tamano", "Tamaño", 110), ("fecha", "Fecha", 160)):
@@ -1252,6 +1293,10 @@ class AdminViews:
         window = tk.Toplevel(self.app.root)
         window.title("Auditoría")
         window.geometry("1050x500")
+        try:
+            window.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(window)
         top = ttk.Frame(window)
         top.pack(fill="x", padx=10, pady=8)

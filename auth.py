@@ -24,6 +24,7 @@ PERMISOS_BASE = (
     "personalEstacion.importar", "personalEstacion.exportar",
     "destinatarios_informe.administrar", "sesion.configurar", "registros.recuperar", "registros.modificar",
     "backup.gestionar",
+    "reemplazos.ver", "reemplazos.asignar",
 )
 
 

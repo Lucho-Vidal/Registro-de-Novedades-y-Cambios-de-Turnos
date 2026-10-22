@@ -17,7 +17,7 @@ from config import (
 )
 from excel_store import get_windows_user
 from forms import FormsManager
-from tables import TablesManager
+from tables import TablesManager, COLUMNAS_DETALLE_NOVEDAD, COLUMNAS_DETALLE_CAMBIO
 from sqlite_store import SQLiteSheetAdapter
 from excel_migration import migrate_operational_sheet, migrate_empleados_sheet
 from excel_exporter import export_database, export_turnos_sin_cubrir
@@ -146,10 +146,12 @@ class FormularioExcelApp:
         self.table_cambios_frame = ttk.Frame(main_frame)
         self.table_frame = ttk.Frame(main_frame)
         self.dashboard_frame = ttk.Frame(main_frame)
+        self.ciclo_frame = ttk.Frame(main_frame)
         self.form_novedades_creado = False
         self.form_cambios_creado = False
         self.tabla_novedades_creada = False
         self.tabla_cambios_creada = False
+        self.vista_ciclo_creada = False
         self.table_frame.grid(row=0, column=0, padx=10, pady=10, sticky="w")
 
         self.root.grid_rowconfigure(0, weight=1) 
@@ -166,6 +168,8 @@ class FormularioExcelApp:
             self.table_frame.grid_forget()
             self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
             self.dashboard_manager.crear_dashboard()
+        elif self.tiene_permiso("reemplazos.ver"):
+            self.toggle_view("ciclo")
         else:
             self.current_view = "table"
             self.table_frame.grid_forget()
@@ -346,6 +350,9 @@ class FormularioExcelApp:
             self.archivo_menu.add_command(label="Exportar a Excel", command=self.exportar_excel)
         if self.tiene_permiso("novedades.exportar"):
             self.archivo_menu.add_command(label="Exportar turnos sin cubrir", command=self.exportar_turnos_sin_cubrir)
+        if self.tiene_permiso("reemplazos.ver"):
+            self.archivo_menu.add_separator()
+            self.archivo_menu.add_command(label="Personal de Ciclo", command=lambda: self.toggle_view("ciclo"))
 
         # Menú Opciones
         self.opciones_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -445,7 +452,7 @@ class FormularioExcelApp:
             self._set_label_carga("Actualizando base de datos...")
             self.actualizar_cache_base()
 
-            if hasattr(self, "tabla_novedades") or hasattr(self, "table_cambios"):
+            if hasattr(self, "tabla_novedades") or hasattr(self, "table_cambios") or getattr(self, "vista_ciclo_creada", False):
                 self.tables_manager.actualizar_tabla()
             if self.current_view == 'table':
                 print("Novedades actualizadas correctamente.")
@@ -453,6 +460,8 @@ class FormularioExcelApp:
             elif self.current_view == 'table_cambios':
                 print("Cambios de turnos actualizados correctamente.")
                 self._set_label_carga("Cambios de turnos actualizados correctamente.")
+            elif self.current_view == 'ciclo':
+                self._set_label_carga("Personal de ciclo actualizado correctamente.")
             elif self.current_view == 'dashboard':
                 self.dashboard_manager.actualizar_dashboard()
                 self._set_label_carga("Panel de control actualizado.")
@@ -618,35 +627,14 @@ class FormularioExcelApp:
             fila = self.records_service.obtener_novedad(record_id)
             if not fila:
                 return
-            columnas = [
-                "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD",
-                "DOTACION", "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
-                "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
-            ]
-            valores = (
-                fila["id"], fila["registrado_en"], fila["legajo"], fila["apellidos_nombres"],
-                fila["especialidad"], fila["dotacion"], fila["turnos"], fila["franco"],
-                fila["novedad"], fila["fecha_inicio"], fila["fecha_fin"],
-                fila["referencia_estacion"], fila["supervisor"], fila["observaciones"],
-                fila["usuario_windows"],
-            )
+            columnas = COLUMNAS_DETALLE_NOVEDAD
+            valores = self.tables_manager._valores_novedad(fila)
         else:
             fila = self.records_service.obtener_cambio(record_id)
             if not fila:
                 return
-            columnas = [
-                "ID", "Fecha de registro", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION",
-                "TURNOS", "FRANCO", "LEGAJO2", "APELLIDOS Y NOMBRES2", "ESPECIALIDAD2", "DOTACION2",
-                "TURNOS2", "FRANCO2", "Fecha de Cambio de Turno", "REFERENCIA ESTACION", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
-            ]
-            valores = (
-                fila["id"], fila["registrado_en"], fila["legajo_1"], fila["apellidos_nombres_1"],
-                fila["especialidad_1"], fila["dotacion_1"], fila["turnos_1"], fila["franco_1"],
-                fila["legajo_2"], fila["apellidos_nombres_2"], fila["especialidad_2"], fila["dotacion_2"],
-                fila["turnos_2"], fila["franco_2"], fila["fecha_cambio"],
-                fila["referencia_estacion"], fila["supervisor"], fila["observaciones"],
-                fila["usuario_windows"],
-            )
+            columnas = COLUMNAS_DETALLE_CAMBIO
+            valores = self.tables_manager._valores_cambio(fila)
         self.tables_manager.mostrar_modal_detalle(valores, columnas, vista)
 
     def _mostrar_toast(self, texto):
@@ -956,7 +944,7 @@ class FormularioExcelApp:
             return "flatly"
 
     def toggle_view(self, target_view=None, edicion=False):
-        """Alterna entre las vistas (panel, tabla/formulario)."""
+        """Alterna entre las vistas (panel, tabla/formulario, personal de ciclo)."""
         self.renovar_sesion()
         target_view = target_view or "table"
         if not edicion and hasattr(self, "forms_manager") and getattr(self.forms_manager, "edicion", None):
@@ -966,10 +954,21 @@ class FormularioExcelApp:
             "form": "novedades.crear",
             "table_cambios": "cambios_turno.ver",
             "form_cambios": "cambios_turno.crear",
+            "ciclo": "reemplazos.ver",
         }
         if edicion:
-            permiso_necesario = "novedades.editar" if target_view == "form" else "cambios_turno.editar"
-            if not (self.tiene_permiso(permiso_necesario) or self.tiene_permiso("registros.modificar")):
+            if target_view == "form":
+                tiene_perm = (
+                    self.tiene_permiso("novedades.editar")
+                    or self.tiene_permiso("reemplazos.asignar")
+                    or self.tiene_permiso("registros.modificar")
+                )
+            else:
+                tiene_perm = (
+                    self.tiene_permiso("cambios_turno.editar")
+                    or self.tiene_permiso("registros.modificar")
+                )
+            if not tiene_perm:
                 messagebox.showerror("Acceso Denegado", "No tiene permisos para editar este registro.", parent=self.root)
                 return False
         elif target_view != "dashboard" and not self.requerir_permiso(required_permissions.get(target_view, "")):
@@ -979,6 +978,7 @@ class FormularioExcelApp:
         self.form_cambios_frame.grid_forget()
         self.table_cambios_frame.grid_forget()
         self.dashboard_frame.grid_forget()
+        self.ciclo_frame.grid_forget()
 
         self.current_view = target_view
 
@@ -998,6 +998,12 @@ class FormularioExcelApp:
                 self.tables_manager.crear_tabla_cambios()
             else:
                 self.tables_manager.cargar_datos_completos_cambios()
+        elif self.current_view == "ciclo":
+            self.ciclo_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+            if not self.vista_ciclo_creada:
+                self.tables_manager.crear_vista_personal_ciclo()
+            else:
+                self.tables_manager.actualizar_vista_personal_ciclo()
         elif self.current_view == "dashboard":
             self.dashboard_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
             self.dashboard_manager.actualizar_dashboard()
@@ -1023,7 +1029,7 @@ class FormularioExcelApp:
         """Carga las dotaciones activas y actualiza las tablas de filtros."""
         self.dotaciones = self.db_store.sincronizar_dotaciones()
         self.DOTACIONES = ["Todas", *self.dotaciones]
-        for tree_name in ("dotacion_filter_novedades", "dotacion_filter_cambios"):
+        for tree_name in ("dotacion_filter_novedades", "dotacion_filter_cambios", "dotacion_filter_ciclo"):
             tree = getattr(self, tree_name, None)
             if tree is not None:
                 tree.configure(values=self.DOTACIONES)

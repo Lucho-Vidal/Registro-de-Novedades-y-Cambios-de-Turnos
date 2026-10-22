@@ -913,3 +913,281 @@ class TestTurnosSinCubrirYTiposNovedad:
         assert app.fecha_fin_novedad_var.get() == "20/03/2026"
 
 
+class TestReemplazosYPersonalCiclo:
+    """Pruebas para asignación de reemplazos CICLO, no solapamiento, estado de cobertura,
+    vista de Personal de Ciclo y calendario mensual.
+    """
+
+    def test_es_turno_ciclo_y_validar_tramos_reemplazo(self):
+        import validators
+        assert validators.es_turno_ciclo("CICLO 1") is True
+        assert validators.es_turno_ciclo("ciclo mañana") is True
+        assert validators.es_turno_ciclo("  Ciclo  ") is True
+        assert validators.es_turno_ciclo("06:00 A 14:00") is False
+        assert validators.es_turno_ciclo("") is False
+
+        # Titular con turno CICLO no puede tener reemplazos
+        ok, err = validators.validar_tramos_reemplazo(
+            "01/03/2026", "10/03/2026", "CICLO 2",
+            [{"legajo_reemplazo": 500, "apellidos_nombres_reemplazo": "Relevo Uno", "fecha_inicio": "01/03/2026", "fecha_fin": "10/03/2026"}],
+        )
+        assert ok is False
+        assert "CICLO" in err
+
+        # Dos tramos secuenciales sin solaparse dentro del rango -> Válido
+        tramos_ok = [
+            {"legajo_reemplazo": 501, "apellidos_nombres_reemplazo": "Relevo Uno", "fecha_inicio": "01/03/2026", "fecha_fin": "05/03/2026"},
+            {"legajo_reemplazo": 502, "apellidos_nombres_reemplazo": "Relevo Dos", "fecha_inicio": "06/03/2026", "fecha_fin": "10/03/2026"},
+        ]
+        ok, err = validators.validar_tramos_reemplazo("01/03/2026", "10/03/2026", "T1", tramos_ok)
+        assert ok is True
+        assert err is None
+
+        # Dos tramos solapados -> Inválido
+        tramos_solapados = [
+            {"legajo_reemplazo": 501, "apellidos_nombres_reemplazo": "Relevo Uno", "fecha_inicio": "01/03/2026", "fecha_fin": "06/03/2026"},
+            {"legajo_reemplazo": 502, "apellidos_nombres_reemplazo": "Relevo Dos", "fecha_inicio": "06/03/2026", "fecha_fin": "10/03/2026"},
+        ]
+        ok, err = validators.validar_tramos_reemplazo("01/03/2026", "10/03/2026", "T1", tramos_solapados)
+        assert ok is False
+        assert "solapa" in err.lower()
+
+        # Tramo fuera del rango de la novedad -> Inválido
+        tramos_fuera = [
+            {"legajo_reemplazo": 501, "apellidos_nombres_reemplazo": "Relevo Uno", "fecha_inicio": "01/03/2026", "fecha_fin": "12/03/2026"},
+        ]
+        ok, err = validators.validar_tramos_reemplazo("01/03/2026", "10/03/2026", "T1", tramos_fuera)
+        assert ok is False
+        assert "superar" in err.lower()
+
+    def test_flujo_completo_reemplazos_cobertura_y_calendario(self, tmp_path):
+        import openpyxl
+        from sqlite_store import SQLiteStore
+        from records_service import RecordsService
+        from excel_exporter import export_database, export_turnos_sin_cubrir
+        from datetime import datetime
+
+        db_file = tmp_path / "test_ciclo.sqlite"
+        store = SQLiteStore(str(db_file))
+        store.initialize()
+        records = RecordsService(store)
+        records.crear_tipo("Enfermedad", dias=0, exportar_descubierto=1)
+        ahora_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Crear empleados: titulares y personal de CICLO
+        for leg, nom, esp, dot, tur, fra in (
+            (100, "Titular Uno", "Guarda", "PC", "06:00 A 14:00", "Domingo"),
+            (101, "Titular Dos", "Guarda", "PC", "14:00 A 22:00", "Sabado"),
+            (201, "Ciclo Gomez", "Guarda", "PC", "CICLO 1", "Lunes"),
+            (202, "Ciclo Perez", "Guarda", "PC", "CICLO 2", "Martes"),
+            (203, "Ciclo OtraEsp", "Conductor", "PC", "CICLO 3", "Miercoles"),
+            (204, "Ciclo OtraDot", "Guarda", "TY", "CICLO 4", "Jueves"),
+        ):
+            records.crear_empleado({
+                "legajo": leg,
+                "apellidos_nombres": nom,
+                "especialidad": esp,
+                "dotacion": dot,
+                "turnos": tur,
+                "franco": fra,
+            })
+
+        # 1. Filtrado de candidatos CICLO: misma dotación (PC), misma especialidad (Guarda) y turno CICLO*
+        candidatos = records.obtener_candidatos_ciclo("PC", "Guarda")
+        legajos_cand = [c["legajo"] for c in candidatos]
+        assert set(legajos_cand) == {201, 202}
+
+        # 2. Insertar dos novedades para titulares
+        with store.write_transaction() as conn:
+            conn.execute(
+                """INSERT INTO novedades (id, registrado_en, legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, novedad, fecha_inicio, fecha_fin, referencia_estacion, supervisor, activo)
+                   VALUES (1, ?, 100, 'Titular Uno', 'Guarda', 'PC', '06:00 A 14:00', 'Domingo', 'Enfermedad', '01/03/2026', '10/03/2026', 'Retiro', 'Sup', 1)""",
+                (ahora_iso,),
+            )
+            conn.execute(
+                """INSERT INTO novedades (id, registrado_en, legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, novedad, fecha_inicio, fecha_fin, referencia_estacion, supervisor, activo)
+                   VALUES (2, ?, 101, 'Titular Dos', 'Guarda', 'PC', '14:00 A 22:00', 'Sabado', 'Enfermedad', '04/03/2026', '08/03/2026', 'Retiro', 'Sup', 1)""",
+                (ahora_iso,),
+            )
+
+        # Inicialmente novedad #1 no está cubierta
+        est, det = records.calcular_estado_cobertura(1, "01/03/2026", "10/03/2026", "06:00 A 14:00")
+        assert est == "No"
+
+        # 3. Asignar cobertura parcial (01/03 al 05/03 con 201)
+        records.guardar_reemplazos_novedad(
+            1,
+            [{"legajo_reemplazo": 201, "apellidos_nombres_reemplazo": "Ciclo Gomez", "turnos_reemplazo": "CICLO 1", "franco_reemplazo": "Lunes", "fecha_inicio": "01/03/2026", "fecha_fin": "05/03/2026"}],
+        )
+        est, det = records.calcular_estado_cobertura(1, "01/03/2026", "10/03/2026", "06:00 A 14:00")
+        assert est == "Parcial"
+        assert "Ciclo Gomez" in det
+
+        # 4. Intentar asignar a Ciclo Gomez (201) en la novedad #2 (04/03 al 08/03) -> debe fallar por solapamiento
+        with pytest.raises(ValueError, match="ya reemplaza a"):
+            records.guardar_reemplazos_novedad(
+                2,
+                [{"legajo_reemplazo": 201, "apellidos_nombres_reemplazo": "Ciclo Gomez", "turnos_reemplazo": "CICLO 1", "franco_reemplazo": "Lunes", "fecha_inicio": "04/03/2026", "fecha_fin": "08/03/2026"}],
+            )
+
+        # 5. Completar la cobertura de la novedad #1 con Ciclo Perez (202) del 06/03 al 10/03 -> Cobertura total ("Sí")
+        records.guardar_reemplazos_novedad(
+            1,
+            [
+                {"legajo_reemplazo": 201, "apellidos_nombres_reemplazo": "Ciclo Gomez", "turnos_reemplazo": "CICLO 1", "franco_reemplazo": "Lunes", "fecha_inicio": "01/03/2026", "fecha_fin": "05/03/2026"},
+                {"legajo_reemplazo": 202, "apellidos_nombres_reemplazo": "Ciclo Perez", "turnos_reemplazo": "CICLO 2", "franco_reemplazo": "Martes", "fecha_inicio": "06/03/2026", "fecha_fin": "10/03/2026"},
+            ],
+        )
+        est, det = records.calcular_estado_cobertura(1, "01/03/2026", "10/03/2026", "06:00 A 14:00")
+        assert est == "Sí"
+
+        # 6. Estado de Personal de Ciclo el 03/03/2026 (201 ocupado reemplazando a 100, 202 libre)
+        estado_ciclo = records.obtener_estado_personal_ciclo("03/03/2026", dotacion="PC")
+        legajos_ocupados = [e["legajo"] for e in estado_ciclo["ocupados"]]
+        legajos_libres = [e["legajo"] for e in estado_ciclo["libres"]]
+        assert 201 in legajos_ocupados
+        assert 202 in legajos_libres
+        assert estado_ciclo["ocupados"][0]["reemplazando_legajo"] == 100
+
+        # 7. Calendario mensual de Ciclo Gomez (201) para Marzo 2026 (31 días)
+        cal = records.obtener_calendario_mensual_ciclo(201, 2026, 3)
+        assert len(cal) == 31
+        # Del 01/03 al 05/03 reemplaza a Titular Uno (legajo 100)
+        for d in cal[:5]:
+            assert d["reemplazando_legajo"] == 100
+            assert "Titular Uno" in d["reemplazando_nombre"]
+        # El 06/03 ya no tiene reemplazo asignado
+        assert cal[5]["reemplazando_legajo"] is None
+
+        # 8. Exportaciones incluyen CUBIERTO y REEMPLAZO(S)
+        out_sin_cubrir = tmp_path / "sin_cubrir_cob.xlsx"
+        export_turnos_sin_cubrir(records, str(out_sin_cubrir), "03/03/2026", dotacion="PC")
+        wb_sc = openpyxl.load_workbook(str(out_sin_cubrir))
+        ws_sc = wb_sc["Turnos Sin Cubrir"]
+        headers_sc = [c.value for c in ws_sc[1]]
+        assert "CUBIERTO" in headers_sc
+        assert "REEMPLAZO" in headers_sc
+        vals_sc = [c.value for c in ws_sc[2]]
+        assert "Sí" in vals_sc
+
+        out_db = tmp_path / "db_export.xlsx"
+        export_database(store, str(out_db), tables=["NOVEDADES"])
+        wb_db = openpyxl.load_workbook(str(out_db))
+        ws_db = wb_db["NOVEDADES"]
+        headers_db = [c.value for c in ws_db[1]]
+        assert "CUBIERTO" in headers_db
+        assert "REEMPLAZOS" in headers_db
+
+    def test_actualizar_fecha_fin_solo_observacion(self, tmp_path):
+        from sqlite_store import SQLiteStore
+        from records_service import RecordsService
+
+        db_path = tmp_path / "test_obs.sqlite"
+        store = SQLiteStore(str(db_path))
+        store.initialize()
+        records = RecordsService(store)
+
+        nov_id = store.insert_novedad([
+            1, "2026-03-01 10:00:00", 100, "Titular Uno", "CONDUCTOR", "PC",
+            "06:00 A 14:00", "Lunes", "Enfermedad", "01/03/2026", None,
+            "Plaza C", "Sup Uno", "Obs inicial", "win_user", None
+        ])
+
+        # Actualizar sólo observación sin poner fecha fin
+        records.actualizar_fecha_fin_novedad(nov_id, "", nueva_observacion="Seguimiento médico pendiente")
+        nov = records.obtener_novedad(nov_id)
+        assert nov["fecha_fin"] is None
+        assert "Obs inicial" in nov["observaciones"]
+        assert "Seguimiento médico pendiente" in nov["observaciones"]
+
+        # Si no se envía ni fecha fin ni nueva observación, debe fallar
+        with pytest.raises(ValueError, match="Debe ingresar la fecha de fin o una observación"):
+            records.actualizar_fecha_fin_novedad(nov_id, "", nueva_observacion="")
+
+    def test_empleados_franco_horario_y_filtros_ciclo(self, tmp_path):
+        from sqlite_store import SQLiteStore
+        from records_service import RecordsService
+
+        db_path = tmp_path / "test_ciclo.sqlite"
+        store = SQLiteStore(str(db_path))
+        store.initialize()
+        records = RecordsService(store)
+
+        # 1. Crear empleado ciclo con franco horario
+        emp_id = records.crear_empleado({
+            "legajo": 501,
+            "apellidos_nombres": "Ciclo Conductor",
+            "especialidad": "Conductor Eléctrico",
+            "dotacion": "PC",
+            "turnos": "CICLO 1",
+            "franco": "Domingo",
+            "franco_horario": "14:00",
+        })
+
+        emp_guarda_id = records.crear_empleado({
+            "legajo": 502,
+            "apellidos_nombres": "Ciclo Guarda",
+            "especialidad": "Guarda Eléctrico",
+            "dotacion": "PC",
+            "turnos": "CICLO 2",
+            "franco": "Lunes",
+            "franco_horario": "22:00",
+        })
+
+        base_rows = store.get_base_rows()
+        # Verificar que get_base_rows contiene franco_horario
+        row_501 = [r for r in base_rows if r[0] == 501][0]
+        assert row_501[6] == "14:00"
+
+        # 2. Actualizar empleado y su franco horario
+        records.actualizar_empleado(emp_id, {
+            "legajo": 501,
+            "apellidos_nombres": "Ciclo Conductor",
+            "especialidad": "Conductor Eléctrico",
+            "dotacion": "PC",
+            "turnos": "CICLO 1",
+            "franco": "Domingo",
+            "franco_horario": "16:00",
+        })
+        base_rows2 = store.get_base_rows()
+        row_501_act = [r for r in base_rows2 if r[0] == 501][0]
+        assert row_501_act[6] == "16:00"
+
+        # 3. Filtrar por especialidad en personal de ciclo
+        res_conductor = records.obtener_estado_personal_ciclo("01/03/2026", dotacion="PC", especialidad="Conductor Eléctrico")
+        libres_conductores = [e["legajo"] for e in res_conductor["libres"]]
+        assert 501 in libres_conductores
+        assert 502 not in libres_conductores
+
+        res_guarda = records.obtener_estado_personal_ciclo("01/03/2026", dotacion="PC", especialidad="Guarda Eléctrico")
+        libres_guardas = [e["legajo"] for e in res_guarda["libres"]]
+        assert 502 in libres_guardas
+        assert 501 not in libres_guardas
+
+        # 4. Calendario mensual: verificar que el domingo muestra Franco (desde 16:00) y novedad_id está presente al reemplazar
+        # Insertar una novedad y asignarle reemplazo del 02/03 al 05/03 a 501
+        nov_id = store.insert_novedad([
+            10, "2026-03-01 10:00:00", 999, "Titular Conductor", "Conductor Eléctrico", "PC",
+            "06:00 A 14:00", "Lunes", "Enfermedad", "02/03/2026", "05/03/2026",
+            "Plaza C", "Sup", "Obs", "win", None
+        ])
+        records.guardar_reemplazos_novedad(
+            10,
+            [{"legajo_reemplazo": 501, "apellidos_nombres_reemplazo": "Ciclo Conductor", "turnos_reemplazo": "CICLO 1", "franco_reemplazo": "Domingo", "fecha_inicio": "02/03/2026", "fecha_fin": "05/03/2026"}]
+        )
+
+        cal = records.obtener_calendario_mensual_ciclo(501, 2026, 3)
+        # 01/03/2026 fue Domingo -> no reemplaza, debe ser Franco (desde 16:00)
+        assert cal[0]["fecha"] == "01/03/2026"
+        assert cal[0]["estado"] == "Franco (desde 16:00)"
+        assert cal[0]["novedad_id"] == ""
+
+        # 02/03/2026 al 05/03/2026 -> Reemplazando con novedad_id 10
+        for d in cal[1:5]:
+            assert d["estado"] == "Reemplazando"
+            assert d["novedad_id"] == 10
+            assert d["reemplazando_legajo"] == 999
+
+
+
+

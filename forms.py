@@ -41,6 +41,416 @@ class FormsManager:
         self.app = app
         self.edicion = None
         self._personal_estacion_lista_original = self.app.nombres_personal_estacion() if hasattr(self.app, "nombres_personal_estacion") else []
+        self.tramos_reemplazo = []
+        self._candidatos_ciclo_map = {}
+        self._candidatos_ciclo_lista = []
+
+    def _puede_asignar_reemplazo(self):
+        if not hasattr(self.app, "tiene_permiso"):
+            return True
+        return bool(self.app.tiene_permiso("reemplazos.asignar") or self.app.tiene_permiso("registros.modificar"))
+
+    def _formatear_candidato_ciclo(self, c):
+        leg = c.get("legajo")
+        nom = c.get("apellidos_nombres") or ""
+        tur = c.get("turnos") or ""
+        fra = c.get("franco") or ""
+        return f"{leg} - {nom} ({tur} - Franco: {fra})"
+
+    def _sincronizar_fechas_reemplazo_default(self):
+        """Sincroniza las fechas de inicio/fin del selector de reemplazo cuando aún no hay tramos agregados."""
+        if not hasattr(self, "reemplazo_desde_entry") or not hasattr(self, "reemplazo_hasta_entry"):
+            return
+        if self.tramos_reemplazo:
+            return
+        try:
+            f_ini = self.app.fecha_inicio_novedad_entry.entry.get().strip() if hasattr(self.app, "fecha_inicio_novedad_entry") else ""
+            f_fin = self.app.fecha_fin_novedad_entry.entry.get().strip() if hasattr(self.app, "fecha_fin_novedad_entry") else ""
+            if f_ini:
+                self.reemplazo_desde_entry.entry.delete(0, tk.END)
+                self.reemplazo_desde_entry.entry.insert(0, f_ini)
+            self.reemplazo_hasta_entry.entry.delete(0, tk.END)
+            if f_fin and f_fin != "-":
+                self.reemplazo_hasta_entry.entry.insert(0, f_fin)
+        except Exception:
+            pass
+
+    def _limpiar_fecha_fin_reemplazo(self):
+        if hasattr(self, "reemplazo_hasta_entry"):
+            self.reemplazo_hasta_entry.entry.delete(0, tk.END)
+
+    def _renderizar_tramos_reemplazo(self):
+        if not hasattr(self, "reemplazos_tree"):
+            return
+        for item in self.reemplazos_tree.get_children():
+            self.reemplazos_tree.delete(item)
+        for idx, t in enumerate(self.tramos_reemplazo):
+            self.reemplazos_tree.insert(
+                "", "end", iid=str(idx),
+                values=(
+                    t.get("legajo_reemplazo"),
+                    t.get("apellidos_nombres_reemplazo"),
+                    t.get("turnos_reemplazo") or "-",
+                    t.get("franco_reemplazo") or "-",
+                    t.get("fecha_inicio") or "-",
+                    t.get("fecha_fin") or "Sin fecha fin",
+                ),
+            )
+
+    def _configurar_controles_reemplazo(self, habilitar):
+        if not hasattr(self, "reemplazo_combo"):
+            return
+        estado_combo = "normal" if habilitar else "disabled"
+        estado_btn = "normal" if habilitar else "disabled"
+        self.reemplazo_combo.config(state=estado_combo)
+        self.reemplazo_desde_entry.entry.config(state=estado_btn)
+        if hasattr(self.reemplazo_desde_entry, "button"):
+            self.reemplazo_desde_entry.button.config(state=estado_btn)
+        self.reemplazo_hasta_entry.entry.config(state=estado_btn)
+        if hasattr(self.reemplazo_hasta_entry, "button"):
+            self.reemplazo_hasta_entry.button.config(state=estado_btn)
+        self.limpiar_reemplazo_hasta_btn.config(state=estado_btn)
+        self.agregar_reemplazo_btn.config(state=estado_btn)
+        if hasattr(self, "modificar_reemplazo_btn"):
+            self.modificar_reemplazo_btn.config(state=estado_btn)
+        self.quitar_reemplazo_btn.config(state=estado_btn)
+
+    def _actualizar_candidatos_reemplazo(self, limpiar_tramos=True):
+        """Actualiza la lista del combobox de reemplazos según dotación, especialidad y turno del titular."""
+        if limpiar_tramos:
+            self.tramos_reemplazo = []
+            self._renderizar_tramos_reemplazo()
+        if hasattr(self, "reemplazo_combo_var"):
+            self.reemplazo_combo_var.set("")
+
+        turno_titular = self.app.turnos_var.get().strip() if hasattr(self.app, "turnos_var") else ""
+        dotacion = self.app.dotacion_var.get().strip() if hasattr(self.app, "dotacion_var") else ""
+        especialidad = self.app.especialidad_var.get().strip() if hasattr(self.app, "especialidad_var") else ""
+        legajo_tit = self.app.legajo_var.get().strip() if hasattr(self.app, "legajo_var") else None
+
+        if validators.es_turno_ciclo(turno_titular):
+            self._candidatos_ciclo_map = {}
+            self._candidatos_ciclo_lista = []
+            if hasattr(self, "reemplazo_combo"):
+                self.reemplazo_combo["values"] = []
+                self._configurar_controles_reemplazo(False)
+                self.reemplazo_estado_label.config(
+                    text="El personal con turno CICLO no puede tener reemplazo.",
+                    foreground="#d9534f",
+                )
+            return
+
+        candidatos = []
+        if hasattr(self.app, "records_service") and self.app.records_service is not None and dotacion and especialidad:
+            try:
+                candidatos = self.app.records_service.obtener_candidatos_ciclo(
+                    dotacion, especialidad, excluir_legajo=legajo_tit
+                )
+            except Exception:
+                candidatos = []
+
+        self._candidatos_ciclo_map = {}
+        self._candidatos_ciclo_lista = []
+        for c in candidatos:
+            etiqueta = self._formatear_candidato_ciclo(c)
+            self._candidatos_ciclo_map[etiqueta] = c
+            self._candidatos_ciclo_lista.append(etiqueta)
+
+        if hasattr(self, "reemplazo_combo"):
+            self.reemplazo_combo["values"] = self._candidatos_ciclo_lista
+            puede = self._puede_asignar_reemplazo()
+            self._configurar_controles_reemplazo(puede)
+            if not puede:
+                self.reemplazo_estado_label.config(
+                    text="Su rol no posee el permiso 'reemplazos.asignar' (solo lectura).",
+                    foreground="#6c757d",
+                )
+            elif not dotacion or not especialidad:
+                self.reemplazo_estado_label.config(
+                    text="Seleccione un empleado titular para filtrar el personal de CICLO disponible.",
+                    foreground="#6c757d",
+                )
+            elif not self._candidatos_ciclo_lista:
+                self.reemplazo_estado_label.config(
+                    text=f"No hay personal de CICLO activo para Dotación '{dotacion}' y Especialidad '{especialidad}'.",
+                    foreground="#d9534f",
+                )
+            else:
+                self.reemplazo_estado_label.config(
+                    text=f"{len(self._candidatos_ciclo_lista)} candidato(s) de CICLO para {dotacion} - {especialidad}.",
+                    foreground="#198754",
+                )
+            self._sincronizar_fechas_reemplazo_default()
+
+    def _filtrar_combobox_reemplazo(self, event=None):
+        if event is not None and event.keysym in ("Down", "Up", "Return", "Escape", "Tab", "Left", "Right", "Home", "End"):
+            return
+        if not hasattr(self, "reemplazo_combo"):
+            return
+        texto = self.reemplazo_combo.get().strip().lower()
+        if not texto:
+            self.reemplazo_combo["values"] = self._candidatos_ciclo_lista
+        else:
+            self.reemplazo_combo["values"] = [v for v in self._candidatos_ciclo_lista if texto in v.lower()]
+
+    def _resolver_candidato_seleccionado(self, texto):
+        texto = (texto or "").strip()
+        if not texto:
+            return None
+        if texto in self._candidatos_ciclo_map:
+            return self._candidatos_ciclo_map[texto]
+        for k, v in self._candidatos_ciclo_map.items():
+            if k.casefold() == texto.casefold():
+                return v
+        partes = texto.split("-", 1)
+        if partes[0].strip().isdigit():
+            leg_buscado = int(partes[0].strip())
+            for v in self._candidatos_ciclo_map.values():
+                if int(v["legajo"]) == leg_buscado:
+                    return v
+        return None
+
+    def agregar_tramo_reemplazo(self):
+        """Valida y agrega un tramo de reemplazo a la lista temporal del formulario."""
+        if not self._puede_asignar_reemplazo():
+            self.mostrar_error_novedades("No tiene permisos para asignar reemplazos.")
+            return
+        turno_titular = self.app.turnos_var.get().strip()
+        if validators.es_turno_ciclo(turno_titular):
+            self.mostrar_error_novedades("El personal cuyo turno comienza con CICLO no puede tener reemplazo.")
+            return
+        seleccion = self.reemplazo_combo_var.get().strip()
+        cand = self._resolver_candidato_seleccionado(seleccion)
+        if not cand:
+            self.mostrar_error_novedades("Seleccione un personal de CICLO válido del listado de reemplazos.")
+            return
+
+        f_ini_nov = self.app.fecha_inicio_novedad_entry.entry.get().strip()
+        f_fin_nov = self.app.fecha_fin_novedad_entry.entry.get().strip()
+        f_desde = self.reemplazo_desde_entry.entry.get().strip() or f_ini_nov
+        f_hasta = self.reemplazo_hasta_entry.entry.get().strip() or (f_fin_nov if f_fin_nov and f_fin_nov != "-" else "")
+
+        nuevo_tramo = {
+            "legajo_reemplazo": int(cand["legajo"]),
+            "apellidos_nombres_reemplazo": cand["apellidos_nombres"],
+            "turnos_reemplazo": cand.get("turnos") or "",
+            "franco_reemplazo": cand.get("franco") or "",
+            "fecha_inicio": f_desde,
+            "fecha_fin": f_hasta or None,
+        }
+        tramos_prueba = list(self.tramos_reemplazo) + [nuevo_tramo]
+        es_valido, err = validators.validar_tramos_reemplazo(
+            f_ini_nov, f_fin_nov or None, turno_titular, tramos_prueba
+        )
+        if not es_valido:
+            self.mostrar_error_novedades(err)
+            return
+
+        excluir_id = self.edicion["id"] if (self.edicion and self.edicion.get("tipo") == "novedad") else None
+        if hasattr(self.app, "records_service") and self.app.records_service is not None:
+            try:
+                self.app.records_service.validar_disponibilidad_ciclo(
+                    nuevo_tramo["legajo_reemplazo"],
+                    nuevo_tramo["fecha_inicio"],
+                    nuevo_tramo["fecha_fin"],
+                    excluir_novedad_id=excluir_id,
+                )
+            except ValueError as e:
+                self.mostrar_error_novedades(str(e))
+                return
+
+        self.tramos_reemplazo.append(nuevo_tramo)
+        self._renderizar_tramos_reemplazo()
+        self.reemplazo_combo_var.set("")
+        if self.app.error_novedades_label is not None:
+            self.app.error_novedades_label.config(text="")
+        # Si el tramo agregado tiene fecha_fin, sugerir el día siguiente para un eventual próximo tramo
+        if nuevo_tramo["fecha_fin"]:
+            try:
+                sig_dia = datetime.strptime(nuevo_tramo["fecha_fin"], "%d/%m/%Y") + timedelta(days=1)
+                self.reemplazo_desde_entry.entry.delete(0, tk.END)
+                self.reemplazo_desde_entry.entry.insert(0, sig_dia.strftime("%d/%m/%Y"))
+                self.reemplazo_hasta_entry.entry.delete(0, tk.END)
+                if f_fin_nov and f_fin_nov != "-":
+                    self.reemplazo_hasta_entry.entry.insert(0, f_fin_nov)
+            except Exception:
+                pass
+
+    def quitar_tramo_reemplazo(self):
+        """Elimina el tramo de reemplazo seleccionado en la tabla del formulario."""
+        if not hasattr(self, "reemplazos_tree"):
+            return
+        sel = self.reemplazos_tree.selection()
+        if not sel:
+            return
+        indices = sorted([int(i) for i in sel if str(i).isdigit()], reverse=True)
+        for idx in indices:
+            if 0 <= idx < len(self.tramos_reemplazo):
+                self.tramos_reemplazo.pop(idx)
+        self._renderizar_tramos_reemplazo()
+        self._sincronizar_fechas_reemplazo_default()
+
+    def _on_reemplazo_tree_select(self, event=None):
+        """Carga en los controles los datos del tramo de reemplazo seleccionado para facilitar su edición."""
+        if not hasattr(self, "reemplazos_tree"):
+            return
+        sel = self.reemplazos_tree.selection()
+        if not sel:
+            return
+        try:
+            idx = int(sel[0])
+            if 0 <= idx < len(self.tramos_reemplazo):
+                tramo = self.tramos_reemplazo[idx]
+                legajo = tramo.get("legajo_reemplazo")
+                nombre = tramo.get("apellidos_nombres_reemplazo")
+
+                # Seleccionar en combobox si existe el candidato
+                etiqueta = None
+                for k, v in self._candidatos_ciclo_map.items():
+                    if int(v.get("legajo", -1)) == int(legajo):
+                        etiqueta = k
+                        break
+                if etiqueta:
+                    self.reemplazo_combo_var.set(etiqueta)
+                else:
+                    self.reemplazo_combo_var.set(f"{legajo} - {nombre}")
+
+                f_ini = tramo.get("fecha_inicio") or ""
+                f_fin = tramo.get("fecha_fin") or ""
+                self.reemplazo_desde_entry.entry.delete(0, tk.END)
+                if f_ini:
+                    self.reemplazo_desde_entry.entry.insert(0, f_ini)
+                self.reemplazo_hasta_entry.entry.delete(0, tk.END)
+                if f_fin and f_fin != "-":
+                    self.reemplazo_hasta_entry.entry.insert(0, f_fin)
+        except Exception:
+            pass
+
+    def modificar_tramo_reemplazo(self):
+        """Modifica las fechas o personal del tramo de reemplazo seleccionado."""
+        if not self._puede_asignar_reemplazo():
+            self.mostrar_error_novedades("No tiene permisos para modificar reemplazos.")
+            return
+        if not hasattr(self, "reemplazos_tree"):
+            return
+        sel = self.reemplazos_tree.selection()
+        if not sel:
+            self.mostrar_error_novedades("Seleccione un tramo de la tabla de reemplazos para modificar.")
+            return
+        try:
+            idx = int(sel[0])
+            if not (0 <= idx < len(self.tramos_reemplazo)):
+                return
+        except Exception:
+            return
+
+        tramo_actual = self.tramos_reemplazo[idx]
+        turno_titular = self.app.turnos_var.get().strip()
+        if validators.es_turno_ciclo(turno_titular):
+            self.mostrar_error_novedades("El personal cuyo turno comienza con CICLO no puede tener reemplazo.")
+            return
+
+        seleccion = self.reemplazo_combo_var.get().strip()
+        cand = self._resolver_candidato_seleccionado(seleccion)
+
+        f_ini_nov = self.app.fecha_inicio_novedad_entry.entry.get().strip()
+        f_fin_nov = self.app.fecha_fin_novedad_entry.entry.get().strip()
+        f_desde = self.reemplazo_desde_entry.entry.get().strip() or f_ini_nov
+        f_hasta = self.reemplazo_hasta_entry.entry.get().strip() or (f_fin_nov if f_fin_nov and f_fin_nov != "-" else "")
+
+        tramo_modificado = dict(tramo_actual)
+        if cand:
+            tramo_modificado["legajo_reemplazo"] = int(cand["legajo"])
+            tramo_modificado["apellidos_nombres_reemplazo"] = cand["apellidos_nombres"]
+            tramo_modificado["turnos_reemplazo"] = cand.get("turnos") or ""
+            tramo_modificado["franco_reemplazo"] = cand.get("franco") or ""
+        tramo_modificado["fecha_inicio"] = f_desde
+        tramo_modificado["fecha_fin"] = f_hasta or None
+
+        # Validar solapamiento con los demás tramos
+        tramos_prueba = [dict(t) for i, t in enumerate(self.tramos_reemplazo) if i != idx] + [tramo_modificado]
+        es_valido, err = validators.validar_tramos_reemplazo(
+            f_ini_nov, f_fin_nov or None, turno_titular, tramos_prueba
+        )
+        if not es_valido:
+            self.mostrar_error_novedades(err)
+            return
+
+        excluir_id = self.edicion["id"] if (self.edicion and self.edicion.get("tipo") == "novedad") else None
+        if hasattr(self.app, "records_service") and self.app.records_service is not None:
+            try:
+                self.app.records_service.validar_disponibilidad_ciclo(
+                    tramo_modificado["legajo_reemplazo"],
+                    tramo_modificado["fecha_inicio"],
+                    tramo_modificado["fecha_fin"],
+                    excluir_novedad_id=excluir_id,
+                )
+            except ValueError as e:
+                self.mostrar_error_novedades(str(e))
+                return
+
+        self.tramos_reemplazo[idx] = tramo_modificado
+        self._renderizar_tramos_reemplazo()
+        if self.app.error_novedades_label is not None:
+            self.app.error_novedades_label.config(text="")
+
+    def _obtener_tramos_para_guardar(self, fecha_inicio_nov, fecha_fin_nov, turno_titular, excluir_novedad_id=None):
+        """Prepara y valida la lista de tramos de reemplazo antes de guardar la novedad.
+
+        Si el usuario seleccionó un candidato en el combobox pero no pulsó '+ Agregar reemplazo',
+        lo incorpora automáticamente como tramo. También ajusta tramos abiertos si la novedad
+        define ahora una fecha de fin.
+        """
+        if validators.es_turno_ciclo(turno_titular):
+            return [], None
+
+        tramos = [dict(t) for t in self.tramos_reemplazo]
+        seleccion = self.reemplazo_combo_var.get().strip() if hasattr(self, "reemplazo_combo_var") else ""
+        if seleccion:
+            cand = self._resolver_candidato_seleccionado(seleccion)
+            if not cand:
+                return None, "Seleccione un personal de CICLO válido del listado de reemplazos o limpie el campo."
+            f_desde = self.reemplazo_desde_entry.entry.get().strip() if hasattr(self, "reemplazo_desde_entry") else ""
+            f_hasta = self.reemplazo_hasta_entry.entry.get().strip() if hasattr(self, "reemplazo_hasta_entry") else ""
+            f_desde = f_desde or (fecha_inicio_nov or "")
+            f_hasta = f_hasta or (fecha_fin_nov if fecha_fin_nov and fecha_fin_nov != "-" else "")
+            tramos.append({
+                "legajo_reemplazo": int(cand["legajo"]),
+                "apellidos_nombres_reemplazo": cand["apellidos_nombres"],
+                "turnos_reemplazo": cand.get("turnos") or "",
+                "franco_reemplazo": cand.get("franco") or "",
+                "fecha_inicio": f_desde,
+                "fecha_fin": f_hasta or None,
+            })
+
+        # Si la novedad tiene fecha_fin y algún tramo previo estaba abierto (sin fecha_fin), acotarlo a fecha_fin_nov
+        if fecha_fin_nov and fecha_fin_nov != "-":
+            for t in tramos:
+                if not t.get("fecha_fin") or t.get("fecha_fin") == "-":
+                    t["fecha_fin"] = fecha_fin_nov
+
+        if not tramos:
+            return [], None
+
+        es_valido, err = validators.validar_tramos_reemplazo(
+            fecha_inicio_nov, fecha_fin_nov, turno_titular, tramos
+        )
+        if not es_valido:
+            return None, err
+
+        if hasattr(self.app, "records_service") and self.app.records_service is not None:
+            for t in tramos:
+                try:
+                    self.app.records_service.validar_disponibilidad_ciclo(
+                        t["legajo_reemplazo"],
+                        t["fecha_inicio"],
+                        t.get("fecha_fin"),
+                        excluir_novedad_id=excluir_novedad_id,
+                    )
+                except ValueError as e:
+                    return None, str(e)
+
+        return tramos, None
     
     def mostrar_modal(self, boton=1):
         """Muestra un modal para seleccionar personal por legajo.
@@ -66,6 +476,10 @@ class FormsManager:
         modal = tk.Toplevel(self.app.root)
         modal.title("Seleccionar Legajo")
         modal.geometry("1250x500")
+        try:
+            modal.state("zoomed")
+        except Exception:
+            pass
         self.app.aplicar_tema_ventana(modal)
         modal.transient(self.app.root)
         modal.grab_set()
@@ -150,6 +564,7 @@ class FormsManager:
                 self.app.dotacion_var.set(dotacion)
                 self.app.turnos_var.set(turnos)
                 self.app.franco_var.set(franco)
+                self._actualizar_candidatos_reemplazo(limpiar_tramos=True)
             elif boton == 2:
                 self.app.legajo_2_var.set(legajo_sap)
                 self.app.apellidos_nombres_2_var.set(apellido_nombre)
@@ -192,6 +607,7 @@ class FormsManager:
                     self.app.dotacion_var.set(row[3])
                     self.app.turnos_var.set(row[4])
                     self.app.franco_var.set(row[5])
+                    self._actualizar_candidatos_reemplazo(limpiar_tramos=True)
                 elif campo == 2:
                     self.app.apellidos_nombres_2_var.set(row[1])
                     self.app.especialidad_2_var.set(row[2])
@@ -225,12 +641,14 @@ class FormsManager:
         if self.app.error_novedades_label is not None:
             self.app.error_novedades_label.config(text="")
         self._restaurar_combobox_personal_estacion()
+        self._actualizar_candidatos_reemplazo(limpiar_tramos=True)
 
     def limpiar_fecha_fin_novedad(self):
         """Limpia el campo de fecha de fin de novedad."""
         if hasattr(self.app, "fecha_fin_novedad_entry"):
             self.app.fecha_fin_novedad_entry.entry.delete(0, tk.END)
             self.app.fecha_fin_novedad_var.set("")
+        self._sincronizar_fechas_reemplazo_default()
 
     def _calcular_y_asignar_fecha_fin(self, origen="tipo"):
         """Autocompleta la fecha fin según la cantidad de días configurada en el tipo de novedad,
@@ -240,11 +658,14 @@ class FormsManager:
         tipo_nombre = self.app.novedad_var.get().strip()
         info = getattr(self.app, "tipo_novedades_dict", {}).get(tipo_nombre)
         if not info:
+            self._sincronizar_fechas_reemplazo_default()
             return
         dias = info.get("dias", 0)
         if dias <= 0:
             if origen == "tipo":
                 self.limpiar_fecha_fin_novedad()
+            else:
+                self._sincronizar_fechas_reemplazo_default()
             return
 
         fecha_inicio_str = self.app.fecha_inicio_novedad_entry.entry.get().strip()
@@ -257,6 +678,7 @@ class FormsManager:
             self.app.fecha_fin_novedad_entry.entry.delete(0, tk.END)
             self.app.fecha_fin_novedad_entry.entry.insert(0, fecha_fin_str)
             self.app.fecha_fin_novedad_var.set(fecha_fin_str)
+            self._sincronizar_fechas_reemplazo_default()
         except Exception:
             pass
 
@@ -353,15 +775,33 @@ class FormsManager:
         if self.app.error_novedades_label is not None:
             self.app.error_novedades_label.config(text="")
 
+        # Cargar candidatos de ciclo y tramos de reemplazo existentes
+        self._actualizar_candidatos_reemplazo(limpiar_tramos=True)
+        try:
+            self.tramos_reemplazo = self.app.records_service.listar_reemplazos_por_novedad(record_id)
+        except Exception:
+            self.tramos_reemplazo = []
+        self._renderizar_tramos_reemplazo()
+
         if modo == "fecha_fin":
+            falta_fecha_fin = not fecha_fin_val
+            puede_editar_nov = self.app.tiene_permiso("novedades.editar") or self.app.tiene_permiso("registros.modificar")
+            puede_reemp = self._puede_asignar_reemplazo() and not validators.es_turno_ciclo(row["turnos"])
+            habilitar_fecha_fin = falta_fecha_fin and puede_editar_nov
+
             if hasattr(self, "titulo_novedades_label"):
-                self.titulo_novedades_label.config(text=f"Completar Fecha Fin - Novedad #{record_id}")
+                if habilitar_fecha_fin and puede_reemp:
+                    self.titulo_novedades_label.config(text=f"Completar Fecha Fin / Reemplazos - Novedad #{record_id}")
+                elif puede_reemp and not habilitar_fecha_fin:
+                    self.titulo_novedades_label.config(text=f"Gestionar Reemplazos - Novedad #{record_id}")
+                else:
+                    self.titulo_novedades_label.config(text=f"Completar Fecha Fin - Novedad #{record_id}")
             if hasattr(self, "aviso_edicion_novedades_label"):
                 self.aviso_edicion_novedades_label.config(
-                    text="Fuera del tiempo de edición: solo puede completarse la Fecha de Fin y agregar observaciones."
+                    text="Fuera del tiempo de edición: solo pueden actualizarse Fecha de Fin, observaciones adicionales y/o reemplazos."
                 )
             if hasattr(self, "guardar_novedades_btn"):
-                self.guardar_novedades_btn.config(text="Guardar Fecha Fin")
+                self.guardar_novedades_btn.config(text="Guardar actualización")
 
             # Deshabilitar edición de otros campos
             self.app.legajo_entry.config(state="disabled")
@@ -374,17 +814,24 @@ class FormsManager:
             self.app.referencia_estacion_novedades_entry.config(state="disabled")
             self.app.observaciones_novedades_text.config(state="disabled")
 
-            # Habilitar fecha fin y caja para agregar observaciones
-            self.app.fecha_fin_novedad_entry.entry.config(state="normal")
+            # Habilitar o deshabilitar fecha fin según corresponda
+            estado_ff = "normal" if habilitar_fecha_fin else "disabled"
+            self.app.fecha_fin_novedad_entry.entry.config(state=estado_ff)
             if hasattr(self.app.fecha_fin_novedad_entry, "button"):
-                self.app.fecha_fin_novedad_entry.button.config(state="normal")
+                self.app.fecha_fin_novedad_entry.button.config(state=estado_ff)
             if hasattr(self, "limpiar_fecha_fin_novedades_btn"):
-                self.limpiar_fecha_fin_novedades_btn.config(state="normal")
+                self.limpiar_fecha_fin_novedades_btn.config(state=estado_ff)
+
+            self._configurar_controles_reemplazo(puede_reemp)
 
             if hasattr(self, "label_nueva_obs") and hasattr(self, "nueva_observacion_text"):
-                self.label_nueva_obs.grid(row=11, column=0, sticky="w")
-                self.nueva_observacion_text.grid(row=12, column=0, columnspan=7, pady=5, sticky="w")
-                self.nueva_observacion_text.delete("1.0", "end")
+                if habilitar_fecha_fin:
+                    self.label_nueva_obs.grid(row=12, column=0, sticky="w")
+                    self.nueva_observacion_text.grid(row=13, column=0, columnspan=7, pady=5, sticky="w")
+                    self.nueva_observacion_text.delete("1.0", "end")
+                else:
+                    self.label_nueva_obs.grid_remove()
+                    self.nueva_observacion_text.grid_remove()
         else:
             if hasattr(self, "titulo_novedades_label"):
                 self.titulo_novedades_label.config(text=f"Editar Novedad #{record_id}")
@@ -520,20 +967,51 @@ class FormsManager:
                 combobox["values"] = self._personal_estacion_lista_original
 
     def guardar_datos_novedades(self):
-        # Modo edición sólo fecha de fin
+        # Modo edición restringida (fecha_fin y/o reemplazos fuera de ventana de edición)
         if self.edicion and self.edicion.get("tipo") == "novedad" and self.edicion.get("modo") == "fecha_fin":
+            orig = self.edicion.get("original", {})
+            orig_ff = "" if orig.get("fecha_fin") in (None, "-") else str(orig.get("fecha_fin")).strip()
             fecha_fin = self.app.fecha_fin_novedad_entry.entry.get().strip()
-            if not fecha_fin:
-                self.mostrar_error_novedades("Debe seleccionar una fecha de fin.")
-                return
             nueva_obs = self.nueva_observacion_text.get("1.0", "end-1c").strip() if hasattr(self, "nueva_observacion_text") else ""
-            try:
-                self.app.records_service.actualizar_fecha_fin_novedad(
-                    self.edicion["id"], fecha_fin, nueva_observacion=nueva_obs,
-                    user_id=self.app.current_user.get("id"),
-                    windows_user=self.app.obtener_usuario_windows(),
+            puede_editar_nov = self.app.tiene_permiso("novedades.editar") or self.app.tiene_permiso("registros.modificar")
+            puede_reemp = self._puede_asignar_reemplazo() and not validators.es_turno_ciclo(orig.get("turnos"))
+            habilitar_ff = (not orig_ff) and puede_editar_nov
+
+            if not habilitar_ff and not puede_reemp:
+                self.mostrar_error_novedades("No tiene permisos para actualizar este registro.")
+                return
+            if habilitar_ff and not fecha_fin and not nueva_obs and not puede_reemp:
+                self.mostrar_error_novedades("Debe seleccionar una fecha de fin o ingresar una observación.")
+                return
+
+            fecha_fin_efectiva = fecha_fin or orig_ff or None
+            tramos = None
+            if puede_reemp:
+                tramos, err_tramos = self._obtener_tramos_para_guardar(
+                    orig.get("fecha_inicio"),
+                    fecha_fin_efectiva,
+                    orig.get("turnos"),
+                    excluir_novedad_id=self.edicion["id"],
                 )
-                messagebox.showinfo("Guardado", "La fecha de fin y observaciones han sido actualizadas correctamente.")
+                if err_tramos:
+                    self.mostrar_error_novedades(err_tramos)
+                    return
+
+            try:
+                if habilitar_ff and (fecha_fin or nueva_obs):
+                    self.app.records_service.actualizar_fecha_fin_novedad(
+                        self.edicion["id"], fecha_fin, nueva_observacion=nueva_obs,
+                        user_id=self.app.current_user.get("id"),
+                        windows_user=self.app.obtener_usuario_windows(),
+                    )
+                if puede_reemp and tramos is not None:
+                    self.app.records_service.guardar_reemplazos_novedad(
+                        self.edicion["id"],
+                        tramos,
+                        user_id=self.app.current_user.get("id"),
+                        windows_user=self.app.obtener_usuario_windows(),
+                    )
+                messagebox.showinfo("Guardado", "La novedad ha sido actualizada correctamente.")
                 self.salir_edicion()
                 self.limpiar_formulario_novedades()
                 self.app.toggle_view("table")
@@ -567,6 +1045,17 @@ class FormsManager:
                         self.app.referencia_estacion_novedades_entry.focus_set()
                     return
 
+        excluir_id = self.edicion["id"] if (self.edicion and self.edicion.get("tipo") == "novedad") else None
+        tramos_guardar, err_tramos = self._obtener_tramos_para_guardar(
+            self.app.fecha_inicio_novedad_var.get().strip(),
+            self.app.fecha_fin_novedad_var.get().strip() or None,
+            self.app.turnos_var.get().strip(),
+            excluir_novedad_id=excluir_id,
+        )
+        if err_tramos:
+            self.mostrar_error_novedades(err_tramos)
+            return
+
         # Si estamos en edición completa de novedad
         if self.edicion and self.edicion.get("tipo") == "novedad":
             data = {
@@ -591,6 +1080,13 @@ class FormsManager:
                     windows_user=self.app.obtener_usuario_windows(),
                     bypass_window=bypass,
                 )
+                if self._puede_asignar_reemplazo() or validators.es_turno_ciclo(self.app.turnos_var.get()):
+                    self.app.records_service.guardar_reemplazos_novedad(
+                        self.edicion["id"],
+                        tramos_guardar,
+                        user_id=self.app.current_user.get("id"),
+                        windows_user=self.app.obtener_usuario_windows(),
+                    )
                 messagebox.showinfo("Guardado", "Novedad actualizada correctamente.")
                 self.salir_edicion()
                 self.limpiar_formulario_novedades()
@@ -611,6 +1107,13 @@ class FormsManager:
                 self.app.supervisor_var.get(), self.app.observaciones_var.get(),
                 self.app.obtener_usuario_windows(), self.app.current_user.get("id"),
             ))
+            if tramos_guardar and self._puede_asignar_reemplazo():
+                self.app.records_service.guardar_reemplazos_novedad(
+                    record_id,
+                    tramos_guardar,
+                    user_id=self.app.current_user.get("id"),
+                    windows_user=self.app.obtener_usuario_windows(),
+                )
             self.app.records_service.registrar_auditoria(
                 "crear", "novedad", record_id, self.app.current_user.get("id"), self.app.obtener_usuario_windows(),
                 after={"novedad": self.app.novedad_var.get(), "legajo": self.app.legajo_var.get()},
@@ -723,7 +1226,7 @@ class FormsManager:
         """Muestra un mensaje de error en el formulario de novedades."""
         if self.app.error_novedades_label is None:
             self.app.error_novedades_label = ttk.Label(self.app.form_frame, foreground="red")
-            self.app.error_novedades_label.grid(row=13, column=0, columnspan=7, pady=5, sticky="w")
+            self.app.error_novedades_label.grid(row=14, column=0, columnspan=7, pady=5, sticky="w")
         self.app.error_novedades_label.config(text=mensaje)
     
     def mostrar_error_cambios(self, mensaje):
@@ -824,6 +1327,11 @@ class FormsManager:
         )
         self.app.fecha_fin_novedad_entry.grid(row=6, column=4, sticky="w", pady=5)
         self.app.fecha_fin_novedad_entry.entry.bind("<Key>", lambda event: "break")
+        self.app.fecha_fin_novedad_entry.entry.bind("<FocusOut>", lambda e: self._sincronizar_fechas_reemplazo_default())
+        try:
+            self.app.fecha_fin_novedad_entry.bind("<<DateEntrySelected>>", lambda e: self._sincronizar_fechas_reemplazo_default())
+        except Exception:
+            pass
         self.app.fecha_fin_novedad_entry.entry.delete(0, tk.END)
         self.app.fecha_fin_novedad_var.set("")
         self.limpiar_fecha_fin_novedades_btn = ttk.Button(self.app.form_frame, text="Limpiar", command=self.limpiar_fecha_fin_novedad)
@@ -852,29 +1360,104 @@ class FormsManager:
         )
         self.app.supervisor_entry.grid(row=8, column=3, columnspan=2, sticky="w", pady=5)
 
-        # Observaciones
-        ttk.Label(self.app.form_frame, text="Observaciones").grid(row=9, column=0, sticky="w")
-        self.app.observaciones_novedades_text = scrolledtext.ScrolledText(
-            self.app.form_frame, wrap=tk.WORD, height=6, width=180
+        # Reemplazos / Relevos (Personal de CICLO)
+        self.reemplazos_frame = ttk.LabelFrame(
+            self.app.form_frame, text="Reemplazos / Relevos (Personal de CICLO)", padding=8
         )
-        self.app.observaciones_novedades_text.grid(row=10, column=0, columnspan=7, pady=5, sticky="w")
+        self.reemplazos_frame.grid(row=9, column=0, columnspan=7, sticky="ew", padx=5, pady=6)
+
+        self.reemplazo_estado_label = ttk.Label(
+            self.reemplazos_frame,
+            text="Seleccione un empleado titular para filtrar el personal de CICLO disponible.",
+            foreground="#6c757d",
+        )
+        self.reemplazo_estado_label.grid(row=0, column=0, columnspan=9, sticky="w", padx=4, pady=(0, 4))
+
+        ttk.Label(self.reemplazos_frame, text="Personal CICLO:").grid(row=1, column=0, sticky="w", padx=4)
+        self.reemplazo_combo_var = tk.StringVar()
+        self.reemplazo_combo = ttk.Combobox(
+            self.reemplazos_frame, textvariable=self.reemplazo_combo_var,
+            values=[], width=46, state="normal",
+        )
+        self.reemplazo_combo.grid(row=1, column=1, sticky="w", padx=4, pady=2)
+        self.reemplazo_combo.bind("<KeyRelease>", self._filtrar_combobox_reemplazo)
+
+        ttk.Label(self.reemplazos_frame, text="Desde:").grid(row=1, column=2, sticky="w", padx=(8, 2))
+        self.reemplazo_desde_entry = DateEntry(
+            self.reemplazos_frame, dateformat='%d/%m/%Y', bootstyle="info", width=12
+        )
+        self.reemplazo_desde_entry.grid(row=1, column=3, sticky="w", padx=2, pady=2)
+        self.reemplazo_desde_entry.entry.bind("<Key>", lambda event: "break")
+
+        ttk.Label(self.reemplazos_frame, text="Hasta:").grid(row=1, column=4, sticky="w", padx=(8, 2))
+        self.reemplazo_hasta_entry = DateEntry(
+            self.reemplazos_frame, dateformat='%d/%m/%Y', bootstyle="info", width=12
+        )
+        self.reemplazo_hasta_entry.grid(row=1, column=5, sticky="w", padx=2, pady=2)
+        self.reemplazo_hasta_entry.entry.bind("<Key>", lambda event: "break")
+        self.reemplazo_hasta_entry.entry.delete(0, tk.END)
+
+        self.limpiar_reemplazo_hasta_btn = ttk.Button(
+            self.reemplazos_frame, text="Limpiar Hasta", command=self._limpiar_fecha_fin_reemplazo
+        )
+        self.limpiar_reemplazo_hasta_btn.grid(row=1, column=6, sticky="w", padx=4, pady=2)
+
+        self.agregar_reemplazo_btn = ttk.Button(
+            self.reemplazos_frame, text="+ Agregar tramo", bootstyle="success-outline", command=self.agregar_tramo_reemplazo
+        )
+        self.agregar_reemplazo_btn.grid(row=1, column=7, sticky="w", padx=4, pady=2)
+
+        self.modificar_reemplazo_btn = ttk.Button(
+            self.reemplazos_frame, text="Modificar tramo", bootstyle="info-outline", command=self.modificar_tramo_reemplazo
+        )
+        self.modificar_reemplazo_btn.grid(row=1, column=8, sticky="w", padx=4, pady=2)
+
+        self.quitar_reemplazo_btn = ttk.Button(
+            self.reemplazos_frame, text="Quitar seleccionado", bootstyle="danger-outline", command=self.quitar_tramo_reemplazo
+        )
+        self.quitar_reemplazo_btn.grid(row=1, column=9, sticky="w", padx=4, pady=2)
+
+        cols_reemp = ("legajo", "nombre", "turno", "franco", "desde", "hasta")
+        self.reemplazos_tree = ttk.Treeview(
+            self.reemplazos_frame, columns=cols_reemp, show="headings", height=3
+        )
+        for col_id, titulo, ancho in (
+            ("legajo", "Legajo", 90),
+            ("nombre", "Apellido y Nombre (Reemplazo)", 260),
+            ("turno", "Turno", 140),
+            ("franco", "Franco", 110),
+            ("desde", "Desde", 110),
+            ("hasta", "Hasta", 110),
+        ):
+            self.reemplazos_tree.heading(col_id, text=titulo)
+            self.reemplazos_tree.column(col_id, width=ancho, anchor="center" if col_id != "nombre" else "w")
+        self.reemplazos_tree.grid(row=2, column=0, columnspan=10, sticky="ew", padx=4, pady=4)
+        self.reemplazos_tree.bind("<<TreeviewSelect>>", self._on_reemplazo_tree_select)
+        self._actualizar_candidatos_reemplazo(limpiar_tramos=True)
+
+        # Observaciones
+        ttk.Label(self.app.form_frame, text="Observaciones").grid(row=10, column=0, sticky="w")
+        self.app.observaciones_novedades_text = scrolledtext.ScrolledText(
+            self.app.form_frame, wrap=tk.WORD, height=5, width=180
+        )
+        self.app.observaciones_novedades_text.grid(row=11, column=0, columnspan=7, pady=5, sticky="w")
 
         # Campo dinámico para agregar observaciones en modo fecha_fin
         self.label_nueva_obs = ttk.Label(self.app.form_frame, text="Agregar a observaciones:")
         self.nueva_observacion_text = scrolledtext.ScrolledText(
-            self.app.form_frame, wrap=tk.WORD, height=4, width=180
+            self.app.form_frame, wrap=tk.WORD, height=3, width=180
         )
 
         # Botones
         self.guardar_novedades_btn = ttk.Button(self.app.form_frame, text="Guardar Novedad", command=self.guardar_datos_novedades)
         self.guardar_novedades_btn.grid(
-            row=14, column=3, columnspan=2, pady=10
+            row=15, column=3, columnspan=2, pady=10
         )
         self.cerrar_novedades_btn = ttk.Button(
             self.app.form_frame, text="Cerrar",
             command=lambda: (self.salir_edicion(), self.limpiar_formulario_novedades(), self.app.toggle_view())
         )
-        self.cerrar_novedades_btn.grid(row=14, column=4, columnspan=2, pady=10)
+        self.cerrar_novedades_btn.grid(row=15, column=4, columnspan=2, pady=10)
 
     def mostrar_formulario_cambios(self):
         """Crea la interfaz del formulario de cambios de turnos."""

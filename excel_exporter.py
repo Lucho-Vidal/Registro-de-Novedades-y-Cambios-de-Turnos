@@ -6,6 +6,8 @@ import tempfile
 
 import openpyxl
 from openpyxl.utils import get_column_letter
+from records_service import RecordsService
+import validators
 
 
 def _write_sheet(workbook, title, headers, rows):
@@ -102,6 +104,38 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
     novedades = [fila for fila in novedades if _en_rango(fila["registrado_en"])]
     cambios = [fila for fila in cambios if _en_rango(fila["registrado_en"])]
 
+    novedades_rows = []
+    if "NOVEDADES" in selected_tables:
+        svc = RecordsService(store)
+        mapa_cob = svc.obtener_mapa_cobertura_novedades()
+        for fila in novedades:
+            info_cob = mapa_cob.get(int(fila["id"]))
+            if info_cob:
+                estado_cob = info_cob["estado"]
+                detalle_cob = info_cob["detalle"]
+            else:
+                estado_cob = "N/A (Ciclo)" if validators.es_turno_ciclo(fila["turnos"]) else "No"
+                detalle_cob = ""
+            novedades_rows.append({
+                "id": fila["id"],
+                "registrado_en": fila["registrado_en"],
+                "legajo": fila["legajo"],
+                "apellidos_nombres": fila["apellidos_nombres"],
+                "especialidad": fila["especialidad"],
+                "dotacion": fila["dotacion"],
+                "turnos": fila["turnos"],
+                "franco": fila["franco"],
+                "novedad": fila["novedad"],
+                "fecha_inicio": fila["fecha_inicio"],
+                "fecha_fin": fila["fecha_fin"],
+                "cubierto": estado_cob,
+                "reemplazos": detalle_cob,
+                "referencia_estacion": fila["referencia_estacion"],
+                "supervisor": fila["supervisor"],
+                "observaciones": fila["observaciones"],
+                "usuario_windows": fila["usuario_windows"],
+            })
+
     workbook = openpyxl.Workbook()
     del workbook[workbook.sheetnames[0]]
     if "BASE" in selected_tables:
@@ -112,8 +146,8 @@ def export_database(store, output_path, fecha_desde=None, fecha_hasta=None,
         _write_sheet(workbook, "NOVEDADES", [
             "ID", "Fecha y hora", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION",
             "TURNOS", "FRANCO", "NOVEDAD", "Fecha de Inicio Novedad", "Fecha de Fin Novedad",
-            "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
-        ], novedades)
+            "CUBIERTO", "REEMPLAZOS", "REFERENCIA ESTACIÓN", "SUPERVISOR", "Observaciones", "USUARIO WINDOWS"
+        ], novedades_rows)
     if "Cambio de Turnos" in selected_tables:
         _write_sheet(workbook, "Cambio de Turnos", [
             "ID", "Fecha y hora", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION",
@@ -187,6 +221,8 @@ def export_turnos_sin_cubrir(records_service, output_path, fecha_consulta, dotac
             "NOVEDAD": fila["novedad"],
             "FECHA INICIO": fila["fecha_inicio"],
             "FECHA FIN": fila["fecha_fin"] or "",
+            "CUBIERTO": fila.get("cubierto", "No"),
+            "REEMPLAZO": fila.get("reemplazo", ""),
             "REFERENCIA ESTACIÓN": fila["referencia_estacion"],
             "SUPERVISOR": fila["supervisor"],
             "OBSERVACIONES": fila["observaciones"] or "",
@@ -199,7 +235,8 @@ def export_turnos_sin_cubrir(records_service, output_path, fecha_consulta, dotac
         "Turnos Sin Cubrir",
         [
             "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACION", "TURNO", "FRANCO",
-            "NOVEDAD", "FECHA INICIO", "FECHA FIN", "REFERENCIA ESTACIÓN", "SUPERVISOR", "OBSERVACIONES",
+            "NOVEDAD", "FECHA INICIO", "FECHA FIN", "CUBIERTO", "REEMPLAZO",
+            "REFERENCIA ESTACIÓN", "SUPERVISOR", "OBSERVACIONES",
         ],
         rows,
     )
