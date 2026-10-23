@@ -4,7 +4,7 @@ import calendar
 import json
 import sqlite3
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 _DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 _DIAS_SEMANA_NORM = {
@@ -207,7 +207,7 @@ class RecordsService:
 
     def listar_empleados(self, incluir_inactivos=True):
         with self.store.read_connection() as connection:
-            query = "SELECT id, legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario, activo FROM empleados"
+            query = "SELECT id, legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario, jornada_horas, activo FROM empleados"
             if not incluir_inactivos:
                 query += " WHERE activo=1"
             return connection.execute(query + " ORDER BY apellidos_nombres").fetchall()
@@ -236,14 +236,15 @@ class RecordsService:
             "turnos": (data.get("turnos") or "").strip(),
             "franco": (data.get("franco") or "").strip(),
             "franco_horario": (data.get("franco_horario") or "").strip(),
+            "jornada_horas": 7 if str(data.get("jornada_horas")).strip() == "7" else 6,
         }
         with self.store.write_transaction() as connection:
             try:
                 cursor = connection.execute(
-                    """INSERT INTO empleados(legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario, actualizado_en)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO empleados(legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario, jornada_horas, actualizado_en)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (valores["legajo"], valores["apellidos_nombres"], valores["especialidad"],
-                     valores["dotacion"], valores["turnos"], valores["franco"], valores["franco_horario"], self.store.now()),
+                     valores["dotacion"], valores["turnos"], valores["franco"], valores["franco_horario"], valores["jornada_horas"], self.store.now()),
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"Ya existe un empleado con el legajo {legajo}.")
@@ -260,6 +261,7 @@ class RecordsService:
             "turnos": (data.get("turnos") or "").strip(),
             "franco": (data.get("franco") or "").strip(),
             "franco_horario": (data.get("franco_horario") or "").strip(),
+            "jornada_horas": 7 if str(data.get("jornada_horas")).strip() == "7" else 6,
         }
         with self.store.write_transaction() as connection:
             before = connection.execute("SELECT * FROM empleados WHERE id=?", (empleado_id,)).fetchone()
@@ -268,9 +270,9 @@ class RecordsService:
             try:
                 connection.execute(
                     """UPDATE empleados SET legajo=?, apellidos_nombres=?, especialidad=?, dotacion=?,
-                          turnos=?, franco=?, franco_horario=?, actualizado_en=? WHERE id=?""",
+                          turnos=?, franco=?, franco_horario=?, jornada_horas=?, actualizado_en=? WHERE id=?""",
                     (valores["legajo"], valores["apellidos_nombres"], valores["especialidad"],
-                     valores["dotacion"], valores["turnos"], valores["franco"], valores["franco_horario"], self.store.now(), empleado_id),
+                     valores["dotacion"], valores["turnos"], valores["franco"], valores["franco_horario"], valores["jornada_horas"], self.store.now(), empleado_id),
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"Ya existe un empleado con el legajo {legajo}.")
@@ -849,15 +851,83 @@ class RecordsService:
 
         return {"libres": libres, "ocupados": ocupados}
 
+    def guardar_jornada_ciclo(self, legajo, fecha, toma=None, deja=None, franco_anticipado=0, observaciones=None, user_id=None, windows_user=None):
+        """Registra o actualiza la jornada/franco de un empleado de ciclo para una fecha determinada."""
+        import validators
+        fecha_obj = validators.parsear_fecha(fecha, "Fecha", obligatorio=True).date()
+        fecha_iso = fecha_obj.strftime("%Y-%m-%d")
+        toma_str = (toma or "").strip()
+        deja_str = (deja or "").strip()
+        obs_str = (observaciones or "").strip()
+        fa_val = 1 if bool(franco_anticipado) else 0
+
+        for val, campo in ((toma_str, "Toma"), (deja_str, "Deja")):
+            if val:
+                try:
+                    partes = val.split(":")
+                    if len(partes) != 2:
+                        raise ValueError()
+                    h, m = int(partes[0]), int(partes[1])
+                    if not (0 <= h <= 23 and 0 <= m <= 59):
+                        raise ValueError()
+                except Exception:
+                    raise ValueError(f"El horario de {campo} debe tener formato HH:MM (ej. 06:00).")
+
+        with self.store.write_transaction() as connection:
+            before = connection.execute(
+                "SELECT * FROM ciclo_jornadas WHERE legajo=? AND fecha=?",
+                (int(legajo), fecha_iso),
+            ).fetchone()
+            connection.execute(
+                """INSERT INTO ciclo_jornadas
+                   (legajo, fecha, toma, deja, franco_anticipado, observaciones, actualizado_en, usuario_windows, usuario_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(legajo, fecha) DO UPDATE SET
+                       toma=excluded.toma,
+                       deja=excluded.deja,
+                       franco_anticipado=excluded.franco_anticipado,
+                       observaciones=excluded.observaciones,
+                       actualizado_en=excluded.actualizado_en,
+                       usuario_windows=excluded.usuario_windows,
+                       usuario_id=excluded.usuario_id""",
+                (
+                    int(legajo), fecha_iso, toma_str or None, deja_str or None, fa_val,
+                    obs_str or None, self.store.now(), windows_user, user_id,
+                ),
+            )
+            after = connection.execute(
+                "SELECT * FROM ciclo_jornadas WHERE legajo=? AND fecha=?",
+                (int(legajo), fecha_iso),
+            ).fetchone()
+            self._audit(
+                connection, user_id, windows_user,
+                "modificar" if before else "crear",
+                "ciclo_jornada",
+                after["id"] if after else None,
+                dict(before) if before else None,
+                dict(after) if after else None,
+            )
+
+    def obtener_jornadas_ciclo_rango(self, legajo, fecha_desde, fecha_hasta):
+        """Devuelve un diccionario {YYYY-MM-DD: dict} con las jornadas del empleado en el rango."""
+        with self.store.read_connection() as connection:
+            rows = connection.execute(
+                """SELECT id, legajo, fecha, toma, deja, franco_anticipado, observaciones
+                   FROM ciclo_jornadas
+                   WHERE legajo=? AND fecha BETWEEN ? AND ?""",
+                (int(legajo), fecha_desde.strftime("%Y-%m-%d"), fecha_hasta.strftime("%Y-%m-%d")),
+            ).fetchall()
+            return {r["fecha"]: dict(r) for r in rows}
+
     def obtener_calendario_mensual_ciclo(self, legajo_ciclo, anio, mes):
-        """Genera una fila por cada día del mes indicando a quién reemplaza el empleado de ciclo."""
+        """Genera una fila por cada día del mes con cálculo de descansos reglamentarios y horas trabajadas."""
         anio = int(anio)
         mes = int(mes)
         _, num_dias = calendar.monthrange(anio, mes)
 
         with self.store.read_connection() as connection:
             emp = connection.execute(
-                "SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario FROM empleados WHERE legajo = ?",
+                "SELECT legajo, apellidos_nombres, especialidad, dotacion, turnos, franco, franco_horario, jornada_horas FROM empleados WHERE legajo = ?",
                 (int(legajo_ciclo),),
             ).fetchone()
             reemplazos = connection.execute(
@@ -877,27 +947,81 @@ class RecordsService:
             if r_ini:
                 tramos_parsed.append((r_ini, r_fin_opt, dict(r)))
 
+        emp_jh = 6
+        if emp:
+            if "jornada_horas" in emp.keys() and emp["jornada_horas"] in (6, 7):
+                emp_jh = int(emp["jornada_horas"])
+            elif "guarda" in (emp["especialidad"] or "").lower():
+                emp_jh = 7
+
+        descanso_entre_jornada = 18 if emp_jh == 6 else 17
+        descanso_post_franco = 42 if emp_jh == 6 else 41
+
         franco_emp = (emp["franco"] if emp else "") or ""
         franco_horario = ((emp["franco_horario"] if emp and "franco_horario" in emp.keys() else "") or "").strip()
         franco_norm = unicodedata.normalize("NFKD", franco_emp)
         franco_norm = "".join(c for c in franco_norm if not unicodedata.combining(c)).lower().strip()
 
-        dias_mes = []
-        for dia_num in range(1, num_dias + 1):
-            f_actual = date(anio, mes, dia_num)
-            dia_semana = _DIAS_SEMANA[f_actual.weekday()]
-            dia_sem_norm = unicodedata.normalize("NFKD", dia_semana)
+        # Consultar jornadas cargadas desde 21 días antes del mes hasta el fin de mes
+        fecha_primer_dia = date(anio, mes, 1)
+        fecha_inicio_calc = fecha_primer_dia - timedelta(days=21)
+        fecha_fin_calc = date(anio, mes, num_dias)
+        jornadas_map = self.obtener_jornadas_ciclo_rango(legajo_ciclo, fecha_inicio_calc, fecha_fin_calc)
+
+        def _parsear_hm(val_str):
+            if not val_str:
+                return None
+            try:
+                p = val_str.strip().split(":")
+                return int(p[0]), int(p[1])
+            except Exception:
+                return None
+
+        def _calc_hs_trabajadas(t_str, d_str):
+            hm_t = _parsear_hm(t_str)
+            hm_d = _parsear_hm(d_str)
+            if not hm_t or not hm_d:
+                return 0.0
+            min_t = hm_t[0] * 60 + hm_t[1]
+            min_d = hm_d[0] * 60 + hm_d[1]
+            if min_d < min_t:
+                min_d += 24 * 60
+            return round((min_d - min_t) / 60.0, 2)
+
+        def _calc_deja_dt(dia_date, t_str, d_str):
+            hm_d = _parsear_hm(d_str)
+            if not hm_d:
+                return None
+            hm_t = _parsear_hm(t_str)
+            if hm_t:
+                min_t = hm_t[0] * 60 + hm_t[1]
+                min_d = hm_d[0] * 60 + hm_d[1]
+                if min_d < min_t:
+                    return datetime.combine(dia_date + timedelta(days=1), time(hm_d[0], hm_d[1]))
+            return datetime.combine(dia_date, time(hm_d[0], hm_d[1]))
+
+        dias_historia = {}
+        acum_semana = 0.0
+
+        d_step = fecha_inicio_calc
+        while d_step <= fecha_fin_calc:
+            f_iso = d_step.strftime("%Y-%m-%d")
+            dia_semana_str = _DIAS_SEMANA[d_step.weekday()]
+            dia_sem_norm = unicodedata.normalize("NFKD", dia_semana_str)
             dia_sem_norm = "".join(c for c in dia_sem_norm if not unicodedata.combining(c)).lower().strip()
-            es_franco = bool(franco_norm and franco_norm in dia_sem_norm)
+            es_franco_reg = bool(franco_norm and franco_norm in dia_sem_norm)
 
             relevo_dia = None
             for r_ini, r_fin_opt, r_data in tramos_parsed:
-                if r_ini <= f_actual and (r_fin_opt is None or f_actual <= r_fin_opt):
+                if r_ini <= d_step and (r_fin_opt is None or d_step <= r_fin_opt):
                     relevo_dia = r_data
                     break
 
+            jornada_db = jornadas_map.get(f_iso)
+
             if relevo_dia:
                 estado = "Reemplazando"
+                es_franco = False
                 novedad_id = relevo_dia["novedad_id"]
                 reemplaza_a = f"{relevo_dia['legajo_titular']} - {relevo_dia['apellidos_titular']}"
                 turno_cubierto = relevo_dia["turno_titular"] or "-"
@@ -908,12 +1032,10 @@ class RecordsService:
                 novedad_titular = relevo_dia["tipo_novedad"]
                 tramo_inicio = relevo_dia["fecha_inicio"]
                 tramo_fin = relevo_dia["fecha_fin"] or relevo_dia["fecha_fin_novedad"]
+                toma = jornada_db.get("toma") or "" if jornada_db else ""
+                deja = jornada_db.get("deja") or "" if jornada_db else ""
             else:
                 novedad_id = ""
-                if es_franco:
-                    estado = f"Franco (desde {franco_horario})" if franco_horario else "Franco"
-                else:
-                    estado = "Disponible"
                 reemplaza_a = "-"
                 turno_cubierto = "-"
                 motivo = "-"
@@ -923,12 +1045,74 @@ class RecordsService:
                 novedad_titular = None
                 tramo_inicio = None
                 tramo_fin = None
+                if jornada_db and jornada_db.get("franco_anticipado"):
+                    es_franco = True
+                    estado = "Franco Anticipado"
+                    toma = ""
+                    deja = ""
+                elif es_franco_reg:
+                    es_franco = True
+                    estado = f"Franco (desde {franco_horario})" if franco_horario else "Franco"
+                    toma = ""
+                    deja = ""
+                else:
+                    es_franco = False
+                    estado = "Disponible"
+                    toma = jornada_db.get("toma") or "" if jornada_db else ""
+                    deja = jornada_db.get("deja") or "" if jornada_db else ""
 
-            dias_mes.append({
-                "dia": dia_num,
-                "fecha": f_actual.strftime("%d/%m/%Y"),
-                "dia_semana": dia_semana,
+            hs_trab = _calc_hs_trabajadas(toma, deja) if (toma and deja) else 0.0
+            deja_dt = _calc_deja_dt(d_step, toma, deja) if deja else None
+
+            # Acumulador semanal
+            if es_franco:
+                acum_semana = 0.0
+                hs_semana_str = "-"
+            else:
+                acum_semana += hs_trab
+                hs_semana_str = f"{acum_semana:.1f} hs" if acum_semana > 0 else "-"
+
+            # Hora disponible para d_step
+            if es_franco:
+                hora_disp_str = "-"
+            else:
+                d_prev = d_step - timedelta(days=1)
+                disp_dt = None
+                if d_prev in dias_historia and not dias_historia[d_prev]["es_franco"]:
+                    prev_deja_dt = dias_historia[d_prev]["deja_dt"]
+                    if prev_deja_dt:
+                        disp_dt = prev_deja_dt + timedelta(hours=descanso_entre_jornada)
+                else:
+                    d_busca = d_prev
+                    while d_busca in dias_historia and dias_historia[d_busca]["es_franco"]:
+                        d_busca -= timedelta(days=1)
+                    if d_busca in dias_historia and dias_historia[d_busca]["deja_dt"]:
+                        prev_deja_dt = dias_historia[d_busca]["deja_dt"]
+                        disp_dt = prev_deja_dt + timedelta(hours=descanso_post_franco)
+
+                if disp_dt:
+                    if disp_dt.date() == d_step:
+                        hora_disp_str = disp_dt.strftime("%H:%M")
+                    elif disp_dt.date() < d_step:
+                        hora_disp_str = "00:00"
+                    else:
+                        hora_disp_str = disp_dt.strftime("%d/%m %H:%M")
+                else:
+                    hora_disp_str = "-"
+
+            dias_historia[d_step] = {
+                "d": d_step,
+                "es_franco": es_franco,
                 "estado": estado,
+                "toma": toma,
+                "deja": deja,
+                "deja_dt": deja_dt,
+                "hs_trabajadas": hs_trab,
+                "hs_trabajadas_str": f"{hs_trab:.1f} hs" if hs_trab > 0 else "-",
+                "hs_semana_str": hs_semana_str,
+                "hora_disponible": hora_disp_str,
+                "franco_anticipado": bool(jornada_db and jornada_db.get("franco_anticipado")),
+                "observaciones": jornada_db.get("observaciones") or "" if jornada_db else "",
                 "novedad_id": novedad_id,
                 "reemplaza_a": reemplaza_a,
                 "turno_cubierto": turno_cubierto,
@@ -939,6 +1123,37 @@ class RecordsService:
                 "novedad_titular": novedad_titular,
                 "tramo_inicio": tramo_inicio,
                 "tramo_fin": tramo_fin,
+            }
+
+            d_step += timedelta(days=1)
+
+        dias_mes = []
+        for dia_num in range(1, num_dias + 1):
+            f_actual = date(anio, mes, dia_num)
+            info = dias_historia[f_actual]
+            dias_mes.append({
+                "dia": dia_num,
+                "fecha": f_actual.strftime("%d/%m/%Y"),
+                "fecha_iso": f_actual.strftime("%Y-%m-%d"),
+                "dia_semana": _DIAS_SEMANA[f_actual.weekday()],
+                "estado": info["estado"],
+                "hora_disponible": info["hora_disponible"],
+                "toma": info["toma"] or "-",
+                "deja": info["deja"] or "-",
+                "horas_trabajadas": info["hs_trabajadas_str"],
+                "hs_semana": info["hs_semana_str"],
+                "novedad_id": info["novedad_id"],
+                "reemplaza_a": info["reemplaza_a"],
+                "turno_cubierto": info["turno_cubierto"],
+                "motivo": info["motivo"],
+                "periodo": info["periodo"],
+                "reemplazando_legajo": info["reemplazando_legajo"],
+                "reemplazando_nombre": info["reemplazando_nombre"],
+                "novedad_titular": info["novedad_titular"],
+                "tramo_inicio": info["tramo_inicio"],
+                "tramo_fin": info["tramo_fin"],
+                "franco_anticipado": info["franco_anticipado"],
+                "observaciones": info["observaciones"],
             })
 
         return dias_mes

@@ -1128,14 +1128,21 @@ class TablesManager:
         tree_frame.grid_columnconfigure(0, weight=1)
 
         cols_cal = (
-            "FECHA", "DIA", "ESTADO", "ID NOVEDAD", "LEGAJO TITULAR",
+            "FECHA", "DIA", "ESTADO",
+            "HORA DISPONIBLE", "TOMA", "DEJA", "HS TRABAJADAS", "HS SEMANA",
+            "ID NOVEDAD", "LEGAJO TITULAR",
             "REEMPLAZA A (APELLIDO Y NOMBRE)", "NOVEDAD TITULAR", "TRAMO REEMPLAZO",
         )
         cal_tree = ttk.Treeview(tree_frame, columns=cols_cal, show="headings", height=22)
         anchos_cal = {
-            "FECHA": 100,
-            "DIA": 100,
-            "ESTADO": 130,
+            "FECHA": 95,
+            "DIA": 95,
+            "ESTADO": 140,
+            "HORA DISPONIBLE": 120,
+            "TOMA": 75,
+            "DEJA": 75,
+            "HS TRABAJADAS": 110,
+            "HS SEMANA": 95,
             "ID NOVEDAD": 90,
             "LEGAJO TITULAR": 110,
             "REEMPLAZA A (APELLIDO Y NOMBRE)": 240,
@@ -1186,6 +1193,11 @@ class TablesManager:
                         d["fecha"],
                         d["dia_semana"],
                         d["estado"],
+                        d.get("hora_disponible") or "-",
+                        d.get("toma") or "-",
+                        d.get("deja") or "-",
+                        d.get("horas_trabajadas") or "-",
+                        d.get("hs_semana") or "-",
                         d.get("novedad_id") or "-",
                         d.get("reemplazando_legajo") or "-",
                         d.get("reemplazando_nombre") or "-",
@@ -1196,6 +1208,88 @@ class TablesManager:
                 )
             resumen_mes_label.config(text=f"Días con reemplazo en el mes: {dias_reemplazo} / {len(dias)}")
 
+        def abrir_dialogo_jornada(event=None):
+            sel = cal_tree.selection()
+            if not sel:
+                messagebox.showinfo("Asignar Jornada", "Seleccione una fila en el calendario.", parent=modal)
+                return
+            valores = cal_tree.item(sel[0], "values")
+            if not valores:
+                return
+            fecha_str = str(valores[0]).strip()
+            estado_actual = str(valores[2]).strip()
+            toma_actual = "" if valores[4] == "-" else str(valores[4]).strip()
+            deja_actual = "" if valores[5] == "-" else str(valores[5]).strip()
+            es_fa = "Anticipado" in estado_actual
+
+            dlg = tk.Toplevel(modal)
+            dlg.title(f"Asignar Jornada - {fecha_str}")
+            dlg.geometry("420x320")
+            dlg.transient(modal)
+            dlg.grab_set()
+            self.app.aplicar_tema_ventana(dlg)
+
+            ttk.Label(
+                dlg, text=f"Jornada del día {fecha_str}", font=("Helvetica", 12, "bold")
+            ).grid(row=0, column=0, columnspan=2, padx=14, pady=(12, 6), sticky="w")
+
+            ttk.Label(
+                dlg, text=f"Empleado: {legajo_ciclo} - {nombre_emp}\nEstado actual: {estado_actual}", font=("Helvetica", 9)
+            ).grid(row=1, column=0, columnspan=2, padx=14, pady=(0, 10), sticky="w")
+
+            toma_var = tk.StringVar(value=toma_actual)
+            deja_var = tk.StringVar(value=deja_actual)
+            fa_var = tk.BooleanVar(value=es_fa)
+            obs_var = tk.StringVar()
+
+            ttk.Label(dlg, text="Hora Toma (HH:MM):").grid(row=2, column=0, padx=14, pady=5, sticky="w")
+            toma_entry = ttk.Entry(dlg, textvariable=toma_var, width=15)
+            toma_entry.grid(row=2, column=1, padx=14, pady=5, sticky="w")
+
+            ttk.Label(dlg, text="Hora Deja (HH:MM):").grid(row=3, column=0, padx=14, pady=5, sticky="w")
+            deja_entry = ttk.Entry(dlg, textvariable=deja_var, width=15)
+            deja_entry.grid(row=3, column=1, padx=14, pady=5, sticky="w")
+
+            def toggle_fa():
+                if fa_var.get():
+                    toma_entry.config(state="disabled")
+                    deja_entry.config(state="disabled")
+                else:
+                    toma_entry.config(state="normal")
+                    deja_entry.config(state="normal")
+
+            fa_check = ttk.Checkbutton(
+                dlg, text="Franco Anticipado", variable=fa_var, command=toggle_fa
+            )
+            fa_check.grid(row=4, column=0, columnspan=2, padx=14, pady=6, sticky="w")
+            toggle_fa()
+
+            ttk.Label(dlg, text="Observaciones:").grid(row=5, column=0, padx=14, pady=5, sticky="w")
+            obs_entry = ttk.Entry(dlg, textvariable=obs_var, width=28)
+            obs_entry.grid(row=5, column=1, padx=14, pady=5, sticky="w")
+
+            def guardar_jornada():
+                try:
+                    self.app.records_service.guardar_jornada_ciclo(
+                        legajo=legajo_ciclo,
+                        fecha=fecha_str,
+                        toma="" if fa_var.get() else toma_var.get(),
+                        deja="" if fa_var.get() else deja_var.get(),
+                        franco_anticipado=1 if fa_var.get() else 0,
+                        observaciones=obs_var.get(),
+                        user_id=self.app.current_user.get("id"),
+                        windows_user=self.app.obtener_usuario_windows(),
+                    )
+                    dlg.destroy()
+                    recargar_calendario()
+                except Exception as ex:
+                    messagebox.showerror("Error", str(ex), parent=dlg)
+
+            btn_box = ttk.Frame(dlg)
+            btn_box.grid(row=6, column=0, columnspan=2, padx=14, pady=(15, 10))
+            ttk.Button(btn_box, text="Guardar", bootstyle="success", command=guardar_jornada).pack(side="left", padx=5)
+            ttk.Button(btn_box, text="Cancelar", command=dlg.destroy).pack(side="left", padx=5)
+
         def on_double_click_dia(event=None):
             sel = cal_tree.selection()
             if not sel:
@@ -1203,18 +1297,17 @@ class TablesManager:
             valores = cal_tree.item(sel[0], "values")
             if not valores:
                 return
-            nov_id_str = str(valores[3]).strip()
-            if not nov_id_str or nov_id_str == "-":
-                return
-            try:
-                nov_id = int(nov_id_str)
-            except (ValueError, TypeError):
-                return
-            fila = self.app.records_service.obtener_novedad(nov_id)
-            if not fila:
-                messagebox.showerror("Novedad", f"No se encontró la novedad #{nov_id}.", parent=modal)
-                return
-            self.mostrar_modal_detalle(self._valores_novedad(fila), COLUMNAS_DETALLE_NOVEDAD, "novedad")
+            nov_id_str = str(valores[8]).strip()
+            if nov_id_str and nov_id_str != "-":
+                try:
+                    nov_id = int(nov_id_str)
+                    fila = self.app.records_service.obtener_novedad(nov_id)
+                    if fila:
+                        self.mostrar_modal_detalle(self._valores_novedad(fila), COLUMNAS_DETALLE_NOVEDAD, "novedad")
+                        return
+                except (ValueError, TypeError):
+                    pass
+            abrir_dialogo_jornada()
 
         cal_tree.bind("<Double-1>", on_double_click_dia)
 
@@ -1236,6 +1329,7 @@ class TablesManager:
 
         ttk.Button(ctrl_bar, text="◀ Mes anterior", command=lambda: cambiar_mes(-1)).pack(side="left", padx=4)
         ttk.Button(ctrl_bar, text="Mes siguiente ▶", command=lambda: cambiar_mes(1)).pack(side="left", padx=4)
+        ttk.Button(ctrl_bar, text="Asignar jornada / Franco", bootstyle="success-outline", command=abrir_dialogo_jornada).pack(side="left", padx=8)
         resumen_mes_label.pack(side="left", padx=16)
 
         mes_combo.bind("<<ComboboxSelected>>", recargar_calendario)

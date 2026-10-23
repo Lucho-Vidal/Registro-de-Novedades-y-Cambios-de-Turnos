@@ -595,11 +595,11 @@ class AdminViews:
         except Exception:
             pass
         self.app.aplicar_tema_ventana(window)
-        tree = ttk.Treeview(window, columns=("id", "legajo", "apellidos", "especialidad", "dotacion", "turnos", "franco", "franco_horario", "activo"), show="headings")
+        tree = ttk.Treeview(window, columns=("id", "legajo", "apellidos", "especialidad", "dotacion", "turnos", "franco", "franco_horario", "jornada", "activo"), show="headings")
         for column, title, width in (
             ("id", "ID", 50), ("legajo", "Legajo", 70), ("apellidos", "Apellidos y nombres", 260),
             ("especialidad", "Especialidad", 150), ("dotacion", "Dotación", 80), ("turnos", "Turnos", 160),
-            ("franco", "Franco", 100), ("franco_horario", "Horario Franco", 110), ("activo", "Activo", 70),
+            ("franco", "Franco", 100), ("franco_horario", "Horario Franco", 110), ("jornada", "Jornada", 70), ("activo", "Activo", 70),
         ):
             tree.heading(column, text=title)
             tree.column(column, width=width, stretch=column in {"apellidos", "especialidad", "turnos"})
@@ -662,7 +662,7 @@ class AdminViews:
                     continue
                 if especialidad != "Todas" and (row[3] or "") != especialidad:
                     continue
-                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "-", row[4] or "-", row[5] or "-", row[6] or "-", row[7] or "-", "Sí" if row[8] else "No"))
+                tree.insert("", "end", values=(row[0], row[1], row[2], row[3] or "-", row[4] or "-", row[5] or "-", row[6] or "-", row[7] or "-", f"{row[8]} hs" if row[8] else "6 hs", "Sí" if row[9] else "No"))
 
         def refresh():
             filas_completas.clear()
@@ -677,7 +677,7 @@ class AdminViews:
             self.app.cargarDotaciones()
             dialog = tk.Toplevel(window)
             dialog.title("Nuevo empleado" if valores_iniciales is None else "Editar empleado")
-            dialog.geometry("450x370")
+            dialog.geometry("450x410")
             self.app.aplicar_tema_ventana(dialog)
             dialog.transient(window)
             dialog.grab_set()
@@ -695,6 +695,7 @@ class AdminViews:
             turnos_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("turnos") or ""))
             franco_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("franco") or ""))
             franco_horario_var = tk.StringVar(value="" if valores_iniciales is None else str(valores_iniciales.get("franco_horario") or ""))
+            jornada_var = tk.StringVar(value="6" if valores_iniciales is None else str(valores_iniciales.get("jornada_horas") or 6))
 
             ttk.Label(dialog, text="Legajo").grid(row=0, column=0, sticky="w", padx=12, pady=4)
             ttk.Entry(dialog, textvariable=legajo_var, width=30).grid(row=0, column=1, sticky="ew", padx=12, pady=4)
@@ -710,6 +711,8 @@ class AdminViews:
             ttk.Combobox(dialog, textvariable=franco_var, values=opciones(DIAS_SEMANA, franco_var.get()), state="readonly", width=28).grid(row=5, column=1, sticky="ew", padx=12, pady=4)
             ttk.Label(dialog, text="Horario Franco (CICLO)").grid(row=6, column=0, sticky="w", padx=12, pady=4)
             ttk.Entry(dialog, textvariable=franco_horario_var, width=30).grid(row=6, column=1, sticky="ew", padx=12, pady=4)
+            ttk.Label(dialog, text="Jornada (horas)").grid(row=7, column=0, sticky="w", padx=12, pady=4)
+            ttk.Combobox(dialog, textvariable=jornada_var, values=["6", "7"], state="readonly", width=28).grid(row=7, column=1, sticky="ew", padx=12, pady=4)
 
             def guardar():
                 data = {
@@ -720,6 +723,7 @@ class AdminViews:
                     "turnos": turnos_var.get(),
                     "franco": franco_var.get(),
                     "franco_horario": franco_horario_var.get().strip(),
+                    "jornada_horas": jornada_var.get().strip(),
                 }
                 try:
                     int(data["legajo"])
@@ -746,7 +750,7 @@ class AdminViews:
                 refresh()
                 dialog.destroy()
 
-            ttk.Button(dialog, text="Guardar", command=guardar).grid(row=7, column=0, columnspan=2, pady=15)
+            ttk.Button(dialog, text="Guardar", command=guardar).grid(row=8, column=0, columnspan=2, pady=15)
 
         def nuevo():
             _dialogo()

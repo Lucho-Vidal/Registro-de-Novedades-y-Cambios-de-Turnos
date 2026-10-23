@@ -1188,6 +1188,112 @@ class TestReemplazosYPersonalCiclo:
             assert d["novedad_id"] == 10
             assert d["reemplazando_legajo"] == 999
 
+    def test_ciclo_jornadas_y_calculo_horas_descanso(self, tmp_path):
+        from sqlite_store import SQLiteStore
+        from records_service import RecordsService
+
+        db_path = tmp_path / "test_descansos.sqlite"
+        store = SQLiteStore(str(db_path))
+        store.initialize()
+        records = RecordsService(store)
+
+        # 1. Crear empleado 6hs (Franco los Miércoles)
+        emp6_id = records.crear_empleado({
+            "legajo": 601,
+            "apellidos_nombres": "Ciclo Seis Horas",
+            "especialidad": "Conductor",
+            "dotacion": "PC",
+            "turnos": "CICLO 6H",
+            "franco": "Miércoles",
+            "franco_horario": "16:00",
+            "jornada_horas": 6,
+        })
+
+        # 2. Crear empleado 7hs (Franco los Miércoles)
+        emp7_id = records.crear_empleado({
+            "legajo": 701,
+            "apellidos_nombres": "Ciclo Siete Horas",
+            "especialidad": "Guarda",
+            "dotacion": "PC",
+            "turnos": "CICLO 7H",
+            "franco": "Miércoles",
+            "franco_horario": "15:00",
+            "jornada_horas": 7,
+        })
+
+        base_rows = store.get_base_rows()
+        r6 = [r for r in base_rows if r[0] == 601][0]
+        r7 = [r for r in base_rows if r[0] == 701][0]
+        assert r6[7] == 6
+        assert r7[7] == 7
+
+        # Asignar jornadas para empleado 601:
+        # Lunes 02/03/2026: Toma 10:00, Deja 16:00 (6 hs)
+        # Martes 03/03/2026: Toma 10:00, Deja 16:00 (6 hs)
+        # Miércoles 04/03/2026: Franco natural
+        # Jueves 05/03/2026: Debe estar disponible a las 10:00 (16:00 del martes + 42 hs)
+        records.guardar_jornada_ciclo(601, "02/03/2026", "10:00", "16:00", False, "Jornada 1")
+        records.guardar_jornada_ciclo(601, "03/03/2026", "10:00", "16:00", False, "Jornada 2")
+
+        cal6 = records.obtener_calendario_mensual_ciclo(601, 2026, 3)
+        # Indice 1: 02/03/2026 (Lunes)
+        assert cal6[1]["fecha"] == "02/03/2026"
+        assert cal6[1]["toma"] == "10:00"
+        assert cal6[1]["deja"] == "16:00"
+        assert cal6[1]["horas_trabajadas"] == "6.0 hs"
+        assert cal6[1]["hs_semana"] == "6.0 hs"
+
+        # Indice 2: 03/03/2026 (Martes)
+        # Disponible según deja de ayer (16:00 + 18h = 10:00 hoy)
+        assert cal6[2]["fecha"] == "03/03/2026"
+        assert cal6[2]["hora_disponible"] == "10:00"
+        assert cal6[2]["horas_trabajadas"] == "6.0 hs"
+        assert cal6[2]["hs_semana"] == "12.0 hs"
+
+        # Indice 3: 04/03/2026 (Miércoles - Franco)
+        assert cal6[3]["fecha"] == "04/03/2026"
+        assert "Franco" in cal6[3]["estado"]
+        assert cal6[3]["hs_semana"] == "-"
+
+        # Indice 4: 05/03/2026 (Jueves - Pos-Franco 42hs)
+        # Martes 16:00 + 42h = Jueves 10:00
+        assert cal6[4]["fecha"] == "05/03/2026"
+        assert cal6[4]["hora_disponible"] == "10:00"
+
+        # Asignar jornadas para empleado 701 (7hs de jornada):
+        # Descanso interjornada: 17hs, pos-franco: 41hs
+        # Lunes 02/03/2026: Toma 08:00, Deja 15:00 (7 hs)
+        # Martes 03/03/2026: Martes disponible a las 08:00 (15:00 + 17h)
+        # Toma 08:00, Deja 15:00
+        # Miércoles 04/03/2026: Franco
+        # Jueves 05/03/2026: Disponible a las 08:00 (15:00 del martes + 41h)
+        records.guardar_jornada_ciclo(701, "02/03/2026", "08:00", "15:00", False, "")
+        records.guardar_jornada_ciclo(701, "03/03/2026", "08:00", "15:00", False, "")
+
+        cal7 = records.obtener_calendario_mensual_ciclo(701, 2026, 3)
+        assert cal7[2]["hora_disponible"] == "08:00"
+        assert cal7[2]["horas_trabajadas"] == "7.0 hs"
+        assert cal7[2]["hs_semana"] == "14.0 hs"
+        assert cal7[4]["hora_disponible"] == "08:00"
+
+        # Test Franco Anticipado:
+        # En viernes 06/03/2026 se le otorga franco anticipado
+        records.guardar_jornada_ciclo(601, "06/03/2026", "", "", True, "Franco adelantado")
+        cal6_fa = records.obtener_calendario_mensual_ciclo(601, 2026, 3)
+        assert cal6_fa[5]["fecha"] == "06/03/2026"
+        assert cal6_fa[5]["estado"] == "Franco Anticipado"
+        assert cal6_fa[5]["hs_semana"] == "-"
+
+        # Test jornada nocturna que cruza medianoche (e.g. 22:00 a 04:00 = 6hs)
+        records.guardar_jornada_ciclo(601, "08/03/2026", "22:00", "04:00", False, "Nocturno")
+        cal6_noc = records.obtener_calendario_mensual_ciclo(601, 2026, 3)
+        # 08/03/2026 index 7
+        assert cal6_noc[7]["horas_trabajadas"] == "6.0 hs"
+        # Termina a las 04:00 del 09/03/2026 -> +18h = 22:00 del 09/03/2026
+        assert cal6_noc[8]["fecha"] == "09/03/2026"
+        assert cal6_noc[8]["hora_disponible"] == "22:00"
+
+
 
 
 
