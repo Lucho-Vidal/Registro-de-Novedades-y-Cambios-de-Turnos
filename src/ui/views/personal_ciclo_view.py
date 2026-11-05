@@ -124,6 +124,7 @@ class PersonalCicloView(QWidget):
         pdf_service: PDFService,
         excel_service: ExcelService,
         usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -131,9 +132,15 @@ class PersonalCicloView(QWidget):
         self.pdf_service = pdf_service
         self.excel_service = excel_service
         self.usuario_actual = usuario_actual or {}
+        self.tiene_permiso_fn = tiene_permiso_fn
 
         self._init_ui()
         self.consultar()
+
+    def _can(self, perm: str) -> bool:
+        if self.tiene_permiso_fn:
+            return bool(self.tiene_permiso_fn(perm))
+        return True
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -296,6 +303,7 @@ class PersonalCicloView(QWidget):
             mes=qdate.month(),
             anio=qdate.year(),
             usuario_actual=self.usuario_actual,
+            tiene_permiso_fn=self.tiene_permiso_fn,
             parent=self,
         )
         dlg.exec()
@@ -303,6 +311,10 @@ class PersonalCicloView(QWidget):
 
     def _on_soltado_en_libres(self, emp: Dict[str, Any]) -> None:
         """Al arrastrar un agente ocupado hacia la grilla de libres: liberar del relevo."""
+        if not self._can("reemplazos.asignar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para modificar o desasignar personal de ciclo.")
+            return
+
         reemplazo_id = emp.get("reemplazo_id")
         nombre = emp.get("apellidos_nombres", "")
         titular = emp.get("reemplaza_a", "")
@@ -329,6 +341,10 @@ class PersonalCicloView(QWidget):
 
     def _on_soltado_en_ocupados(self, emp: Dict[str, Any]) -> None:
         """Al arrastrar un agente libre hacia la grilla de ocupados: asignar como relevo a una novedad sin cubrir."""
+        if not self._can("reemplazos.asignar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para asignar relevos a personal de ciclo.")
+            return
+
         f_str = self.date_picker.date().toString("dd/MM/yyyy")
         dot = emp.get("dotacion") or self.combo_dotacion.currentText()
         nombre = emp.get("apellidos_nombres", "")

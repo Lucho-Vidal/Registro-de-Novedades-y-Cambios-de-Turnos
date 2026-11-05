@@ -333,6 +333,7 @@ class MainWindow(QMainWindow):
                 self.pdf_service,
                 self.excel_service,
                 usuario_actual=self.usuario_actual,
+                tiene_permiso_fn=self._tiene_permiso,
                 parent=self,
             )
             self.tabs.addTab(self.tab_ciclo, "⏱️ Personal de Ciclo")

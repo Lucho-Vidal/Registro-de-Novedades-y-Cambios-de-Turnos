@@ -100,6 +100,11 @@ class BaseTableModel(QAbstractTableModel):
                 f.setBold(True)
                 return f
 
+        elif role == Qt.ToolTipRole:
+            if raw_val is None or raw_val == "":
+                return ""
+            return str(raw_val)
+
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole) -> Any:

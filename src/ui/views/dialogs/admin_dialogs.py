@@ -100,6 +100,11 @@ class AdminUsuariosWidget(QWidget):
         self.btn_nuevo.clicked.connect(self._nuevo_usuario)
         bar.addWidget(self.btn_nuevo)
 
+        self.btn_editar = QPushButton("✏️ Modificar Usuario")
+        self.btn_editar.setObjectName("btnSecondary")
+        self.btn_editar.clicked.connect(self._modificar_usuario)
+        bar.addWidget(self.btn_editar)
+
         self.btn_toggle_activo = QPushButton("🔄 Activar / Desactivar")
         self.btn_toggle_activo.setObjectName("btnSecondary")
         self.btn_toggle_activo.clicked.connect(self._toggle_activo)
@@ -129,6 +134,7 @@ class AdminUsuariosWidget(QWidget):
         self.table.setColumnWidth(3, 100)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setColumnWidth(5, 100)
+        self.table.doubleClicked.connect(lambda idx: self._modificar_usuario())
         layout.addWidget(self.table)
 
         self.recargar()
@@ -210,6 +216,85 @@ class AdminUsuariosWidget(QWidget):
                 self.recargar()
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
+
+    def _modificar_usuario(self) -> None:
+        u = self._obtener_seleccionado()
+        if not u:
+            QMessageBox.warning(self, "Usuarios", "Seleccione un usuario en la tabla para modificar.")
+            return
+
+        roles_disponibles = [r["nombre"] for r in self.auth_service.listar_roles()]
+        roles_actuales = [r.strip() for r in (u.get("roles") or "").split(",") if r.strip()]
+        rol_principal = roles_actuales[0] if roles_actuales else ""
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Modificar Usuario - {u['username']}")
+        dlg.setMinimumWidth(420)
+        form = QFormLayout(dlg)
+        form.setSpacing(10)
+
+        txt_user = QLineEdit(str(u.get("username") or ""))
+        txt_nom = QLineEdit(str(u.get("nombre") or ""))
+        txt_leg = QLineEdit(str(u.get("legajo") or ""))
+
+        combo_rol = QComboBox()
+        combo_rol.addItem("")
+        for r_nom in roles_disponibles:
+            combo_rol.addItem(r_nom)
+        idx_rol = combo_rol.findText(rol_principal)
+        if idx_rol >= 0:
+            combo_rol.setCurrentIndex(idx_rol)
+
+        chk_activo = QCheckBox("Usuario activo (puede iniciar sesión)")
+        chk_activo.setChecked(bool(u.get("activo") == 1))
+
+        form.addRow("Usuario:", txt_user)
+        form.addRow("Nombre:", txt_nom)
+        form.addRow("Legajo:", txt_leg)
+        form.addRow("Rol principal:", combo_rol)
+        form.addRow("", chk_activo)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.setObjectName("btnSecondary")
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_ok = QPushButton("Guardar Cambios")
+        btn_ok.clicked.connect(dlg.accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_ok)
+        form.addRow(btn_box)
+
+        if dlg.exec():
+            usr = txt_user.text().strip()
+            nom = txt_nom.text().strip()
+            leg_str = txt_leg.text().strip()
+            rol_sel = combo_rol.currentText().strip()
+
+            if not usr or not leg_str:
+                QMessageBox.warning(self, "Validación", "Usuario y legajo son obligatorios.")
+                return
+
+            try:
+                leg_val = int(leg_str)
+            except ValueError:
+                QMessageBox.warning(self, "Validación", "El legajo debe ser un número entero.")
+                return
+
+            try:
+                roles_nuevos = [rol_sel] if rol_sel else []
+                self.auth_service.actualizar_usuario(
+                    user_id=int(u["id"]),
+                    username=usr,
+                    nombre=nom,
+                    legajo=leg_val,
+                    activo=1 if chk_activo.isChecked() else 0,
+                    roles=roles_nuevos,
+                )
+                self.recargar()
+                QMessageBox.information(self, "Éxito", "Usuario modificado correctamente.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"No se pudo modificar el usuario:\n{e}")
 
     def _toggle_activo(self) -> None:
         u = self._obtener_seleccionado()

@@ -104,12 +104,11 @@ class AuthService:
 
     def tiene_permiso(self, user_id: int, permission_code: str) -> bool:
         with self.db.read_connection() as conn:
-            # Bypass especial: registros.modificar confiere novedad/cambios editar y eliminar
             row = conn.execute(
                 """SELECT 1 FROM usuario_roles ur
                    JOIN rol_permisos rp ON rp.rol_id=ur.rol_id
                    JOIN permisos p ON p.id=rp.permiso_id
-                   WHERE ur.usuario_id=? AND (p.codigo=? OR p.codigo='registros.modificar')
+                   WHERE ur.usuario_id=? AND p.codigo=?
                    LIMIT 1""",
                 (user_id, permission_code),
             ).fetchone()
@@ -126,12 +125,48 @@ class AuthService:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def actualizar_usuario(self, user_id: int, username: str, nombre: str, legajo: Optional[int], activo: int) -> None:
+    def actualizar_usuario(
+        self,
+        user_id: int,
+        username: str,
+        nombre: str,
+        legajo: Optional[int],
+        activo: int,
+        roles: Optional[List[str]] = None,
+    ) -> None:
+        now_ts = self.db.now()
         with self.db.write_transaction() as conn:
             conn.execute(
-                "UPDATE usuarios SET username=?, nombre=?, legajo=?, activo=? WHERE id=?",
-                (username.strip(), nombre.strip(), legajo, int(activo), user_id),
+                """UPDATE usuarios
+                   SET username=?, nombre=?, legajo=?, activo=?,
+                       sync_status='pending', updated_at=?
+                   WHERE id=?""",
+                (username.strip(), nombre.strip(), legajo, int(activo), now_ts, user_id),
             )
+            if roles is not None:
+                conn.execute("DELETE FROM usuario_roles WHERE usuario_id=?", (user_id,))
+                for role in roles:
+                    r_clean = str(role).strip()
+                    if not r_clean:
+                        continue
+                    conn.execute("INSERT OR IGNORE INTO roles(nombre) VALUES (?)", (r_clean,))
+                    role_id = conn.execute("SELECT id FROM roles WHERE nombre=?", (r_clean,)).fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO usuario_roles(usuario_id, rol_id) VALUES (?, ?)",
+                        (user_id, role_id),
+                    )
+
+            user_row = conn.execute("SELECT * FROM usuarios WHERE id=?", (int(user_id),)).fetchone()
+            if user_row:
+                payload = json.dumps(dict(user_row), ensure_ascii=False)
+                conn.execute(
+                    """INSERT INTO sync_outbox(tabla, registro_pk, operacion, payload_json, creado_en, intentos)
+                       VALUES ('usuarios', ?, 'UPSERT', ?, ?, 0)
+                       ON CONFLICT(tabla, registro_pk) DO UPDATE SET
+                           operacion='UPSERT', payload_json=excluded.payload_json,
+                           creado_en=excluded.creado_en, intentos=0, ultimo_error=NULL""",
+                    (str(user_row["username"]), payload, now_ts),
+                )
 
     def obtener_usuario(self, user_id: int) -> Optional[Dict[str, Any]]:
         with self.db.read_connection() as conn:

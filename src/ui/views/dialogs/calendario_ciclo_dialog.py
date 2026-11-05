@@ -223,6 +223,7 @@ class CalendarioCicloDialog(QDialog):
         mes: Optional[int] = None,
         anio: Optional[int] = None,
         usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -231,6 +232,7 @@ class CalendarioCicloDialog(QDialog):
         self.pdf_service = pdf_service
         self.excel_service = excel_service
         self.usuario_actual = usuario_actual or {}
+        self.tiene_permiso_fn = tiene_permiso_fn
 
         hoy = date.today()
         self.mes = mes or hoy.month
@@ -243,6 +245,11 @@ class CalendarioCicloDialog(QDialog):
 
         self._init_ui()
         self.cargar_mes()
+
+    def _can(self, perm: str) -> bool:
+        if self.tiene_permiso_fn:
+            return bool(self.tiene_permiso_fn(perm))
+        return True
 
     def closeEvent(self, event) -> None:
         self.reject()
@@ -308,6 +315,7 @@ class CalendarioCicloDialog(QDialog):
         # 2. Barra de acciones secundarias
         action_bar = QHBoxLayout()
         self.btn_asignar = QPushButton("⏱️ Asignar Jornada / Franco")
+        self.btn_asignar.setEnabled(self._can("reemplazos.asignar"))
         self.btn_asignar.clicked.connect(self._asignar_jornada_seleccionada)
         action_bar.addWidget(self.btn_asignar)
 
@@ -357,7 +365,18 @@ class CalendarioCicloDialog(QDialog):
         self.table_view.setModel(self.table_model)
         self.table_view.setSelectionBehavior(QTableView.SelectRows)
         self.table_view.setSelectionMode(QTableView.SingleSelection)
-        self.table_view.horizontalHeader().setSectionResizeMode(9, QHeaderView.Stretch)
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_view.setColumnWidth(0, 45)   # DÍA
+        self.table_view.setColumnWidth(1, 85)   # FECHA
+        self.table_view.setColumnWidth(2, 75)   # DÍA SEM.
+        self.table_view.setColumnWidth(3, 110)  # ESTADO
+        self.table_view.setColumnWidth(4, 120)  # HORA DISPONIBLE
+        self.table_view.setColumnWidth(5, 60)   # TOMA
+        self.table_view.setColumnWidth(6, 60)   # DEJA
+        self.table_view.setColumnWidth(7, 80)   # HS TRABAJADAS
+        self.table_view.setColumnWidth(8, 80)   # HS SEMANA
+        self.table_view.setColumnWidth(9, 190)  # REEMPLAZA A / MOTIVO
+        self.table_view.horizontalHeader().setSectionResizeMode(10, QHeaderView.Stretch)  # OBSERVACIONES
         self.table_view.doubleClicked.connect(self._on_row_double_clicked)
         layout.addWidget(self.table_view)
 
@@ -387,6 +406,10 @@ class CalendarioCicloDialog(QDialog):
         return self.table_model.get_row(indexes[0].row())
 
     def _asignar_jornada_seleccionada(self) -> None:
+        if not self._can("reemplazos.asignar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para asignar o modificar jornadas de ciclo.")
+            return
+
         dia_info = self._obtener_dia_seleccionado()
         if not dia_info:
             QMessageBox.information(self, "Asignar", "Seleccione un día en la tabla.")
@@ -436,6 +459,8 @@ class CalendarioCicloDialog(QDialog):
                 f"Para modificar el turno u horas de toma/deja, utilice 'Asignar Jornada'.",
             )
         else:
+            if not self._can("reemplazos.asignar"):
+                return
             self._asignar_jornada_seleccionada()
 
     def _exportar_pdf(self) -> None:
