@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.config import obtener_usuario_windows
 from src.core.logger import get_logger
 from src.domain.validators import parsear_fecha
 from src.services.excel_service import ExcelService
@@ -195,11 +196,16 @@ class NovedadesView(QWidget):
         self.btn_export_pdf.clicked.connect(self._exportar_pdf)
         toolbar.addWidget(self.btn_export_pdf)
 
+        self.btn_mail = QPushButton("✉️ Enviar por Mail")
+        self.btn_mail.setObjectName("btnSecondary")
+        self.btn_mail.clicked.connect(self._enviar_por_mail)
+        toolbar.addWidget(self.btn_mail)
+
         layout.addWidget(toolbar)
 
         # 2. Barra de Filtros
         filter_frame = QFrame()
-        filter_frame.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 4px; padding: 4px;")
+        filter_frame.setObjectName("filterBar")
         filter_layout = QHBoxLayout(filter_frame)
         filter_layout.setContentsMargins(6, 4, 6, 4)
         filter_layout.setSpacing(8)
@@ -248,12 +254,13 @@ class NovedadesView(QWidget):
         # 3. Tabla de Datos
         headers = [
             "ID", "REGISTRADO EN", "LEGAJO", "APELLIDOS Y NOMBRES", "ESPECIALIDAD", "DOTACIÓN",
-            "TURNO", "FRANCO", "NOVEDAD", "DESDE", "HASTA", "CUBIERTO", "REEMPLAZOS", "REF. ESTACIÓN", "SUPERVISOR",
+            "TURNO", "FRANCO", "NOVEDAD", "DESDE", "HASTA", "CUBIERTO", "REEMPLAZOS", "REF. ESTACIÓN",
+            "SUPERVISOR", "USUARIO WIN",
         ]
         keys = [
             "id", "registrado_en", "legajo", "apellidos_nombres", "especialidad", "dotacion",
             "turnos", "franco", "novedad", "fecha_inicio", "fecha_fin", "cubierto", "reemplazos",
-            "referencia_estacion", "supervisor",
+            "referencia_estacion", "supervisor", "usuario_windows",
         ]
 
         self.table_model = BaseTableModel(headers, keys, parent=self)
@@ -265,7 +272,22 @@ class NovedadesView(QWidget):
         self.table_view.setSelectionBehavior(QTableView.SelectRows)
         self.table_view.setSelectionMode(QTableView.SingleSelection)
         self.table_view.setSortingEnabled(True)
-        self.table_view.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_view.setColumnWidth(0, 55)
+        self.table_view.setColumnWidth(1, 130)
+        self.table_view.setColumnWidth(2, 75)
+        self.table_view.setColumnWidth(3, 180)
+        self.table_view.setColumnWidth(4, 110)
+        self.table_view.setColumnWidth(5, 100)
+        self.table_view.setColumnWidth(6, 80)
+        self.table_view.setColumnWidth(7, 85)
+        self.table_view.setColumnWidth(8, 140)
+        self.table_view.setColumnWidth(9, 95)
+        self.table_view.setColumnWidth(10, 95)
+        self.table_view.setColumnWidth(11, 95)
+        self.table_view.setColumnWidth(12, 160)
+        self.table_view.horizontalHeader().setSectionResizeMode(13, QHeaderView.Stretch)
+        self.table_view.setColumnWidth(14, 120)
         self.table_view.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self.table_view)
 
@@ -431,7 +453,7 @@ class NovedadesView(QWidget):
             self.records_service.eliminar_novedad(
                 fila["id"],
                 user_id=self.usuario_actual.get("id"),
-                windows_user=self.usuario_actual.get("username"),
+                windows_user=obtener_usuario_windows(),
                 bypass_window=puede_eliminar_libre,
             )
             self.recargar_datos()
@@ -473,6 +495,45 @@ class NovedadesView(QWidget):
             QMessageBox.information(self, "Constancia PDF", f"Constancia PDF generada exitosamente en:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo generar la constancia PDF:\n{e}")
+
+    def _enviar_por_mail(self) -> None:
+        fila = self._obtener_fila_seleccionada()
+        if not fila:
+            QMessageBox.information(self, "Enviar por Mail", "Seleccione una novedad en la tabla.")
+            return
+        try:
+            import os
+            import tempfile
+            from src.services.mail_service import MailService
+
+            tmp_dir = tempfile.gettempdir()
+            pdf_path = os.path.join(tmp_dir, f"Constancia_Novedad_{fila['id']}.pdf")
+            tramos = self.records_service.listar_reemplazos_por_novedad(fila["id"])
+            self.pdf_service.generar_constancia_novedad(fila, tramos, pdf_path)
+
+            dests = self.records_service.listar_destinatarios_informe(incluir_inactivos=False)
+            emails = [d["email"] for d in dests if d.get("email")]
+            asunto = f"Informe de Novedad #{fila['id']} - {fila.get('apellidos_nombres')} (Leg. {fila.get('legajo')})"
+            cuerpo = (
+                f"<p>Se adjunta constancia de novedad operativa <b>#{fila['id']}</b> ({fila.get('novedad')}).</p>"
+                f"<ul>"
+                f"<li><b>Agente:</b> {fila.get('apellidos_nombres')} (Leg. {fila.get('legajo')})</li>"
+                f"<li><b>Dotación:</b> {fila.get('dotacion')} | <b>Especialidad:</b> {fila.get('especialidad')}</li>"
+                f"<li><b>Desde:</b> {fila.get('fecha_inicio')} | <b>Hasta:</b> {fila.get('fecha_fin') or '-'}</li>"
+                f"<li><b>Ref. Estación:</b> {fila.get('referencia_estacion')} | <b>Supervisor:</b> {fila.get('supervisor')}</li>"
+                f"<li><b>Observaciones:</b> {fila.get('observaciones') or '-'}</li>"
+                f"</ul>"
+            )
+            ok, msg = MailService.crear_borrador_outlook(
+                destinatarios=emails,
+                asunto=asunto,
+                cuerpo_html=cuerpo,
+                adjuntos=[pdf_path],
+            )
+            if not ok:
+                QMessageBox.warning(self, "Correo", msg)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo preparar el correo:\n{e}")
 
     def _on_double_click(self, index) -> None:
         self._modificar_novedad()

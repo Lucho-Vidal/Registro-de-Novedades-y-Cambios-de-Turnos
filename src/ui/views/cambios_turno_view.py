@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.config import obtener_usuario_windows
 from src.core.logger import get_logger
 from src.services.excel_service import ExcelService
 from src.services.pdf_service import PDFService
@@ -104,7 +105,7 @@ class CambiosTurnoView(QWidget):
 
         # 2. Barra de Filtros
         filter_frame = QFrame()
-        filter_frame.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 4px; padding: 4px;")
+        filter_frame.setObjectName("filterBar")
         filter_layout = QHBoxLayout(filter_frame)
         filter_layout.setContentsMargins(6, 4, 6, 4)
         filter_layout.setSpacing(8)
@@ -134,12 +135,12 @@ class CambiosTurnoView(QWidget):
         headers = [
             "ID", "REGISTRADO EN", "LEG. 1", "APELLIDOS Y NOMBRES 1", "ESP. 1", "DOT. 1", "TURNO 1",
             "LEG. 2", "APELLIDOS Y NOMBRES 2", "ESP. 2", "DOT. 2", "TURNO 2",
-            "FECHA CAMBIO", "REF. ESTACIÓN", "SUPERVISOR", "OBSERVACIONES",
+            "FECHA CAMBIO", "REF. ESTACIÓN", "SUPERVISOR", "USUARIO WIN", "OBSERVACIONES",
         ]
         keys = [
             "id", "registrado_en", "legajo_1", "apellidos_nombres_1", "especialidad_1", "dotacion_1", "turnos_1",
             "legajo_2", "apellidos_nombres_2", "especialidad_2", "dotacion_2", "turnos_2",
-            "fecha_cambio", "referencia_estacion", "supervisor", "observaciones",
+            "fecha_cambio", "referencia_estacion", "supervisor", "usuario_windows", "observaciones",
         ]
 
         self.table_model = BaseTableModel(headers, keys, parent=self)
@@ -151,8 +152,23 @@ class CambiosTurnoView(QWidget):
         self.table_view.setSelectionBehavior(QTableView.SelectRows)
         self.table_view.setSelectionMode(QTableView.SingleSelection)
         self.table_view.setSortingEnabled(True)
-        self.table_view.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table_view.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_view.setColumnWidth(0, 55)
+        self.table_view.setColumnWidth(1, 130)
+        self.table_view.setColumnWidth(2, 70)
+        self.table_view.setColumnWidth(3, 170)
+        self.table_view.setColumnWidth(4, 95)
+        self.table_view.setColumnWidth(5, 90)
+        self.table_view.setColumnWidth(6, 75)
+        self.table_view.setColumnWidth(7, 70)
+        self.table_view.setColumnWidth(8, 170)
+        self.table_view.setColumnWidth(9, 95)
+        self.table_view.setColumnWidth(10, 90)
+        self.table_view.setColumnWidth(11, 75)
+        self.table_view.setColumnWidth(12, 95)
+        self.table_view.setColumnWidth(13, 140)
+        self.table_view.setColumnWidth(14, 110)
+        self.table_view.horizontalHeader().setSectionResizeMode(15, QHeaderView.Stretch)
         self.table_view.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self.table_view)
 
@@ -277,7 +293,7 @@ class CambiosTurnoView(QWidget):
             self.records_service.eliminar_cambio(
                 fila["id"],
                 user_id=self.usuario_actual.get("id"),
-                windows_user=self.usuario_actual.get("username"),
+                windows_user=obtener_usuario_windows(),
                 bypass_window=puede_eliminar_libre,
             )
             self.recargar_datos()

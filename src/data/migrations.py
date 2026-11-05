@@ -245,6 +245,113 @@ def init_database_schema(db: DatabaseManager) -> None:
             CREATE INDEX IF NOT EXISTS idx_cambios_legajo_2 ON cambios_turno(legajo_2);
             CREATE INDEX IF NOT EXISTS idx_cambios_registrado ON cambios_turno(registrado_en DESC);
             CREATE INDEX IF NOT EXISTS idx_sync_outbox_tabla ON sync_outbox(tabla);
+
+            -- Base documental de Itinerarios de Conducción Eléctrica
+            CREATE TABLE IF NOT EXISTS turnos_itinerario (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo_turno TEXT UNIQUE NOT NULL,
+                turno_base TEXT NOT NULL,
+                subindice INTEGER,
+                tipo_turno TEXT NOT NULL,
+                deposito_base TEXT NOT NULL,
+                toma_servicio TEXT,
+                deje_servicio TEXT,
+                duracion_jornada TEXT,
+                tiempo_toma TEXT,
+                tiempo_deje TEXT,
+                itinerario_vigente TEXT NOT NULL,
+                observaciones_turno TEXT,
+                activo INTEGER NOT NULL DEFAULT 1,
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT,
+                updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS turnos_vueltas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turno_id INTEGER NOT NULL REFERENCES turnos_itinerario(id) ON DELETE CASCADE,
+                nro_vuelta INTEGER NOT NULL,
+                ref TEXT,
+                nro_tren TEXT,
+                origen TEXT,
+                hora_salida TEXT,
+                destino TEXT,
+                hora_llegada TEXT,
+                observaciones_tramo TEXT,
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT,
+                updated_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_turnos_itin_base ON turnos_itinerario(turno_base);
+            CREATE INDEX IF NOT EXISTS idx_turnos_itin_deposito ON turnos_itinerario(deposito_base);
+            CREATE INDEX IF NOT EXISTS idx_turnos_vueltas_tren ON turnos_vueltas(nro_tren);
+            CREATE INDEX IF NOT EXISTS idx_turnos_vueltas_turno ON turnos_vueltas(turno_id);
+
+            -- Estaciones intermedias y horarios de paso por tren
+            CREATE TABLE IF NOT EXISTS tren_paradas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nro_tren TEXT NOT NULL,
+                itinerario TEXT NOT NULL DEFAULT '',
+                regimen TEXT NOT NULL DEFAULT 'LV',
+                orden_parada INTEGER NOT NULL DEFAULT 1,
+                estacion TEXT NOT NULL,
+                hora_paso TEXT NOT NULL,
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tren_paradas_tren ON tren_paradas(nro_tren);
+            CREATE INDEX IF NOT EXISTS idx_tren_paradas_itin ON tren_paradas(itinerario);
+
+            -- Módulo de Ordenamientos Operativos
+            CREATE TABLE IF NOT EXISTS ordenamientos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nro_orden TEXT UNIQUE NOT NULL,
+                fecha_emision TEXT NOT NULL,
+                hora_emision TEXT NOT NULL,
+                legajo_personal INTEGER NOT NULL,
+                nombre_personal TEXT NOT NULL DEFAULT '',
+                deposito TEXT NOT NULL DEFAULT 'PC',
+                itinerario TEXT NOT NULL DEFAULT '',
+                ciclo_o_turno TEXT NOT NULL DEFAULT '',
+                regimen TEXT NOT NULL DEFAULT 'LV',
+                motivo_orden TEXT NOT NULL DEFAULT '',
+                observacion_pie TEXT NOT NULL DEFAULT '',
+                ref_pct TEXT NOT NULL DEFAULT '',
+                emisor TEXT NOT NULL DEFAULT '',
+                usuario_id INTEGER REFERENCES usuarios(id),
+                usuario_windows TEXT,
+                estado TEXT NOT NULL DEFAULT 'activo',
+                activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+                deleted_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS ordenamiento_tramos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ordenamiento_id INTEGER NOT NULL REFERENCES ordenamientos(id) ON DELETE CASCADE,
+                nro_secuencia INTEGER NOT NULL,
+                ref TEXT NOT NULL DEFAULT '',
+                nro_tren TEXT NOT NULL DEFAULT '',
+                origen TEXT NOT NULL DEFAULT '',
+                hora_salida TEXT NOT NULL DEFAULT '',
+                destino TEXT NOT NULL DEFAULT '',
+                hora_llegada TEXT NOT NULL DEFAULT '',
+                observaciones TEXT NOT NULL DEFAULT '',
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ordenamientos_fecha ON ordenamientos(fecha_emision);
+            CREATE INDEX IF NOT EXISTS idx_ordenamientos_legajo ON ordenamientos(legajo_personal);
+            CREATE INDEX IF NOT EXISTS idx_ordenamientos_estado ON ordenamientos(estado, activo);
+            CREATE INDEX IF NOT EXISTS idx_ord_tramos_ord_id ON ordenamiento_tramos(ordenamiento_id);
+            CREATE INDEX IF NOT EXISTS idx_ord_tramos_tren ON ordenamiento_tramos(nro_tren);
             """
         )
 
@@ -262,15 +369,22 @@ def init_database_schema(db: DatabaseManager) -> None:
             "cambios_turno",
             "ciclo_jornadas",
             "auditoria",
+            "turnos_itinerario",
+            "turnos_vueltas",
+            "tren_paradas",
+            "ordenamientos",
+            "ordenamiento_tramos",
         ]
         for t in tablas_sincronizables:
             cols = {row[1] for row in conn.execute(f"PRAGMA table_info({t});").fetchall()}
             if "sync_status" not in cols:
                 conn.execute(f"ALTER TABLE {t} ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'pending';")
             if "created_at" not in cols and t != "auditoria":
-                conn.execute(f"ALTER TABLE {t} ADD COLUMN created_at TEXT DEFAULT (datetime('now', 'localtime'));")
+                conn.execute(f"ALTER TABLE {t} ADD COLUMN created_at TEXT;")
+                conn.execute(f"UPDATE {t} SET created_at = datetime('now', 'localtime') WHERE created_at IS NULL;")
             if "updated_at" not in cols and t != "auditoria":
-                conn.execute(f"ALTER TABLE {t} ADD COLUMN updated_at TEXT DEFAULT (datetime('now', 'localtime'));")
+                conn.execute(f"ALTER TABLE {t} ADD COLUMN updated_at TEXT;")
+                conn.execute(f"UPDATE {t} SET updated_at = datetime('now', 'localtime') WHERE updated_at IS NULL;")
 
         # Empleados: franco_horario y jornada_horas
         emp_cols = {row[1] for row in conn.execute("PRAGMA table_info(empleados);").fetchall()}
@@ -308,6 +422,44 @@ def init_database_schema(db: DatabaseManager) -> None:
 
         conn.execute("INSERT OR IGNORE INTO tipos_novedad(nombre, dias, exportar_descubierto) VALUES ('Informe', 1, 0);")
         conn.execute("INSERT OR IGNORE INTO tipos_novedad(nombre, dias, exportar_descubierto) VALUES ('Dona sangre', 1, 1);")
+
+        # Poblar tren_paradas automáticamente desde turnos_vueltas si está vacía
+        cnt_paradas = conn.execute("SELECT COUNT(*) FROM tren_paradas;").fetchone()[0]
+        if cnt_paradas == 0:
+            vueltas_rows = conn.execute(
+                """
+                SELECT v.nro_tren, t.itinerario_vigente, t.tipo_turno,
+                       v.origen, v.hora_salida, v.destino, v.hora_llegada
+                FROM turnos_vueltas v
+                JOIN turnos_itinerario t ON t.id = v.turno_id
+                WHERE v.nro_tren IS NOT NULL AND TRIM(v.nro_tren) != ''
+                ORDER BY v.nro_tren, v.hora_salida
+                """
+            ).fetchall()
+            vistas: set[tuple[str, str, str, str]] = set()
+            orden_por_tren: dict[tuple[str, str], int] = {}
+            for r in vueltas_rows:
+                nt = str(r[0]).strip()
+                itin = str(r[1] or "").strip()
+                reg = str(r[2] or "LV").strip()
+                orig = str(r[3] or "").strip()
+                hs = str(r[4] or "").strip()
+                dest = str(r[5] or "").strip()
+                hl = str(r[6] or "").strip()
+                for est, hr in ((orig, hs), (dest, hl)):
+                    if est and hr:
+                        key = (nt, itin, est, hr)
+                        if key not in vistas:
+                            vistas.add(key)
+                            ord_k = (nt, itin)
+                            orden_por_tren[ord_k] = orden_por_tren.get(ord_k, 0) + 1
+                            conn.execute(
+                                """
+                                INSERT INTO tren_paradas(nro_tren, itinerario, regimen, orden_parada, estacion, hora_paso)
+                                VALUES (?, ?, ?, ?, ?, ?);
+                                """,
+                                (nt, itin, reg, orden_por_tren[ord_k], est, hr),
+                            )
 
         conn.execute(
             "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES (?, ?);",

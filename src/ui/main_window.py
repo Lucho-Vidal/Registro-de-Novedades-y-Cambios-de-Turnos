@@ -31,6 +31,13 @@ from PySide6.QtWidgets import (
 from src.core.config import APP_NAME, APP_VERSION
 from src.core.logger import get_logger
 from src.core.settings import AppSettings
+from src.core.theme import (
+    TEMA_CLARO,
+    TEMA_OSCURO,
+    aplicar_tema_visual,
+    guardar_tema_visual,
+    obtener_tema_visual,
+)
 from src.data.database import DatabaseManager
 from src.data.sync.outbox_queue import OutboxQueue
 from src.data.sync.supabase_sync import SupabaseSyncClient
@@ -40,8 +47,16 @@ from src.services.excel_service import ExcelService
 from src.services.pdf_service import PDFService
 from src.services.records_service import RecordsService
 from src.services.word_service import WordService
+from src.ui.views.administracion_view import AdministracionView
+from src.ui.views.buscador_turnos_view import BuscadorTurnosView
 from src.ui.views.cambios_turno_view import CambiosTurnoView
 from src.ui.views.dashboard_view import DashboardView
+from src.ui.views.empleados_view import EmpleadosView
+from src.ui.views.novedades_cambios_view import NovedadesCambiosView
+from src.ui.views.novedades_view import NovedadesView
+from src.ui.views.personal_ciclo_view import PersonalCicloView
+from src.ui.views.turnos_sin_cubrir_view import TurnosSinCubrirView
+from src.ui.views.dialogs.acerca_dialog import AcercaDialog
 from src.ui.views.dialogs.admin_dialogs import (
     AdminAuditoriaDialog,
     AdminBackupsDialog,
@@ -93,18 +108,25 @@ class MainWindow(QMainWindow):
 
         self._ultimo_movimiento = time.time()
         self._sesion_minutos = 30
+        try:
+            with self.db.read_connection() as conn:
+                r_sm = conn.execute("SELECT valor FROM configuracion WHERE clave = 'sesion_minutos'").fetchone()
+                if r_sm and r_sm[0]:
+                    self._sesion_minutos = max(1, int(r_sm[0]))
+        except Exception:
+            pass
         self._sin_revisar_count = 0
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} - Operaciones")
         self.resize(1280, 800)
 
-        # Cargar hoja de estilo corporativa
-        self._aplicar_estilos()
-
         # Configurar UI
         self._init_menu_bar()
         self._init_tabs()
         self._init_status_bar()
+
+        # Cargar hoja de estilo corporativa aplicada a toda la aplicación
+        self._aplicar_estilos()
 
         # Restaurar geometría
         self._restaurar_geometria()
@@ -119,15 +141,26 @@ class MainWindow(QMainWindow):
         self.recargar_todo()
         self._verificar_backup_diario()
 
-    def _aplicar_estilos(self) -> None:
+    def _aplicar_estilos(self, tema: str | None = None) -> None:
         try:
-            from pathlib import Path
-            qss_path = Path(__file__).resolve().parent / "theme" / "crono_style.qss"
-            if qss_path.exists():
-                with open(qss_path, "r", encoding="utf-8") as f:
-                    self.setStyleSheet(f.read())
+            tema_activo = aplicar_tema_visual(tema=tema, db=self.db)
+            if hasattr(self, "tab_dashboard"):
+                self.tab_dashboard.actualizar_tema(tema_activo)
+            if hasattr(self, "tab_buscador_turnos") and hasattr(self.tab_buscador_turnos, "actualizar_tema"):
+                self.tab_buscador_turnos.actualizar_tema()
+            if hasattr(self, "tab_turnos_sin_cubrir") and hasattr(self.tab_turnos_sin_cubrir, "table"):
+                self.tab_turnos_sin_cubrir.table.viewport().update()
         except Exception as e:
             logger.warning(f"No se pudo cargar la hoja de estilos QSS: {e}")
+
+    def cambiar_tema(self, tema: str) -> None:
+        guardar_tema_visual(tema, self.db)
+        QTimer.singleShot(0, lambda: self._ejecutar_cambiar_tema(tema))
+
+    def _ejecutar_cambiar_tema(self, tema: str) -> None:
+        self._aplicar_estilos(tema)
+        self.update()
+        self.repaint()
 
     def _tiene_permiso(self, codigo: str) -> bool:
         user_id = self.usuario_actual.get("id")
@@ -149,6 +182,21 @@ class MainWindow(QMainWindow):
             act_backup_quick.triggered.connect(self._backup_rapido)
 
         menu_archivo.addSeparator()
+
+        # Submenú Tema Visual
+        menu_tema = menu_archivo.addMenu("🎨 Tema Visual")
+        act_tema_claro = menu_tema.addAction("☀️ Modo Claro")
+        act_tema_claro.triggered.connect(lambda: self.cambiar_tema("claro"))
+        act_tema_oscuro = menu_tema.addAction("🌙 Modo Oscuro Moderno")
+        act_tema_oscuro.triggered.connect(lambda: self.cambiar_tema("oscuro"))
+
+        # Cambio de contraseña del usuario activo
+        act_pass = menu_archivo.addAction("🔑 Cambiar mi Contraseña...")
+        act_pass.triggered.connect(self._cambiar_mi_password)
+
+        menu_archivo.addSeparator()
+        act_cambiar_usuario = menu_archivo.addAction("👥 Cambiar Usuario...")
+        act_cambiar_usuario.triggered.connect(self._cambiar_usuario)
         act_logout = menu_archivo.addAction("🔒 Cerrar Sesión")
         act_logout.triggered.connect(self._cerrar_sesion)
         act_salir = menu_archivo.addAction("✕ Salir")
@@ -167,7 +215,7 @@ class MainWindow(QMainWindow):
 
         if self._tiene_permiso("empleados.administrar"):
             act_emp = menu_admin.addAction("👷 Empleados (BASE)")
-            act_emp.triggered.connect(lambda: AdminEmpleadosDialog(self.records_service, self.excel_service, parent=self).exec())
+            act_emp.triggered.connect(self._mostrar_empleados)
 
         if self._tiene_permiso("tiposNovedad.administrar") or self._tiene_permiso("dotaciones.administrar"):
             act_cat = menu_admin.addAction("📋 Catálogos Operativos")
@@ -193,14 +241,17 @@ class MainWindow(QMainWindow):
         self.menu_nuevos = menubar.addMenu("🔔 Registros Nuevos (0)")
         self.menu_nuevos.aboutToShow.connect(self._on_abrir_menu_nuevos)
 
-        # Menú Ayuda
-        menu_ayuda = menubar.addMenu("Ayuda")
-        act_about = menu_ayuda.addAction("ℹ️ Acerca de RENO...")
-        act_about.triggered.connect(self._acerca_de)
-
     def _init_tabs(self) -> None:
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+
+        # Botón de versión y changelog en la esquina superior derecha (Estándar CRONO-PCT)
+        self.btn_version = QPushButton(f"RENO v{APP_VERSION}")
+        self.btn_version.setObjectName("btnVersion")
+        self.btn_version.setCursor(Qt.PointingHandCursor)
+        self.btn_version.setToolTip("Ver arquitectura, información del sistema y changelog")
+        self.btn_version.clicked.connect(self._acerca_de)
+        self.tabs.setCornerWidget(self.btn_version, Qt.TopRightCorner)
 
         # 1. Panel de Control
         self.tab_dashboard = DashboardView(
@@ -211,22 +262,19 @@ class MainWindow(QMainWindow):
         )
         self.tabs.addTab(self.tab_dashboard, "📈 Panel de Control")
 
-        # 2. Novedades Operativas
-        if self._tiene_permiso("novedades.ver"):
-            self.tab_novedades = NovedadesView(
-                self.records_service,
-                self.excel_service,
-                self.pdf_service,
-                usuario_actual=self.usuario_actual,
-                tiene_permiso_fn=self._tiene_permiso,
-                parent=self,
-            )
-            self.tab_novedades.registro_modificado.connect(self._on_registro_modificado)
-            self.tabs.addTab(self.tab_novedades, "📋 Novedades Operativas")
+        # 2. Buscador de Turnos e Itinerarios
+        self.tab_buscador_turnos = BuscadorTurnosView(
+            self.records_service,
+            self.excel_service,
+            usuario_actual=self.usuario_actual,
+            tiene_permiso_fn=self._tiene_permiso,
+            parent=self,
+        )
+        self.tabs.addTab(self.tab_buscador_turnos, "🔍 Buscador de Turnos")
 
-        # 3. Cambios de Turno
-        if self._tiene_permiso("cambios_turno.ver"):
-            self.tab_cambios = CambiosTurnoView(
+        # 3. Novedades y Cambios de Turno (Sub-pestañas unificadas)
+        if self._tiene_permiso("novedades.ver") or self._tiene_permiso("cambios_turno.ver"):
+            self.tab_novedades_cambios = NovedadesCambiosView(
                 self.records_service,
                 self.excel_service,
                 self.pdf_service,
@@ -235,10 +283,30 @@ class MainWindow(QMainWindow):
                 tiene_permiso_fn=self._tiene_permiso,
                 parent=self,
             )
-            self.tab_cambios.registro_modificado.connect(self._on_registro_modificado)
-            self.tabs.addTab(self.tab_cambios, "🔄 Cambios de Turno")
+            self.tab_novedades_cambios.registro_modificado.connect(self._on_registro_modificado)
+            self.tabs.addTab(self.tab_novedades_cambios, "📝 Novedades y Cambios")
 
-        # 4. Personal de Ciclo
+        # 4. Turnos Operativos Sin Cubrir
+        if self._tiene_permiso("novedades.ver"):
+            self.tab_turnos_sin_cubrir = TurnosSinCubrirView(
+                self.records_service,
+                self.excel_service,
+                usuario_actual=self.usuario_actual,
+                parent=self,
+            )
+            self.tabs.addTab(self.tab_turnos_sin_cubrir, "🚨 Turnos Sin Cubrir")
+
+        # 5. Empleados (BASE)
+        if self._tiene_permiso("empleados.administrar") or self._tiene_permiso("novedades.ver"):
+            self.tab_empleados = EmpleadosView(
+                self.records_service,
+                self.excel_service,
+                usuario_actual=self.usuario_actual,
+                parent=self,
+            )
+            self.tabs.addTab(self.tab_empleados, "👷 Empleados (BASE)")
+
+        # 6. Personal de Ciclo
         if self._tiene_permiso("reemplazos.ver"):
             self.tab_ciclo = PersonalCicloView(
                 self.records_service,
@@ -249,7 +317,40 @@ class MainWindow(QMainWindow):
             )
             self.tabs.addTab(self.tab_ciclo, "⏱️ Personal de Ciclo")
 
+        # 7. Administración Integral por Pestañas
+        tiene_admin = (
+            self._tiene_permiso("usuarios.administrar")
+            or self._tiene_permiso("roles.administrar")
+            or self._tiene_permiso("tiposNovedad.administrar")
+            or self._tiene_permiso("dotaciones.administrar")
+            or self._tiene_permiso("personalEstacion.ver")
+            or self._tiene_permiso("backup.gestionar")
+            or self._tiene_permiso("auditoria.ver")
+            or self._tiene_permiso("registros.recuperar")
+            or self._tiene_permiso("sesion.configurar")
+        )
+        if tiene_admin:
+            self.tab_administracion = AdministracionView(
+                self.auth_service,
+                self.records_service,
+                self.backup_service,
+                self.excel_service,
+                self.db,
+                usuario_actual=self.usuario_actual,
+                tiene_permiso_fn=self._tiene_permiso,
+                parent=self,
+            )
+            self.tabs.addTab(self.tab_administracion, "⚙️ Administración")
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self.tabs)
+
+    def _on_tab_changed(self, index: int) -> None:
+        widget = self.tabs.widget(index)
+        if widget is getattr(self, "tab_dashboard", None):
+            self.tab_dashboard.actualizar_tema()
+        elif widget is getattr(self, "tab_buscador_turnos", None) and hasattr(self.tab_buscador_turnos, "actualizar_tema"):
+            self.tab_buscador_turnos.actualizar_tema()
 
     def _init_status_bar(self) -> None:
         self.status_bar = QStatusBar()
@@ -299,7 +400,7 @@ class MainWindow(QMainWindow):
         self.timer_inactividad.start()
 
     def eventFilter(self, watched, event) -> bool:
-        if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress):
+        if event is not None and event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress):
             self._ultimo_movimiento = time.time()
         return super().eventFilter(watched, event)
 
@@ -308,8 +409,59 @@ class MainWindow(QMainWindow):
         limite_seg = self._sesion_minutos * 60
         if inactivo_seg >= limite_seg:
             logger.info("Sesión expirada por inactividad del usuario.")
-            QMessageBox.warning(self, "Sesión Caducada", "Su sesión ha caducado por inactividad.")
-            self._cerrar_sesion()
+            self.timer_inactividad.stop()
+            self._mostrar_login_por_inactividad()
+
+    def _mostrar_login_por_inactividad(self) -> None:
+        """Presenta el diálogo de inicio de sesión tras vencer el tiempo de inactividad."""
+        from src.ui.views.dialogs.login_dialog import LoginDialog
+
+        # Cerrar posibles modales abiertos por seguridad
+        active_modal = QApplication.activeModalWidget()
+        if active_modal and active_modal is not self:
+            try:
+                active_modal.reject()
+            except Exception:
+                pass
+
+        QMessageBox.warning(
+            self,
+            "Sesión Caducada",
+            "Su sesión ha caducado por inactividad.\nPor favor, vuelva a iniciar sesión para continuar trabajando.",
+        )
+
+        login_dlg = LoginDialog(self.auth_service, parent=self)
+        if login_dlg.exec():
+            nuevo_user = login_dlg.usuario_autenticado
+            if nuevo_user:
+                self.usuario_actual = nuevo_user
+                logger.info("Sesión restablecida con éxito tras inactividad para '%s'", nuevo_user.get("username"))
+                self._ultimo_movimiento = time.time()
+                self.menuBar().clear()
+                self._init_menu_bar()
+                self._init_status_bar()
+                self._aplicar_estilos()
+                self.recargar_todo()
+                self.timer_inactividad.start()
+                return
+
+        # Si el usuario cierra o cancela el diálogo de login, se procede al cierre
+        logger.info("El usuario canceló el inicio de sesión tras caducar por inactividad. Saliendo.")
+        self.close()
+
+    @property
+    def tab_novedades(self):
+        """Compatibilidad para acceso directo a NovedadesView."""
+        if hasattr(self, "tab_novedades_cambios"):
+            return getattr(self.tab_novedades_cambios, "tab_novedades", None)
+        return None
+
+    @property
+    def tab_cambios(self):
+        """Compatibilidad para acceso directo a CambiosTurnoView."""
+        if hasattr(self, "tab_novedades_cambios"):
+            return getattr(self.tab_novedades_cambios, "tab_cambios", None)
+        return None
 
     def recargar_todo(self) -> None:
         """Refresca todas las vistas activas y recomputa notificaciones."""
@@ -317,12 +469,16 @@ class MainWindow(QMainWindow):
             self._actualizar_notificaciones_nuevos()
             self.tab_dashboard.actualizar_dashboard(no_revisados_count=self._sin_revisar_count)
 
-            if hasattr(self, "tab_novedades"):
-                self.tab_novedades.recargar_datos()
-            if hasattr(self, "tab_cambios"):
-                self.tab_cambios.recargar_datos()
+            if hasattr(self, "tab_novedades_cambios"):
+                self.tab_novedades_cambios.recargar_datos()
+            if hasattr(self, "tab_turnos_sin_cubrir"):
+                self.tab_turnos_sin_cubrir.consultar()
+            if hasattr(self, "tab_empleados"):
+                self.tab_empleados.recargar()
             if hasattr(self, "tab_ciclo"):
                 self.tab_ciclo.consultar()
+            if hasattr(self, "tab_administracion"):
+                self.tab_administracion.recargar_todo()
 
             self._actualizar_badge_sync()
         except Exception as e:
@@ -457,18 +613,73 @@ class MainWindow(QMainWindow):
             logger.warning(f"No se pudo ejecutar backup automático diario: {e}")
 
     def _cerrar_sesion(self) -> None:
+        """Cierra la sesión activa y presenta el diálogo de inicio de sesión."""
+        self.timer_inactividad.stop()
+        from src.ui.views.dialogs.login_dialog import LoginDialog
+
+        login_dlg = LoginDialog(self.auth_service, parent=self)
+        if login_dlg.exec():
+            nuevo_user = login_dlg.usuario_autenticado
+            if nuevo_user:
+                self.usuario_actual = nuevo_user
+                logger.info("Nueva sesión iniciada para '%s'", nuevo_user.get("username"))
+                self._ultimo_movimiento = time.time()
+                self.menuBar().clear()
+                self._init_menu_bar()
+                self._init_status_bar()
+                self._aplicar_estilos()
+                self.recargar_todo()
+                self.timer_inactividad.start()
+                return
         self.close()
 
     def _acerca_de(self) -> None:
-        QMessageBox.about(
-            self,
-            f"Acerca de {APP_NAME}",
-            f"<b>{APP_NAME}</b><br/>"
-            f"Versión: <b>{APP_VERSION}</b><br/>"
-            f"Estándar visual y arquitectónico: <b>CRONO-PCT</b><br/>"
-            f"Persistencia: SQLite3 (WAL/DELETE) + Supabase Sync<br/>"
-            f"Desarrollado para Control Operativo y Registro de Novedades.",
-        )
+        dlg = AcercaDialog(self)
+        dlg.exec()
+
+    def _cambiar_usuario(self) -> None:
+        """Permite iniciar sesión con otro usuario sin reiniciar la aplicación."""
+        from src.ui.views.dialogs.login_dialog import LoginDialog
+
+        login_dlg = LoginDialog(self.auth_service, parent=self)
+        if login_dlg.exec():
+            nuevo_user = login_dlg.usuario_autenticado
+            if nuevo_user:
+                self.usuario_actual = nuevo_user
+                logger.info("Cambio de usuario exitoso a '%s'", nuevo_user.get("username"))
+                self.menuBar().clear()
+                self._init_menu_bar()
+                self._init_status_bar()
+                self._aplicar_estilos()
+                self.recargar_todo()
+                QMessageBox.information(
+                    self,
+                    "Sesión Iniciada",
+                    f"Ha iniciado sesión como <b>{nuevo_user.get('username')}</b>.",
+                )
+
+    def _mostrar_empleados(self) -> None:
+        if hasattr(self, "tab_empleados"):
+            self.tabs.setCurrentWidget(self.tab_empleados)
+        else:
+            from src.ui.views.dialogs.admin_dialogs import AdminEmpleadosDialog
+            AdminEmpleadosDialog(self.records_service, self.excel_service, parent=self).exec()
+
+    def _cambiar_mi_password(self) -> None:
+        from src.ui.views.dialogs.cambiar_password_dialog import CambiarMiPasswordDialog
+        dlg = CambiarMiPasswordDialog(self.auth_service, self.usuario_actual, parent=self)
+        if dlg.exec():
+            uid = self.usuario_actual.get("id")
+            if uid:
+                actualizado = self.auth_service.obtener_usuario(int(uid))
+                if actualizado:
+                    self.usuario_actual = actualizado
+            self.sincronizar_ahora()
+
+    def _abrir_buscador_tren(self) -> None:
+        from src.ui.views.dialogs.buscador_tren_dialog import BuscadorTrenDialog
+        dlg = BuscadorTrenDialog(self.records_service, self.excel_service, parent=self)
+        dlg.exec()
 
     def closeEvent(self, event) -> None:
         self.settings.set_window_geometry("MainWindow", self.saveGeometry())

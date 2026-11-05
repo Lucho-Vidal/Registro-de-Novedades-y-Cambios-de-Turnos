@@ -24,12 +24,16 @@ class LegajoSearchDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Búsqueda de Empleados")
         self.resize(780, 500)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags((self.windowFlags() & ~Qt.WindowContextHelpButtonHint) | Qt.WindowCloseButtonHint)
 
-        self._empleados = empleados
+        self._empleados = list(empleados or [])
         self.selected_empleado: Optional[Dict[str, Any]] = None
 
         self._init_ui()
+
+    def closeEvent(self, event) -> None:
+        self.reject()
+        event.accept()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)

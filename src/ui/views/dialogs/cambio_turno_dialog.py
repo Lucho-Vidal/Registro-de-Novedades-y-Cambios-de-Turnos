@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from src.core.config import obtener_usuario_windows
 from src.core.logger import get_logger
 from src.domain.validators import parsear_fecha
 from src.services.records_service import RecordsService
@@ -44,7 +45,7 @@ class CambioTurnoDialog(QDialog):
 
         self.setWindowTitle("Modificar Cambio de Turno" if cambio_existente else "Nuevo Cambio de Turno (Permuta)")
         self.resize(840, 580)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags((self.windowFlags() & ~Qt.WindowContextHelpButtonHint) | Qt.WindowCloseButtonHint)
 
         self._empleados_cache: List[Dict[str, Any]] = self.records_service.listar_empleados(incluir_inactivos=False)
         self._personal_estacion_cache: List[Dict[str, Any]] = self.records_service.listar_personal_estacion(incluir_inactivos=False)
@@ -52,6 +53,10 @@ class CambioTurnoDialog(QDialog):
         self._init_ui()
         if self.cambio_existente:
             self._cargar_datos_existentes()
+
+    def closeEvent(self, event) -> None:
+        self.reject()
+        event.accept()
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -156,18 +161,36 @@ class CambioTurnoDialog(QDialog):
         self.date_cambio.setDate(QDate.currentDate())
         lay_det.addWidget(self.date_cambio, 0, 1)
 
-        lay_det.addWidget(QLabel("Referencia Estación:"), 0, 2)
+        lay_det.addWidget(QLabel("Referencia Estación (*):"), 0, 2)
         self.combo_estacion = QComboBox()
-        self.combo_estacion.setEditable(True)
+        self.combo_estacion.setEditable(False)
         self.combo_estacion.addItem("")
         for pe in self._personal_estacion_cache:
             dot_txt = f" ({pe['dotacion']})" if pe.get("dotacion") else ""
             self.combo_estacion.addItem(f"{pe['nombre']}{dot_txt}")
+        try:
+            for d in self.records_service.listar_dotaciones(incluir_inactivos=False):
+                d_nom = d.get("nombre")
+                if d_nom and self.combo_estacion.findText(d_nom) == -1:
+                    self.combo_estacion.addItem(d_nom)
+        except Exception:
+            pass
         lay_det.addWidget(self.combo_estacion, 0, 3)
 
         lay_det.addWidget(QLabel("Supervisor:"), 1, 0)
         self.txt_supervisor = QLineEdit()
+        self.txt_supervisor.setReadOnly(True)
+        self.txt_supervisor.setEnabled(False)
+        default_sup = self.usuario_actual.get("username") or self.usuario_actual.get("nombre") or ""
+        self.txt_supervisor.setText(str(default_sup))
         lay_det.addWidget(self.txt_supervisor, 1, 1)
+
+        lay_det.addWidget(QLabel("Usuario Windows:"), 1, 2)
+        self.txt_usuario_windows = QLineEdit()
+        self.txt_usuario_windows.setReadOnly(True)
+        self.txt_usuario_windows.setEnabled(False)
+        self.txt_usuario_windows.setText(obtener_usuario_windows())
+        lay_det.addWidget(self.txt_usuario_windows, 1, 3)
 
         lay_det.addWidget(QLabel("Observaciones:"), 2, 0)
         self.txt_observaciones = QPlainTextEdit()
@@ -244,13 +267,22 @@ class CambioTurnoDialog(QDialog):
                 self.date_cambio.setDate(QDate(dt.year, dt.month, dt.day))
 
         if c.get("referencia_estacion"):
-            self.combo_estacion.setEditText(str(c["referencia_estacion"]))
+            ref_txt = str(c["referencia_estacion"]).strip()
+            idx = self.combo_estacion.findText(ref_txt)
+            if idx >= 0:
+                self.combo_estacion.setCurrentIndex(idx)
+            else:
+                self.combo_estacion.addItem(ref_txt)
+                self.combo_estacion.setCurrentIndex(self.combo_estacion.count() - 1)
         if c.get("supervisor"):
             self.txt_supervisor.setText(str(c["supervisor"]))
+        if c.get("usuario_windows"):
+            self.txt_usuario_windows.setText(str(c["usuario_windows"]))
         if c.get("observaciones"):
             self.txt_observaciones.setPlainText(str(c["observaciones"]))
 
     def _guardar(self) -> None:
+        win_usr = self.txt_usuario_windows.text().strip() or obtener_usuario_windows()
         leg1 = self.txt_legajo_1.text().strip()
         leg2 = self.txt_legajo_2.text().strip()
 
@@ -260,6 +292,12 @@ class CambioTurnoDialog(QDialog):
 
         if leg1 == leg2:
             QMessageBox.warning(self, "Validación", "No puede realizar un cambio de turno consigo mismo.")
+            return
+
+        ref_est = self.combo_estacion.currentText().strip()
+        if not ref_est:
+            QMessageBox.warning(self, "Validación", "La referencia de estación es obligatoria.")
+            self.combo_estacion.setFocus()
             return
 
         payload = {
@@ -279,6 +317,7 @@ class CambioTurnoDialog(QDialog):
             "referencia_estacion": self.combo_estacion.currentText().strip(),
             "supervisor": self.txt_supervisor.text().strip(),
             "observaciones": self.txt_observaciones.toPlainText().strip(),
+            "usuario_windows": win_usr,
         }
 
         try:
@@ -287,14 +326,14 @@ class CambioTurnoDialog(QDialog):
                     self.cambio_existente["id"],
                     payload,
                     user_id=self.usuario_actual.get("id"),
-                    windows_user=self.usuario_actual.get("username"),
+                    windows_user=win_usr,
                     bypass_window=True,
                 )
             else:
                 self.records_service.crear_cambio(
                     payload,
                     user_id=self.usuario_actual.get("id"),
-                    windows_user=self.usuario_actual.get("username"),
+                    windows_user=win_usr,
                 )
             self.accept()
         except Exception as e:

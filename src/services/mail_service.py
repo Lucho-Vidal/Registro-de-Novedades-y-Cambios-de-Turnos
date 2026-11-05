@@ -4,9 +4,10 @@ Permite el envío ordinario de informes de novedades y el envío seguro
 'sin rastro' para recuperación de contraseñas de acceso.
 """
 
+import os
 import time
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from src.core.logger import get_logger
 
@@ -21,6 +22,63 @@ class MailService:
     """Cliente MAPI COM para Microsoft Outlook."""
 
     @staticmethod
+    def crear_borrador_outlook(
+        destinatarios: Optional[List[str]] = None,
+        asunto: str = "",
+        cuerpo_html: str = "",
+        cuerpo_texto: str = "",
+        adjuntos: Optional[List[str]] = None,
+        enviar_directo: bool = False,
+    ) -> Tuple[bool, str]:
+        """Crea un borrador en Microsoft Outlook con adjuntos y lo abre en pantalla (o lo envía directamente)."""
+        try:
+            import pythoncom
+            import win32com.client
+            try:
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
+        except ImportError:
+            return False, "Falta la dependencia 'pywin32' para interactuar con Microsoft Outlook."
+
+        try:
+            outlook = win32com.client.Dispatch("Outlook.Application")
+            mensaje = outlook.CreateItem(0)
+
+            lista_dest = [str(d).strip() for d in (destinatarios or []) if str(d).strip()]
+            if lista_dest:
+                mensaje.To = ";".join(lista_dest)
+
+            mensaje.Subject = asunto or ""
+
+            if adjuntos:
+                for adj in adjuntos:
+                    if adj and os.path.exists(adj):
+                        mensaje.Attachments.Add(os.path.abspath(adj))
+
+            if enviar_directo and lista_dest:
+                if cuerpo_html:
+                    mensaje.HTMLBody = cuerpo_html
+                else:
+                    mensaje.Body = cuerpo_texto
+                mensaje.Send()
+                logger.info(f"Correo enviado directamente vía Outlook a {len(lista_dest)} destinatarios.")
+                return True, f"Correo enviado exitosamente a {', '.join(lista_dest)}."
+            else:
+                # Mostrar ventana de borrador en Outlook para permitir revisar destinatarios y firma
+                mensaje.Display(False)
+                if cuerpo_html:
+                    firma_existente = getattr(mensaje, "HTMLBody", "") or ""
+                    mensaje.HTMLBody = cuerpo_html + firma_existente
+                elif cuerpo_texto:
+                    mensaje.Body = cuerpo_texto + (getattr(mensaje, "Body", "") or "")
+                logger.info("Borrador de correo abierto exitosamente en Microsoft Outlook.")
+                return True, "Se abrió el correo en Microsoft Outlook listo para enviar."
+        except Exception as e:
+            logger.error(f"Error al crear o enviar correo en Outlook: {e}")
+            return False, f"No se pudo conectar con Microsoft Outlook:\n{e}"
+
+    @staticmethod
     def enviar_informe_outlook(
         destinatarios: List[str],
         asunto: str,
@@ -31,7 +89,12 @@ class MailService:
         if not destinatarios:
             raise RuntimeError("No hay destinatarios activos configurados para informes.")
         try:
+            import pythoncom
             import win32com.client
+            try:
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
         except ImportError as error:
             raise RuntimeError("Falta la dependencia pywin32 para enviar mediante Outlook.") from error
 
@@ -43,7 +106,8 @@ class MailService:
 
         if adjuntos:
             for adj in adjuntos:
-                mensaje.Attachments.Add(adj)
+                if adj and os.path.exists(adj):
+                    mensaje.Attachments.Add(os.path.abspath(adj))
 
         mensaje.Send()
         logger.info(f"Informe enviado exitosamente vía Outlook a {len(destinatarios)} destinatarios.")

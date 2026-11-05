@@ -626,3 +626,227 @@ class PDFService:
 
         doc.build(story)
         return str(out_file)
+
+    # ---------------------------------------------------------
+    # Ordenamiento Operativo (Orden de Servicio por Duplicado en A4)
+    # ---------------------------------------------------------
+
+    def generar_orden_servicio_duplicado(
+        self,
+        ordenamiento: Dict[str, Any],
+        tramos: List[Dict[str, Any]],
+        output_path: str,
+    ) -> str:
+        """Genera la Orden de Servicio por duplicado (Original + Duplicado en la misma hoja A4 vertical)."""
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        doc = SimpleDocTemplate(
+            str(out_file),
+            pagesize=A4,
+            leftMargin=1.0 * cm,
+            rightMargin=1.0 * cm,
+            topMargin=0.8 * cm,
+            bottomMargin=0.8 * cm,
+        )
+
+        estilos = self._crear_estilos()
+        st_header_box = ParagraphStyle(
+            "OrdHeaderBox",
+            parent=estilos["NormalCustom"],
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            leading=13,
+            textColor=PRIMARY,
+        )
+        st_small = ParagraphStyle(
+            "OrdSmall",
+            parent=estilos["NormalCustom"],
+            fontName="Helvetica",
+            fontSize=7.5,
+            leading=9.5,
+            textColor=TEXT_DARK,
+        )
+        st_small_bold = ParagraphStyle(
+            "OrdSmallBold",
+            parent=st_small,
+            fontName="Helvetica-Bold",
+        )
+        st_legal = ParagraphStyle(
+            "OrdLegal",
+            parent=st_small,
+            fontName="Helvetica-Oblique",
+            fontSize=6.8,
+            leading=8.5,
+        )
+
+        deposito = str(ordenamiento.get("deposito") or "PC").strip().upper()
+        nro_orden = str(ordenamiento.get("nro_orden") or f"{deposito} 0000-0001")
+        fecha_em = str(ordenamiento.get("fecha_emision") or "-")
+        hora_em = str(ordenamiento.get("hora_emision") or "-")
+        legajo = str(ordenamiento.get("legajo_personal") or "-")
+        nombre = str(ordenamiento.get("nombre_personal") or "-")
+        itinerario = str(ordenamiento.get("itinerario") or "-")
+        ciclo_turno = str(ordenamiento.get("ciclo_o_turno") or "-")
+        regimen = str(ordenamiento.get("regimen") or "LV")
+        motivo = str(ordenamiento.get("motivo_orden") or "-")
+        obs_pie = str(ordenamiento.get("observacion_pie") or "")
+        ref_pct = str(ordenamiento.get("ref_pct") or "-")
+        emisor = str(ordenamiento.get("emisor") or "-")
+
+        def _construir_mitad(etiqueta_copia: str) -> List[Any]:
+            bloques: List[Any] = []
+
+            # 1. Encabezado institucional + Nro de Orden
+            cab_data = [
+                [
+                    Paragraph(
+                        f"<b>TRENES ARGENTINOS OPERACIONES</b><br/>"
+                        f"<font size=8>Gerencia Operativa Línea Roca - Base {deposito} ({etiqueta_copia})</font>",
+                        st_small,
+                    ),
+                    Paragraph(f"<b>ORDEN DE SERVICIO</b><br/>N° {nro_orden}", st_header_box),
+                ]
+            ]
+            t_cab = Table(cab_data, colWidths=[12.5 * cm, 6.5 * cm])
+            t_cab.setStyle(TableStyle([
+                ("BOX", (0, 0), (-1, -1), 0.8, PRIMARY),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+                ("BACKGROUND", (1, 0), (1, 0), BG_LIGHT),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            bloques.append(t_cab)
+            bloques.append(Spacer(1, 3))
+
+            # 2. Datos del Personal y Referencias Operativas
+            meta_data = [
+                [
+                    Paragraph(f"<b>Legajo:</b> {legajo}", st_small),
+                    Paragraph(f"<b>Apellido y Nombre:</b> {nombre}", st_small),
+                    Paragraph(f"<b>Depósito:</b> {deposito}", st_small),
+                    Paragraph(f"<b>Fecha/Hora:</b> {fecha_em} {hora_em}", st_small),
+                ],
+                [
+                    Paragraph(f"<b>Itinerario:</b> {itinerario}", st_small),
+                    Paragraph(f"<b>Turno / Ciclo:</b> {ciclo_turno} ({regimen})", st_small),
+                    Paragraph(f"<b>REF de {deposito}:</b> {ref_pct}", st_small),
+                    Paragraph(f"<b>Emisor:</b> {emisor}", st_small),
+                ],
+                [
+                    Paragraph(f"<b>Por orden de / Motivo:</b> {motivo}", st_small_bold),
+                    "",
+                    "",
+                    "",
+                ],
+            ]
+            t_meta = Table(meta_data, colWidths=[3.5 * cm, 6.5 * cm, 4.2 * cm, 4.8 * cm])
+            t_meta.setStyle(TableStyle([
+                ("SPAN", (0, 2), (3, 2)),
+                ("BOX", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4, BORDER_COLOR),
+                ("BACKGROUND", (0, 2), (3, 2), BG_LIGHT),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]))
+            bloques.append(t_meta)
+            bloques.append(Spacer(1, 3))
+
+            # 3. Grilla de Tramos / Diagrama de Trenes
+            hdr_tramos = [
+                Paragraph("<b>#</b>", estilos["TablaHeader"]),
+                Paragraph("<b>Ref</b>", estilos["TablaHeader"]),
+                Paragraph("<b>Tren</b>", estilos["TablaHeader"]),
+                Paragraph("<b>Sale de (Origen)</b>", estilos["TablaHeader"]),
+                Paragraph("<b>Hora Sal.</b>", estilos["TablaHeader"]),
+                Paragraph("<b>Llega a (Destino)</b>", estilos["TablaHeader"]),
+                Paragraph("<b>Hora Lleg.</b>", estilos["TablaHeader"]),
+                Paragraph("<b>Observaciones del Tramo</b>", estilos["TablaHeader"]),
+            ]
+            filas_t = [hdr_tramos]
+            max_filas = 10
+            for idx, tr in enumerate(tramos[:max_filas], start=1):
+                filas_t.append([
+                    Paragraph(str(tr.get("nro_secuencia") or idx), estilos["TablaCellCenter"]),
+                    Paragraph(str(tr.get("ref") or ""), estilos["TablaCellCenter"]),
+                    Paragraph(f"<b>{tr.get('nro_tren') or ''}</b>", estilos["TablaCellCenter"]),
+                    Paragraph(str(tr.get("origen") or ""), estilos["TablaCell"]),
+                    Paragraph(str(tr.get("hora_salida") or ""), estilos["TablaCellCenter"]),
+                    Paragraph(str(tr.get("destino") or ""), estilos["TablaCell"]),
+                    Paragraph(str(tr.get("hora_llegada") or ""), estilos["TablaCellCenter"]),
+                    Paragraph(str(tr.get("observaciones") or ""), estilos["TablaCell"]),
+                ])
+
+            # Rellenar filas vacías mínimas para mantener estructura uniforme
+            while len(filas_t) < 6:
+                filas_t.append(["", "", "", "", "", "", "", ""])
+
+            t_tramos = Table(
+                filas_t,
+                colWidths=[0.8 * cm, 1.4 * cm, 1.8 * cm, 3.2 * cm, 1.6 * cm, 3.2 * cm, 1.6 * cm, 5.4 * cm],
+            )
+            t_tramos.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), PRIMARY),
+                ("GRID", (0, 0), (-1, -1), 0.4, BORDER_COLOR),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+            ]))
+            bloques.append(t_tramos)
+            bloques.append(Spacer(1, 3))
+
+            # 4. Pie de página legal y firmas
+            if obs_pie:
+                bloques.append(Paragraph(f"<b>Observación:</b> {obs_pie}", st_small))
+                bloques.append(Spacer(1, 2))
+
+            bloques.append(
+                Paragraph(
+                    "<b>Tomo conocimiento del siguiente diagrama según RITO Art. 7º</b> "
+                    "(Acatamiento debido por el personal a las órdenes de sus superiores. "
+                    "El personal deberá acatar de inmediato las órdenes que reciba de sus superiores, "
+                    "pudiendo plantear el caso después por vía jerárquica si considera que dichas órdenes "
+                    "no se ajustan a la reglamentación.)",
+                    st_legal,
+                )
+            )
+            bloques.append(Spacer(1, 8))
+
+            firmas_data = [
+                [
+                    Paragraph(
+                        "__________________________________________<br/>"
+                        "<b>Notificado</b> - Firma / Aclaración / Legajo",
+                        estilos["TablaCellCenter"],
+                    ),
+                    Paragraph(
+                        "__________________________________________<br/>"
+                        "<b>Firma y Sello del Jefe o Encargado</b>",
+                        estilos["TablaCellCenter"],
+                    ),
+                ]
+            ]
+            t_firmas = Table(firmas_data, colWidths=[9.5 * cm, 9.5 * cm])
+            t_firmas.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM")]))
+            bloques.append(t_firmas)
+            return bloques
+
+        story: List[Any] = []
+        story.extend(_construir_mitad("ORIGINAL"))
+        story.append(Spacer(1, 8))
+        story.append(
+            HRFlowable(
+                width="100%",
+                thickness=1,
+                color=colors.gray,
+                spaceBefore=4,
+                spaceAfter=8,
+                dash=(4, 4),
+            )
+        )
+        story.extend(_construir_mitad("DUPLICADO"))
+
+        doc.build(story)
+        return str(out_file)
+

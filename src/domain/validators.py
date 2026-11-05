@@ -25,8 +25,13 @@ def normalizar_dia_semana(valor: Any) -> str:
 
 def parsear_fecha(valor: Any, nombre_campo: str = "Fecha", obligatorio: bool = False) -> datetime | None:
     """Parsea una cadena en formato DD/MM/YYYY o YYYY-MM-DD a objeto datetime."""
+    if isinstance(valor, datetime):
+        return valor
+    if isinstance(valor, date):
+        return datetime.combine(valor, time.min)
+
     val = str(valor or "").strip()
-    if not val or val in ("-", "—", "None", "null"):
+    if not val or val in ("-", "—", "None", "null", "nan"):
         if obligatorio:
             raise ValueError(f"El campo '{nombre_campo}' es obligatorio.")
         return None
@@ -45,11 +50,47 @@ def parsear_fecha(valor: Any, nombre_campo: str = "Fecha", obligatorio: bool = F
         except ValueError:
             pass
 
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+    for fmt in (
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+        "%d/%m/%y",
+        "%d-%m-%y",
+        "%d/%m/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%Y-%m-%d %H:%M",
+    ):
         try:
             return datetime.strptime(val, fmt)
         except ValueError:
             continue
+
+    if "T" in val:
+        try:
+            return datetime.fromisoformat(val)
+        except ValueError:
+            pass
+
+    # Limpieza de caracteres espurios / no imprimibles accidentales (ej: 1¡4/08/2025 -> 14/08/2025)
+    import re
+    val_clean = re.sub(r"[^\d/\- :T\.]", "", val).strip()
+    if val_clean and val_clean != val:
+        for fmt in (
+            "%d/%m/%Y",
+            "%Y-%m-%d",
+            "%d-%m-%Y",
+            "%Y/%m/%d",
+            "%d/%m/%y",
+            "%d-%m-%y",
+            "%d/%m/%Y %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+        ):
+            try:
+                return datetime.strptime(val_clean, fmt)
+            except ValueError:
+                continue
 
     raise ValueError(f"El campo '{nombre_campo}' debe tener formato DD/MM/AAAA.")
 
@@ -629,4 +670,176 @@ def calcular_descansos_y_horas_ciclo(
 
 
 calcular_descansos_ciclo = calcular_descansos_y_horas_ciclo
+
+
+def resolver_subindice_diagrama_6d(dia_semana_nombre: str, franco_agente_nombre: str) -> tuple[int | None, bool]:
+    """Calcula el subíndice (1 a 6) de un diagrama de 6 días según el día objetivo y el franco del agente.
+
+    Devuelve (subindice, es_franco). Si el día de la semana coincide con el franco, devuelve (None, True).
+    """
+    dia_norm = normalizar_dia_semana(dia_semana_nombre)
+    franco_norm = normalizar_dia_semana(franco_agente_nombre)
+
+    if dia_norm == franco_norm:
+        return None, True
+
+    # Los 7 días en orden semanal empezando por Lunes (0) hasta Domingo (6)
+    dias_orden = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+    if dia_norm not in dias_orden:
+        return None, False
+
+    # Para Franco Domingo habitual:
+    # Lunes=1, Martes=2, Miércoles=3, Jueves=4, Viernes=5, Sábado=6
+    # Si el franco es otro día, el ciclo rota a partir del día siguiente al franco:
+    dia_idx = dias_orden.index(dia_norm)
+    if franco_norm in dias_orden:
+        franco_idx = dias_orden.index(franco_norm)
+        # Distancia desde el día posterior al franco
+        dist = (dia_idx - (franco_idx + 1)) % 7
+        subindice = dist + 1
+        return subindice, False
+    else:
+        # Si no hay franco específico o no coincide, mapear Lunes=1..Sábado=6
+        if dia_idx == 6:  # Domingo
+            return None, True
+        return dia_idx + 1, False
+
+
+def resolver_jornada_itinerario(
+    turno_base: str,
+    fecha_target: date | datetime | str,
+    franco_agente: str,
+    turnos_dict: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Resuelve la jornada exacta (toma, deje, duración, código de variante y estado)
+
+    para una fecha dada y un agente, cruzando el tipo de turno y su franco CCT.
+    """
+    f_obj = parsear_fecha(fecha_target)
+    if not f_obj:
+        raise ValueError("Fecha objetivo no válida.")
+
+    dia_sem_nombre = _DIAS_SEMANA[f_obj.weekday()]
+    base_clean = str(turno_base or "").strip().replace(",", ".")
+
+    # 1. Verificar si ya es una clave de variante explícita (ej. '401.3')
+    if base_clean in turnos_dict:
+        t_info = turnos_dict[base_clean]
+        return {
+            "codigo_turno": base_clean,
+            "es_franco": False,
+            "toma": t_info.get("toma_servicio") or "",
+            "deje": t_info.get("deje_servicio") or "",
+            "duracion": t_info.get("duracion_jornada") or "",
+            "tipo_turno": t_info.get("tipo_turno") or "DESCONOCIDO",
+            "deposito": t_info.get("deposito_base") or "",
+            "observaciones": t_info.get("observaciones_turno") or "",
+        }
+
+    # 2. Evaluar si es un Diagrama de 6 Días (ej: '401', '501', '301')
+    variante_1 = f"{base_clean}.1"
+    if variante_1 in turnos_dict:
+        subidx, es_franco = resolver_subindice_diagrama_6d(dia_sem_nombre, franco_agente)
+        if es_franco or subidx is None:
+            return {
+                "codigo_turno": f"{base_clean} (FRANCO)",
+                "es_franco": True,
+                "toma": "",
+                "deje": "",
+                "duracion": "",
+                "tipo_turno": "DIAGRAMA_6D",
+                "deposito": turnos_dict[variante_1].get("deposito_base", ""),
+                "observaciones": f"Franco CCT ({dia_sem_nombre})",
+            }
+
+        cod_variante = f"{base_clean}.{subidx}"
+        info_var = turnos_dict.get(cod_variante, {})
+        return {
+            "codigo_turno": cod_variante,
+            "es_franco": False,
+            "toma": info_var.get("toma_servicio") or "",
+            "deje": info_var.get("deje_servicio") or "",
+            "duracion": info_var.get("duracion_jornada") or "",
+            "tipo_turno": "DIAGRAMA_6D",
+            "deposito": info_var.get("deposito_base") or "",
+            "observaciones": info_var.get("observaciones_turno") or "",
+        }
+
+    # 3. Evaluar Unipersonales / Programas / Franqueros
+    dia_norm = normalizar_dia_semana(dia_sem_nombre)
+    franco_norm = normalizar_dia_semana(franco_agente)
+
+    if dia_norm == franco_norm:
+        return {
+            "codigo_turno": f"{base_clean} (FRANCO)",
+            "es_franco": True,
+            "toma": "",
+            "deje": "",
+            "duracion": "",
+            "tipo_turno": "FRANQUERO" if "ORD" in base_clean else "UNIPERSONAL",
+            "deposito": "",
+            "observaciones": f"Franco CCT ({dia_sem_nombre})",
+        }
+
+    if base_clean in turnos_dict:
+        t_info = turnos_dict[base_clean]
+        return {
+            "codigo_turno": base_clean,
+            "es_franco": False,
+            "toma": t_info.get("toma_servicio") or "",
+            "deje": t_info.get("deje_servicio") or "",
+            "duracion": t_info.get("duracion_jornada") or "",
+            "tipo_turno": t_info.get("tipo_turno") or "UNIPERSONAL",
+            "deposito": t_info.get("deposito_base") or "",
+            "observaciones": t_info.get("observaciones_turno") or "",
+        }
+
+    return {
+        "codigo_turno": base_clean,
+        "es_franco": False,
+        "toma": "",
+        "deje": "",
+        "duracion": "",
+        "tipo_turno": "DESCONOCIDO",
+        "deposito": "",
+        "observaciones": "",
+    }
+
+
+def validar_datos_ordenamiento(
+    datos: dict[str, Any],
+    tramos: Sequence[dict[str, Any]],
+) -> tuple[bool, str | None]:
+    """Valida los campos obligatorios de un Ordenamiento Operativo y su lista de tramos."""
+    legajo_raw = str(datos.get("legajo_personal", "")).strip()
+    if not legajo_raw:
+        return False, "El campo 'Legajo' del personal es obligatorio."
+    try:
+        int(legajo_raw)
+    except ValueError:
+        return False, "El legajo del personal debe ser un número entero."
+
+    if not str(datos.get("nombre_personal", "")).strip():
+        return False, "El campo 'Nombre y Apellido' del personal es obligatorio."
+
+    if not str(datos.get("deposito", "")).strip():
+        return False, "El campo 'Dotación / Depósito' es obligatorio."
+
+    if not str(datos.get("motivo_orden", "")).strip():
+        return False, "El campo 'Motivo de la Orden' es obligatorio."
+
+    if not str(datos.get("ref_pct", "")).strip():
+        return False, "El campo 'Referencia de Estación (REF)' es obligatorio."
+
+    try:
+        parsear_fecha(datos.get("fecha_emision"), "Fecha de emisión", obligatorio=True)
+    except ValueError as e:
+        return False, str(e)
+
+    if not tramos:
+        return False, "Debe agregar al menos un tramo u observación en la tabla del ordenamiento."
+
+    return True, None
+
+
 

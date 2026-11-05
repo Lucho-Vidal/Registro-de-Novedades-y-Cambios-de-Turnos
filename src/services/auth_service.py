@@ -81,7 +81,7 @@ class AuthService:
 
         with self.db.read_connection() as conn:
             user = conn.execute(
-                "SELECT * FROM usuarios WHERE username=? COLLATE BINARY AND activo=1",
+                "SELECT * FROM usuarios WHERE username=? COLLATE NOCASE AND activo=1",
                 (username.strip(),),
             ).fetchone()
 
@@ -138,14 +138,19 @@ class AuthService:
             row = conn.execute("SELECT * FROM usuarios WHERE id=?", (user_id,)).fetchone()
             return dict(row) if row else None
 
-    def cambiar_mi_password(self, user_id: int, actual: str, nueva: str) -> None:
+    def cambiar_mi_password(self, user_id: int, actual: str, nueva: str, username: Optional[str] = None) -> None:
         if not nueva:
             raise ValueError("La contraseña nueva no puede estar vacía.")
         with self.db.read_connection() as conn:
-            row = conn.execute("SELECT password_hash FROM usuarios WHERE id=?", (user_id,)).fetchone()
-        if not row or not bcrypt.checkpw(actual.encode("utf-8"), row[0].encode("utf-8")):
+            row = conn.execute("SELECT id, password_hash FROM usuarios WHERE id=?", (user_id,)).fetchone()
+            if not row and username:
+                row = conn.execute(
+                    "SELECT id, password_hash FROM usuarios WHERE username=? COLLATE NOCASE",
+                    (username.strip(),),
+                ).fetchone()
+        if not row or not bcrypt.checkpw(actual.encode("utf-8"), str(row["password_hash"]).encode("utf-8")):
             raise ValueError("La contraseña actual no es correcta.")
-        self.cambiar_password(user_id, nueva)
+        self.cambiar_password(int(row["id"]), nueva)
 
     def listar_roles(self) -> List[Dict[str, Any]]:
         with self.db.read_connection() as conn:
@@ -213,11 +218,26 @@ class AuthService:
         if not password:
             raise ValueError("La contraseña no puede estar vacía.")
         password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        now_ts = self.db.now()
         with self.db.write_transaction() as conn:
             conn.execute(
-                "UPDATE usuarios SET password_hash=?, password_cambiado_en=?, debe_cambiar_clave=0 WHERE id=?",
-                (password_hash, self.db.now(), user_id),
+                """UPDATE usuarios
+                   SET password_hash=?, password_cambiado_en=?, debe_cambiar_clave=0,
+                       sync_status='pending', updated_at=?
+                   WHERE id=?""",
+                (password_hash, now_ts, now_ts, int(user_id)),
             )
+            user_row = conn.execute("SELECT * FROM usuarios WHERE id=?", (int(user_id),)).fetchone()
+            if user_row:
+                payload = json.dumps(dict(user_row), ensure_ascii=False)
+                conn.execute(
+                    """INSERT INTO sync_outbox(tabla, registro_pk, operacion, payload_json, creado_en, intentos)
+                       VALUES ('usuarios', ?, 'UPSERT', ?, ?, 0)
+                       ON CONFLICT(tabla, registro_pk) DO UPDATE SET
+                           operacion='UPSERT', payload_json=excluded.payload_json,
+                           creado_en=excluded.creado_en, intentos=0, ultimo_error=NULL""",
+                    (str(user_row["username"]), payload, now_ts),
+                )
 
     def resetear_password(
         self,

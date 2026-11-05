@@ -42,6 +42,17 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.logger import get_logger
+from src.core.proxy import (
+    AUTH_MANUAL_FIJO,
+    MODO_DIRECTO,
+    MODO_MANUAL,
+    MODO_WINDOWS_SSO,
+    OPCIONES_AUTH_PROXY,
+    OPCIONES_MODO,
+    aplicar_configuracion_proxy,
+    detectar_proxy_sistema,
+    probar_conexion_supabase,
+)
 from src.domain.enums import PERMISOS_BASE
 from src.services.auth_service import AuthService
 from src.services.backup_service import BackupService
@@ -54,7 +65,15 @@ logger = get_logger("AdminDialogs")
 
 
 class BaseMaximizedDialog(QDialog):
-    """Clase base para garantizar que todos los modales principales de administración se abran maximizados."""
+    """Clase base para garantizar que todos los modales principales de administración se abran maximizados y respondan al cierre."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+
+    def closeEvent(self, event) -> None:
+        self.reject()
+        event.accept()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -65,16 +84,15 @@ class BaseMaximizedDialog(QDialog):
 # 1. Administración de Usuarios
 # ---------------------------------------------------------------------------
 
-class AdminUsuariosDialog(BaseMaximizedDialog):
-    """Gestión integral de cuentas de usuario, roles y claves."""
+class AdminUsuariosWidget(QWidget):
+    """Panel de gestión integral de cuentas de usuario, roles y claves."""
 
     def __init__(self, auth_service: AuthService, parent=None):
         super().__init__(parent)
         self.auth_service = auth_service
-        self.setWindowTitle("Administración de Usuarios")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # Barra de acciones
         bar = QHBoxLayout()
@@ -104,34 +122,47 @@ class AdminUsuariosDialog(BaseMaximizedDialog):
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 60)
+        self.table.setColumnWidth(1, 140)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.setColumnWidth(3, 100)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.setColumnWidth(5, 100)
         layout.addWidget(self.table)
-
-        btn_cerrar = QPushButton("Cerrar")
-        btn_cerrar.setObjectName("btnSecondary")
-        btn_cerrar.clicked.connect(self.accept)
-        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
 
         self.recargar()
 
     def recargar(self) -> None:
+        sel = self._obtener_seleccionado()
+        sel_id = sel.get("id") if sel else None
+
         usuarios = self.auth_service.listar_usuarios()
         for u in usuarios:
             u["activo_str"] = "Activo" if u.get("activo") == 1 else "Inactivo"
         self.model.set_data(usuarios)
 
+        if sel_id is not None:
+            for row_idx, u in enumerate(usuarios):
+                if u.get("id") == sel_id:
+                    self.table.selectRow(row_idx)
+                    break
+
     def _obtener_seleccionado(self) -> Optional[Dict[str, Any]]:
-        indexes = self.table.selectionModel().selectedRows()
-        if not indexes:
-            return None
-        return self.model.get_row(indexes[0].row())
+        if self.table.selectionModel():
+            indexes = self.table.selectionModel().selectedRows()
+            if indexes:
+                return self.model.get_row(indexes[0].row())
+        curr = self.table.currentIndex()
+        if curr.isValid():
+            return self.model.get_row(curr.row())
+        return None
 
     def _nuevo_usuario(self) -> None:
         roles_disponibles = [r["nombre"] for r in self.auth_service.listar_roles()]
         dlg = QDialog(self)
         dlg.setWindowTitle("Nuevo Usuario")
-        dlg.setFixedSize(380, 320)
+        dlg.setMinimumWidth(400)
         form = QFormLayout(dlg)
 
         txt_user = QLineEdit()
@@ -150,10 +181,20 @@ class AdminUsuariosDialog(BaseMaximizedDialog):
         form.addRow("Rol principal:", combo_rol)
 
         btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.setObjectName("btnSecondary")
+        btn_cancel.setAutoDefault(False)
+        btn_cancel.setDefault(False)
+        btn_cancel.clicked.connect(dlg.reject)
         btn_ok = QPushButton("Crear")
+        btn_ok.setAutoDefault(True)
+        btn_ok.setDefault(True)
         btn_ok.clicked.connect(dlg.accept)
+        btn_box.addWidget(btn_cancel)
         btn_box.addWidget(btn_ok)
         form.addRow(btn_box)
+        dlg.adjustSize()
 
         if dlg.exec():
             u = txt_user.text().strip()
@@ -173,6 +214,7 @@ class AdminUsuariosDialog(BaseMaximizedDialog):
     def _toggle_activo(self) -> None:
         u = self._obtener_seleccionado()
         if not u:
+            QMessageBox.warning(self, "Usuarios", "Seleccione un usuario en la tabla primero.")
             return
         self.auth_service.cambiar_estado_usuario(u["id"])
         self.recargar()
@@ -180,39 +222,134 @@ class AdminUsuariosDialog(BaseMaximizedDialog):
     def _cambiar_clave(self) -> None:
         u = self._obtener_seleccionado()
         if not u:
+            QMessageBox.warning(self, "Usuarios", "Seleccione un usuario en la tabla para cambiar o restablecer su contraseña.")
             return
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Restablecer Clave - {u['username']}")
-        dlg.setFixedSize(320, 150)
-        lay = QFormLayout(dlg)
-        txt = QLineEdit()
-        txt.setEchoMode(QLineEdit.Password)
-        lay.addRow("Nueva clave:", txt)
-        btn = QPushButton("Guardar")
-        btn.clicked.connect(dlg.accept)
-        lay.addRow(btn)
 
-        if dlg.exec():
-            val = txt.text()
-            if val:
-                self.auth_service.cambiar_password(u["id"], val)
-                QMessageBox.information(self, "Éxito", "Contraseña actualizada.")
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Cambiar / Restablecer Clave - {u['username']}")
+        dlg.setMinimumWidth(400)
+        dlg.setWindowFlags((dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint) | Qt.WindowCloseButtonHint)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(12)
+
+        lbl_info = QLabel(f"Usuario seleccionado: <b>{u['username']}</b> ({u.get('nombre') or ''})")
+        lay.addWidget(lbl_info)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        txt_nueva = QLineEdit()
+        txt_nueva.setEchoMode(QLineEdit.Password)
+        txt_nueva.setPlaceholderText("Nueva contraseña")
+
+        txt_conf = QLineEdit()
+        txt_conf.setEchoMode(QLineEdit.Password)
+        txt_conf.setPlaceholderText("Confirmar nueva contraseña")
+
+        def _fila_pwd(le: QLineEdit) -> QWidget:
+            cont = QWidget()
+            h = QHBoxLayout(cont)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(6)
+            h.addWidget(le, stretch=1)
+            b_ver = QPushButton("👁️")
+            b_ver.setObjectName("btnSecondary")
+            b_ver.setFixedWidth(36)
+            b_ver.setAutoDefault(False)
+            b_ver.setDefault(False)
+            b_ver.setFocusPolicy(Qt.NoFocus)
+
+            def _toggle() -> None:
+                if le.echoMode() == QLineEdit.Password:
+                    le.setEchoMode(QLineEdit.Normal)
+                    b_ver.setText("🔒")
+                else:
+                    le.setEchoMode(QLineEdit.Password)
+                    b_ver.setText("👁️")
+
+            b_ver.clicked.connect(_toggle)
+            h.addWidget(b_ver)
+            return cont
+
+        form.addRow("Nueva clave:", _fila_pwd(txt_nueva))
+        form.addRow("Confirmar clave:", _fila_pwd(txt_conf))
+        txt_nueva.returnPressed.connect(txt_conf.setFocus)
+        lay.addLayout(form)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.setObjectName("btnSecondary")
+        btn_cancel.setAutoDefault(False)
+        btn_cancel.setDefault(False)
+        btn_cancel.clicked.connect(dlg.reject)
+
+        btn_save = QPushButton("Guardar Contraseña")
+        btn_save.setAutoDefault(True)
+        btn_save.setDefault(True)
+
+        def _guardar_nueva() -> None:
+            v1 = txt_nueva.text()
+            v2 = txt_conf.text()
+            if not v1:
+                QMessageBox.warning(dlg, "Validación", "La contraseña no puede estar vacía.")
+                return
+            if v1 != v2:
+                QMessageBox.warning(dlg, "Validación", "Las contraseñas no coinciden.")
+                return
+            try:
+                self.auth_service.cambiar_password(int(u["id"]), v1)
+                QMessageBox.information(dlg, "Éxito", f"Contraseña actualizada exitosamente para '{u['username']}'.")
+                dlg.accept()
+            except Exception as ex:
+                QMessageBox.critical(dlg, "Error", f"No se pudo actualizar la contraseña:\n{ex}")
+
+        btn_save.clicked.connect(_guardar_nueva)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_save)
+        lay.addLayout(btn_box)
+        dlg.adjustSize()
+
+        dlg.exec()
+
+
+class AdminUsuariosDialog(BaseMaximizedDialog):
+    """Gestión integral de cuentas de usuario, roles y claves."""
+
+    def __init__(self, auth_service: AuthService, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Administración de Usuarios")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminUsuariosWidget(auth_service, parent=self)
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar(self) -> None:
+        self.widget.recargar()
 
 
 # ---------------------------------------------------------------------------
 # 2. Roles y Permisos
 # ---------------------------------------------------------------------------
 
-class AdminRolesDialog(BaseMaximizedDialog):
-    """Gestión de roles y asignación granular de permisos agrupados por módulo."""
+class AdminRolesWidget(QWidget):
+    """Panel de gestión de roles y asignación granular de permisos agrupados por módulo."""
 
     def __init__(self, auth_service: AuthService, parent=None):
         super().__init__(parent)
         self.auth_service = auth_service
-        self.setWindowTitle("Administración de Roles y Permisos")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         splitter = QSplitter(Qt.Horizontal)
 
@@ -224,6 +361,8 @@ class AdminRolesDialog(BaseMaximizedDialog):
         lay_left.addWidget(QLabel("<b>Roles Registrados:</b>"))
         self.tabla_roles = QTableWidget(0, 2)
         self.tabla_roles.setHorizontalHeaderLabels(["ID", "NOMBRE DEL ROL"])
+        self.tabla_roles.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.tabla_roles.setColumnWidth(0, 60)
         self.tabla_roles.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.tabla_roles.setSelectionBehavior(QTableWidget.SelectRows)
         self.tabla_roles.setSelectionMode(QTableWidget.SingleSelection)
@@ -267,15 +406,13 @@ class AdminRolesDialog(BaseMaximizedDialog):
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter)
 
-        btn_cerrar = QPushButton("Cerrar")
-        btn_cerrar.setObjectName("btnSecondary")
-        btn_cerrar.clicked.connect(self.accept)
-        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
-
         self._checkboxes_permisos: Dict[str, QCheckBox] = {}
         self.rol_seleccionado_id: Optional[int] = None
 
         self._cargar_permisos_ui()
+        self.recargar_roles()
+
+    def recargar(self) -> None:
         self.recargar_roles()
 
     def _cargar_permisos_ui(self) -> None:
@@ -290,6 +427,9 @@ class AdminRolesDialog(BaseMaximizedDialog):
             ],
             "Personal de Ciclo y Reemplazos": [
                 "reemplazos.ver", "reemplazos.asignar",
+            ],
+            "Turnos e Itinerarios": [
+                "turnos.ver", "turnos.crear", "turnos.editar", "turnos.eliminar", "turnos.administrar",
             ],
             "Catálogos y Empleados": [
                 "empleados.administrar", "empleados.importar", "dotaciones.administrar",
@@ -365,6 +505,28 @@ class AdminRolesDialog(BaseMaximizedDialog):
             QMessageBox.critical(self, "Error", str(e))
 
 
+class AdminRolesDialog(BaseMaximizedDialog):
+    """Gestión de roles y asignación granular de permisos agrupados por módulo."""
+
+    def __init__(self, auth_service: AuthService, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Administración de Roles y Permisos")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminRolesWidget(auth_service, parent=self)
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar_roles(self) -> None:
+        self.widget.recargar_roles()
+
+
 # ---------------------------------------------------------------------------
 # 3. Administración de Empleados (BASE)
 # ---------------------------------------------------------------------------
@@ -397,7 +559,10 @@ class AdminEmpleadosDialog(BaseMaximizedDialog):
         self.btn_toggle.clicked.connect(self._toggle_estado)
         bar.addWidget(self.btn_toggle)
 
-        bar.addSeparator()
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        bar.addWidget(sep)
 
         self.btn_importar = QPushButton("📥 Importar desde Excel")
         self.btn_importar.setObjectName("btnSecondary")
@@ -545,17 +710,29 @@ class AdminEmpleadosDialog(BaseMaximizedDialog):
 # 4. Catálogos Operativos (Tipos de Novedad, Dotaciones, Estación)
 # ---------------------------------------------------------------------------
 
-class AdminCatalogosDialog(BaseMaximizedDialog):
-    """Gestión de Tipos de Novedad, Dotaciones y Personal de Estación."""
+class AdminCatalogosWidget(QWidget):
+    """Panel de gestión de Tipos de Novedad, Dotaciones y Personal de Estación."""
 
-    def __init__(self, records_service: RecordsService, excel_service: ExcelService, parent=None):
+    def __init__(
+        self,
+        records_service: RecordsService,
+        excel_service: ExcelService,
+        usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.records_service = records_service
         self.excel_service = excel_service
-        self.setWindowTitle("Catálogos Operativos del Sistema")
+        self.usuario_actual = usuario_actual or {}
+        self.tiene_permiso_fn = tiene_permiso_fn
+
+        self._tipos: List[Dict[str, Any]] = []
+        self._dots: List[Dict[str, Any]] = []
+        self._pes: List[Dict[str, Any]] = []
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         tabs = QTabWidget()
 
@@ -563,15 +740,36 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
         tab_tipos = QWidget()
         lay_t = QVBoxLayout(tab_tipos)
         h_t = QHBoxLayout()
-        btn_nt = QPushButton("➕ Nuevo Tipo")
-        btn_nt.clicked.connect(self._nuevo_tipo)
-        h_t.addWidget(btn_nt)
+        self.btn_nt = QPushButton("➕ Nuevo Tipo")
+        self.btn_nt.clicked.connect(self._nuevo_tipo)
+        h_t.addWidget(self.btn_nt)
+
+        self.btn_et = QPushButton("✏️ Modificar")
+        self.btn_et.setObjectName("btnSecondary")
+        self.btn_et.clicked.connect(self._modificar_tipo)
+        h_t.addWidget(self.btn_et)
+
+        self.btn_tt = QPushButton("🔄 Activar / Desactivar")
+        self.btn_tt.setObjectName("btnSecondary")
+        self.btn_tt.clicked.connect(self._toggle_tipo)
+        h_t.addWidget(self.btn_tt)
+
         h_t.addStretch()
         lay_t.addLayout(h_t)
 
         self.table_tipos = QTableWidget(0, 5)
-        self.table_tipos.setHorizontalHeaderLabels(["ID", "NOMBRE", "DÍAS AUTORIZADOS", "EXPORTA DESCUBIERTO", "ACTIVO"])
+        self.table_tipos.setHorizontalHeaderLabels(["ID", "NOMBRE", "DÍAS AUTORIZADOS", "EXPORTA DESCUBIERTO", "ESTADO"])
+        self.table_tipos.setSelectionBehavior(QTableView.SelectRows)
+        self.table_tipos.setSelectionMode(QTableView.SingleSelection)
+        self.table_tipos.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table_tipos.setMaximumWidth(820)
+        self.table_tipos.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_tipos.setColumnWidth(0, 60)
         self.table_tipos.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table_tipos.setColumnWidth(2, 140)
+        self.table_tipos.setColumnWidth(3, 160)
+        self.table_tipos.setColumnWidth(4, 100)
+        self.table_tipos.doubleClicked.connect(lambda _: self._modificar_tipo())
         lay_t.addWidget(self.table_tipos)
         tabs.addTab(tab_tipos, "Tipos de Novedad")
 
@@ -579,15 +777,34 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
         tab_dots = QWidget()
         lay_d = QVBoxLayout(tab_dots)
         h_d = QHBoxLayout()
-        btn_nd = QPushButton("➕ Nueva Dotación")
-        btn_nd.clicked.connect(self._nueva_dotacion)
-        h_d.addWidget(btn_nd)
+        self.btn_nd = QPushButton("➕ Nueva Dotación")
+        self.btn_nd.clicked.connect(self._nueva_dotacion)
+        h_d.addWidget(self.btn_nd)
+
+        self.btn_ed = QPushButton("✏️ Modificar")
+        self.btn_ed.setObjectName("btnSecondary")
+        self.btn_ed.clicked.connect(self._modificar_dotacion)
+        h_d.addWidget(self.btn_ed)
+
+        self.btn_td = QPushButton("🔄 Activar / Desactivar")
+        self.btn_td.setObjectName("btnSecondary")
+        self.btn_td.clicked.connect(self._toggle_dotacion)
+        h_d.addWidget(self.btn_td)
+
         h_d.addStretch()
         lay_d.addLayout(h_d)
 
         self.table_dots = QTableWidget(0, 3)
-        self.table_dots.setHorizontalHeaderLabels(["ID", "DOTACIÓN", "ACTIVO"])
+        self.table_dots.setHorizontalHeaderLabels(["ID", "DOTACIÓN", "ESTADO"])
+        self.table_dots.setSelectionBehavior(QTableView.SelectRows)
+        self.table_dots.setSelectionMode(QTableView.SingleSelection)
+        self.table_dots.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table_dots.setMaximumWidth(550)
+        self.table_dots.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_dots.setColumnWidth(0, 60)
         self.table_dots.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table_dots.setColumnWidth(2, 100)
+        self.table_dots.doubleClicked.connect(lambda _: self._modificar_dotacion())
         lay_d.addWidget(self.table_dots)
         tabs.addTab(tab_dots, "Dotaciones")
 
@@ -595,32 +812,71 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
         tab_pe = QWidget()
         lay_pe = QVBoxLayout(tab_pe)
         h_pe = QHBoxLayout()
-        btn_npe = QPushButton("➕ Nuevo Personal de Estación")
-        btn_npe.clicked.connect(self._nuevo_personal_estacion)
-        h_pe.addWidget(btn_npe)
+        self.btn_npe = QPushButton("➕ Nuevo Personal")
+        self.btn_npe.clicked.connect(self._nuevo_personal_estacion)
+        h_pe.addWidget(self.btn_npe)
+
+        self.btn_epe = QPushButton("✏️ Modificar")
+        self.btn_epe.setObjectName("btnSecondary")
+        self.btn_epe.clicked.connect(self._modificar_personal_estacion)
+        h_pe.addWidget(self.btn_epe)
+
+        self.btn_tpe = QPushButton("🔄 Activar / Desactivar")
+        self.btn_tpe.setObjectName("btnSecondary")
+        self.btn_tpe.clicked.connect(self._toggle_personal_estacion)
+        h_pe.addWidget(self.btn_tpe)
+
+        self.btn_imp_pe = QPushButton("📥 Importar Excel")
+        self.btn_imp_pe.setObjectName("btnSecondary")
+        self.btn_imp_pe.clicked.connect(self._importar_personal_estacion)
+        h_pe.addWidget(self.btn_imp_pe)
+
         h_pe.addStretch()
         lay_pe.addLayout(h_pe)
 
         self.table_pe = QTableWidget(0, 4)
-        self.table_pe.setHorizontalHeaderLabels(["ID", "NOMBRE Y APELLIDO", "DOTACIÓN", "ACTIVO"])
+        self.table_pe.setHorizontalHeaderLabels(["ID", "NOMBRE Y APELLIDO", "DOTACIÓN", "ESTADO"])
+        self.table_pe.setSelectionBehavior(QTableView.SelectRows)
+        self.table_pe.setSelectionMode(QTableView.SingleSelection)
+        self.table_pe.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table_pe.setMaximumWidth(820)
+        self.table_pe.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_pe.setColumnWidth(0, 60)
         self.table_pe.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table_pe.setColumnWidth(2, 180)
+        self.table_pe.setColumnWidth(3, 100)
+        self.table_pe.doubleClicked.connect(lambda _: self._modificar_personal_estacion())
         lay_pe.addWidget(self.table_pe)
         tabs.addTab(tab_pe, "Personal de Estación")
 
+        # Tab 4: Turnos de Itinerario
+        from src.ui.views.dialogs.admin_turnos_dialog import AdminTurnosWidget
+        self.widget_turnos = AdminTurnosWidget(
+            self.records_service,
+            usuario_actual=self.usuario_actual,
+            tiene_permiso_fn=self.tiene_permiso_fn,
+            parent=self,
+        )
+        tabs.addTab(self.widget_turnos, "Turnos de Itinerario")
+
         layout.addWidget(tabs)
-
-        btn_cerrar = QPushButton("Cerrar")
-        btn_cerrar.setObjectName("btnSecondary")
-        btn_cerrar.clicked.connect(self.accept)
-        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
-
         self.recargar_todo()
+
+    def _can(self, permission_code: str) -> bool:
+        if self.tiene_permiso_fn is None:
+            return True
+        return bool(self.tiene_permiso_fn(permission_code))
+
+    def _u_info(self):
+        u_id = self.usuario_actual.get("id")
+        win_u = self.usuario_actual.get("username")
+        return u_id, win_u
 
     def recargar_todo(self) -> None:
         # Tipos
-        tipos = self.records_service.listar_tipos(incluir_inactivos=True)
-        self.table_tipos.setRowCount(len(tipos))
-        for r, t in enumerate(tipos):
+        self._tipos = self.records_service.listar_tipos(incluir_inactivos=True)
+        self.table_tipos.setRowCount(len(self._tipos))
+        for r, t in enumerate(self._tipos):
             self.table_tipos.setItem(r, 0, QTableWidgetItem(str(t["id"])))
             self.table_tipos.setItem(r, 1, QTableWidgetItem(str(t["nombre"])))
             self.table_tipos.setItem(r, 2, QTableWidgetItem(str(t.get("dias", 0))))
@@ -628,26 +884,35 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
             self.table_tipos.setItem(r, 4, QTableWidgetItem("Activo" if t.get("activo") else "Inactivo"))
 
         # Dotaciones
-        dots = self.records_service.listar_dotaciones(incluir_inactivos=True)
-        self.table_dots.setRowCount(len(dots))
-        for r, d in enumerate(dots):
+        self._dots = self.records_service.listar_dotaciones(incluir_inactivos=True)
+        self.table_dots.setRowCount(len(self._dots))
+        for r, d in enumerate(self._dots):
             self.table_dots.setItem(r, 0, QTableWidgetItem(str(d["id"])))
             self.table_dots.setItem(r, 1, QTableWidgetItem(str(d["nombre"])))
             self.table_dots.setItem(r, 2, QTableWidgetItem("Activo" if d.get("activo") else "Inactivo"))
 
         # Personal estación
-        pes = self.records_service.listar_personal_estacion(incluir_inactivos=True)
-        self.table_pe.setRowCount(len(pes))
-        for r, p in enumerate(pes):
+        self._pes = self.records_service.listar_personal_estacion(incluir_inactivos=True)
+        self.table_pe.setRowCount(len(self._pes))
+        for r, p in enumerate(self._pes):
             self.table_pe.setItem(r, 0, QTableWidgetItem(str(p["id"])))
             self.table_pe.setItem(r, 1, QTableWidgetItem(str(p["nombre"])))
             self.table_pe.setItem(r, 2, QTableWidgetItem(str(p.get("dotacion") or "-")))
             self.table_pe.setItem(r, 3, QTableWidgetItem("Activo" if p.get("activo") else "Inactivo"))
 
+        # Turnos
+        if hasattr(self, "widget_turnos"):
+            self.widget_turnos.recargar()
+
+    # --- 1. Tipos de Novedad CRUD ---
+
     def _nuevo_tipo(self) -> None:
+        if not self._can("tiposNovedad.administrar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para administrar tipos de novedad.")
+            return
         dlg = QDialog(self)
         dlg.setWindowTitle("Nuevo Tipo de Novedad")
-        dlg.setFixedSize(360, 200)
+        dlg.setFixedSize(380, 210)
         lay = QFormLayout(dlg)
         txt = QLineEdit()
         spin = QSpinBox()
@@ -664,13 +929,102 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
         if dlg.exec():
             n = txt.text().strip()
             if n:
-                self.records_service.crear_tipo(n, dias=spin.value(), exportar_descubierto=1 if chk.isChecked() else 0)
-                self.recargar_todo()
+                u_id, win_u = self._u_info()
+                try:
+                    self.records_service.crear_tipo(
+                        n,
+                        dias=spin.value(),
+                        exportar_descubierto=1 if chk.isChecked() else 0,
+                        user_id=u_id,
+                        windows_user=win_u,
+                    )
+                    self.recargar_todo()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"No se pudo crear el tipo:\n{e}")
+
+    def _modificar_tipo(self) -> None:
+        if not self._can("tiposNovedad.administrar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para modificar tipos de novedad.")
+            return
+        row = self.table_tipos.currentRow()
+        if row < 0 or row >= len(self._tipos):
+            QMessageBox.information(self, "Selección", "Seleccione un tipo de novedad de la tabla.")
+            return
+        t = self._tipos[row]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Modificar Tipo de Novedad")
+        dlg.setFixedSize(380, 240)
+        lay = QFormLayout(dlg)
+        txt = QLineEdit(str(t["nombre"]))
+        spin = QSpinBox()
+        spin.setRange(0, 365)
+        spin.setValue(int(t.get("dias") or 0))
+        chk_exp = QCheckBox("Exportar en reporte de turnos sin cubrir")
+        chk_exp.setChecked(bool(t.get("exportar_descubierto")))
+        chk_act = QCheckBox("Activo")
+        chk_act.setChecked(bool(t.get("activo")))
+
+        lay.addRow("Nombre:", txt)
+        lay.addRow("Días duración:", spin)
+        lay.addRow(chk_exp)
+        lay.addRow(chk_act)
+        btn = QPushButton("Guardar Cambios")
+        btn.clicked.connect(dlg.accept)
+        lay.addRow(btn)
+
+        if dlg.exec():
+            n = txt.text().strip()
+            if n:
+                u_id, win_u = self._u_info()
+                try:
+                    self.records_service.actualizar_tipo(
+                        t["id"],
+                        nombre=n,
+                        dias=spin.value(),
+                        exportar_descubierto=1 if chk_exp.isChecked() else 0,
+                        activo=1 if chk_act.isChecked() else 0,
+                        user_id=u_id,
+                        windows_user=win_u,
+                    )
+                    self.recargar_todo()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"No se pudo actualizar el tipo:\n{e}")
+
+    def _toggle_tipo(self) -> None:
+        if not self._can("tiposNovedad.administrar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para modificar tipos de novedad.")
+            return
+        row = self.table_tipos.currentRow()
+        if row < 0 or row >= len(self._tipos):
+            QMessageBox.information(self, "Selección", "Seleccione un tipo de novedad de la tabla.")
+            return
+        t = self._tipos[row]
+        nuevo_act = 0 if t.get("activo") else 1
+        u_id, win_u = self._u_info()
+        try:
+            self.records_service.actualizar_tipo(
+                t["id"],
+                nombre=t["nombre"],
+                dias=int(t.get("dias") or 0),
+                exportar_descubierto=int(t.get("exportar_descubierto") or 1),
+                activo=nuevo_act,
+                user_id=u_id,
+                windows_user=win_u,
+            )
+            self.recargar_todo()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cambiar el estado:\n{e}")
+
+    # --- 2. Dotaciones CRUD ---
 
     def _nueva_dotacion(self) -> None:
+        if not self._can("dotaciones.administrar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para administrar dotaciones.")
+            return
         dlg = QDialog(self)
         dlg.setWindowTitle("Nueva Dotación")
-        dlg.setFixedSize(320, 130)
+        dlg.setFixedSize(340, 140)
         lay = QFormLayout(dlg)
         txt = QLineEdit()
         lay.addRow("Nombre:", txt)
@@ -681,14 +1035,85 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
         if dlg.exec():
             n = txt.text().strip()
             if n:
-                self.records_service.crear_dotacion(n)
-                self.recargar_todo()
+                u_id, win_u = self._u_info()
+                try:
+                    self.records_service.crear_dotacion(n, user_id=u_id, windows_user=win_u)
+                    self.recargar_todo()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"No se pudo crear la dotación:\n{e}")
+
+    def _modificar_dotacion(self) -> None:
+        if not self._can("dotaciones.administrar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para modificar dotaciones.")
+            return
+        row = self.table_dots.currentRow()
+        if row < 0 or row >= len(self._dots):
+            QMessageBox.information(self, "Selección", "Seleccione una dotación de la tabla.")
+            return
+        d = self._dots[row]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Modificar Dotación")
+        dlg.setFixedSize(340, 170)
+        lay = QFormLayout(dlg)
+        txt = QLineEdit(str(d["nombre"]))
+        chk_act = QCheckBox("Activo")
+        chk_act.setChecked(bool(d.get("activo")))
+        lay.addRow("Nombre:", txt)
+        lay.addRow(chk_act)
+        btn = QPushButton("Guardar Cambios")
+        btn.clicked.connect(dlg.accept)
+        lay.addRow(btn)
+
+        if dlg.exec():
+            n = txt.text().strip()
+            if n:
+                u_id, win_u = self._u_info()
+                try:
+                    self.records_service.actualizar_dotacion(
+                        d["id"],
+                        nombre=n,
+                        activo=1 if chk_act.isChecked() else 0,
+                        user_id=u_id,
+                        windows_user=win_u,
+                    )
+                    self.recargar_todo()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"No se pudo actualizar la dotación:\n{e}")
+
+    def _toggle_dotacion(self) -> None:
+        if not self._can("dotaciones.administrar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para modificar dotaciones.")
+            return
+        row = self.table_dots.currentRow()
+        if row < 0 or row >= len(self._dots):
+            QMessageBox.information(self, "Selección", "Seleccione una dotación de la tabla.")
+            return
+        d = self._dots[row]
+        nuevo_act = 0 if d.get("activo") else 1
+        u_id, win_u = self._u_info()
+        try:
+            self.records_service.actualizar_dotacion(
+                d["id"],
+                nombre=d["nombre"],
+                activo=nuevo_act,
+                user_id=u_id,
+                windows_user=win_u,
+            )
+            self.recargar_todo()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cambiar el estado:\n{e}")
+
+    # --- 3. Personal de Estación CRUD ---
 
     def _nuevo_personal_estacion(self) -> None:
+        if not self._can("personalEstacion.crear"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para crear personal de estación.")
+            return
         dots = [d["nombre"] for d in self.records_service.listar_dotaciones(incluir_inactivos=False)]
         dlg = QDialog(self)
         dlg.setWindowTitle("Nuevo Personal de Estación")
-        dlg.setFixedSize(360, 160)
+        dlg.setFixedSize(380, 170)
         lay = QFormLayout(dlg)
         txt = QLineEdit()
         combo = QComboBox()
@@ -702,45 +1127,208 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
 
         if dlg.exec():
             n = txt.text().strip()
-            d = combo.currentText().strip() or None
+            dot = combo.currentText().strip() or None
             if n:
-                self.records_service.crear_personal_estacion(n, dotacion=d)
-                self.recargar_todo()
+                u_id, win_u = self._u_info()
+                try:
+                    self.records_service.crear_personal_estacion(
+                        n,
+                        dotacion=dot,
+                        user_id=u_id,
+                        windows_user=win_u,
+                    )
+                    self.recargar_todo()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"No se pudo crear el personal de estación:\n{e}")
+
+    def _modificar_personal_estacion(self) -> None:
+        if not self._can("personalEstacion.editar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para modificar personal de estación.")
+            return
+        row = self.table_pe.currentRow()
+        if row < 0 or row >= len(self._pes):
+            QMessageBox.information(self, "Selección", "Seleccione un personal de estación de la tabla.")
+            return
+        p = self._pes[row]
+
+        dots = [d["nombre"] for d in self.records_service.listar_dotaciones(incluir_inactivos=False)]
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Modificar Personal de Estación")
+        dlg.setFixedSize(380, 200)
+        lay = QFormLayout(dlg)
+        txt = QLineEdit(str(p["nombre"]))
+        combo = QComboBox()
+        combo.addItem("")
+        combo.addItems(dots)
+        if p.get("dotacion"):
+            idx = combo.findText(p["dotacion"])
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            else:
+                combo.addItem(p["dotacion"])
+                combo.setCurrentText(p["dotacion"])
+
+        chk_act = QCheckBox("Activo")
+        chk_act.setChecked(bool(p.get("activo")))
+
+        lay.addRow("Nombre:", txt)
+        lay.addRow("Dotación:", combo)
+        lay.addRow(chk_act)
+        btn = QPushButton("Guardar Cambios")
+        btn.clicked.connect(dlg.accept)
+        lay.addRow(btn)
+
+        if dlg.exec():
+            n = txt.text().strip()
+            dot = combo.currentText().strip() or None
+            if n:
+                u_id, win_u = self._u_info()
+                try:
+                    self.records_service.actualizar_personal_estacion(
+                        p["id"],
+                        nombre=n,
+                        activo=1 if chk_act.isChecked() else 0,
+                        dotacion=dot,
+                        cambiar_dotacion=True,
+                        user_id=u_id,
+                        windows_user=win_u,
+                    )
+                    self.recargar_todo()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"No se pudo modificar el personal de estación:\n{e}")
+
+    def _toggle_personal_estacion(self) -> None:
+        if not self._can("personalEstacion.editar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para modificar personal de estación.")
+            return
+        row = self.table_pe.currentRow()
+        if row < 0 or row >= len(self._pes):
+            QMessageBox.information(self, "Selección", "Seleccione un personal de estación de la tabla.")
+            return
+        p = self._pes[row]
+        nuevo_act = 0 if p.get("activo") else 1
+        u_id, win_u = self._u_info()
+        try:
+            self.records_service.actualizar_personal_estacion(
+                p["id"],
+                nombre=p["nombre"],
+                activo=nuevo_act,
+                dotacion=p.get("dotacion"),
+                cambiar_dotacion=False,
+                user_id=u_id,
+                windows_user=win_u,
+            )
+            self.recargar_todo()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cambiar el estado:\n{e}")
+
+    def _importar_personal_estacion(self) -> None:
+        if not self._can("personalEstacion.importar"):
+            QMessageBox.warning(self, "Permiso Denegado", "No posee permiso para importar personal de estación.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Importar Personal de Estación",
+            "",
+            "Archivos Excel (*.xlsx *.xls)",
+        )
+        if not path:
+            return
+        try:
+            cant = self.excel_service.import_personal_estacion_sheet(path, clear_existing=False)
+            QMessageBox.information(self, "Importación Exitosa", f"Se procesaron {cant} registros correctamente.")
+            self.recargar_todo()
+        except Exception as e:
+            QMessageBox.critical(self, "Error de Importación", f"Error al importar el archivo Excel:\n{e}")
+
+
+class AdminCatalogosDialog(BaseMaximizedDialog):
+    """Gestión de Tipos de Novedad, Dotaciones y Personal de Estación."""
+
+    def __init__(
+        self,
+        records_service: RecordsService,
+        excel_service: ExcelService,
+        usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Catálogos Operativos del Sistema")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminCatalogosWidget(
+            records_service,
+            excel_service,
+            usuario_actual=usuario_actual,
+            tiene_permiso_fn=tiene_permiso_fn,
+            parent=self,
+        )
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar_todo(self) -> None:
+        self.widget.recargar_todo()
 
 
 # ---------------------------------------------------------------------------
 # 5. Configuración General (Tiempos, Contraseñas, Toasts)
 # ---------------------------------------------------------------------------
 
-class AdminConfigDialog(BaseMaximizedDialog):
-    """Configuración de parámetros operativos y de seguridad."""
+class AdminConfigWidget(QWidget):
+    """Panel de configuración de parámetros operativos, seguridad y sincronización Supabase."""
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
-        self.setWindowTitle("Configuración del Sistema")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Usar pestañas para separar parámetros generales de Supabase
+        tabs = QTabWidget()
+
+        # Pestaña 1: Parámetros Generales
+        tab_gen = QWidget()
+        lay_gen_root = QHBoxLayout(tab_gen)
+        lay_gen_root.setContentsMargins(15, 15, 15, 15)
+
+        card_gen = QFrame()
+        card_gen.setObjectName("cardFrame")
+        card_gen.setMaximumWidth(580)
+        lay_card_gen = QVBoxLayout(card_gen)
+        lay_card_gen.setContentsMargins(15, 15, 15, 15)
+        lay_card_gen.setSpacing(12)
 
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 
         # Ventanas
         self.spin_edit = QSpinBox()
         self.spin_edit.setRange(1, 720)
+        self.spin_edit.setFixedWidth(120)
         form.addRow("Ventana para editar registros (horas):", self.spin_edit)
 
         self.spin_elim = QSpinBox()
         self.spin_elim.setRange(1, 720)
+        self.spin_elim.setFixedWidth(120)
         form.addRow("Ventana para eliminar registros (horas):", self.spin_elim)
 
         # Claves
         self.spin_exp = QSpinBox()
         self.spin_exp.setRange(0, 365)
-        form.addRow("Expiración obligatoria de contraseñas (días, 0=desactivada):", self.spin_exp)
+        self.spin_exp.setFixedWidth(120)
+        form.addRow("Expiración de contraseñas (días, 0=desactivada):", self.spin_exp)
 
         self.txt_dom = QLineEdit()
-        form.addRow("Dominio de correo institucional para recuperación:", self.txt_dom)
+        self.txt_dom.setMaximumWidth(360)
+        form.addRow("Dominio de correo institucional:", self.txt_dom)
 
         # Notificaciones
         self.chk_notif = QCheckBox("Activar notificaciones toast de nuevos registros")
@@ -748,23 +1336,194 @@ class AdminConfigDialog(BaseMaximizedDialog):
 
         self.spin_toast = QSpinBox()
         self.spin_toast.setRange(2, 30)
+        self.spin_toast.setFixedWidth(120)
         form.addRow("Duración de notificaciones en pantalla (segundos):", self.spin_toast)
 
-        layout.addLayout(form)
+        lay_card_gen.addLayout(form)
+        lay_card_gen.addStretch()
 
-        # Guardar
+        lay_gen_root.addWidget(card_gen)
+        lay_gen_root.addStretch(1)
+        tabs.addTab(tab_gen, "⚙️ Parámetros Generales")
+
+        # Pestaña 2: Sincronización Supabase (Nube)
+        tab_sync = QWidget()
+        lay_sync_root = QVBoxLayout(tab_sync)
+        lay_sync_root.setContentsMargins(10, 10, 10, 10)
+
+        scroll_sync = QScrollArea()
+        scroll_sync.setWidgetResizable(True)
+        scroll_sync.setFrameShape(QFrame.NoFrame)
+
+        scroll_content = QWidget()
+        lay_scroll = QHBoxLayout(scroll_content)
+        lay_scroll.setContentsMargins(5, 5, 5, 5)
+
+        card_sync = QFrame()
+        card_sync.setObjectName("cardFrame")
+        card_sync.setMaximumWidth(600)
+        lay_card_sync = QVBoxLayout(card_sync)
+        lay_card_sync.setContentsMargins(15, 15, 15, 15)
+        lay_card_sync.setSpacing(14)
+
+        form_sync = QFormLayout()
+        form_sync.setLabelAlignment(Qt.AlignLeft)
+        form_sync.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+
+        self.chk_sync_enabled = QCheckBox("Habilitar sincronización híbrida con Supabase")
+        form_sync.addRow(self.chk_sync_enabled)
+
+        self.txt_supa_url = QLineEdit()
+        self.txt_supa_url.setPlaceholderText("https://xxxx.supabase.co")
+        self.txt_supa_url.setMaximumWidth(380)
+        form_sync.addRow("Supabase URL:", self.txt_supa_url)
+
+        self.txt_supa_key = QLineEdit()
+        self.txt_supa_key.setEchoMode(QLineEdit.Password)
+        self.txt_supa_key.setPlaceholderText("sb_publishable_... o API Anon Key")
+        self.txt_supa_key.setMaximumWidth(380)
+        form_sync.addRow("Supabase Anon Key:", self.txt_supa_key)
+
+        self.spin_sync_interval = QSpinBox()
+        self.spin_sync_interval.setRange(1, 60)
+        self.spin_sync_interval.setValue(5)
+        self.spin_sync_interval.setSuffix(" min")
+        self.spin_sync_interval.setFixedWidth(120)
+        form_sync.addRow("Intervalo de auto-sincronización:", self.spin_sync_interval)
+
+        lay_card_sync.addLayout(form_sync)
+
+        # 🌐 Red y Proxy Corporativo (Solución HTTP 407)
+        self.box_proxy = QGroupBox("🌐 Red y Proxy Corporativo (Solución HTTP 407)")
+        lay_proxy = QVBoxLayout(self.box_proxy)
+        lay_proxy.setSpacing(10)
+
+        self.cmb_proxy_mode = QComboBox()
+        for modo_id, modo_desc in OPCIONES_MODO:
+            self.cmb_proxy_mode.addItem(modo_desc, modo_id)
+
+        lay_mode = QFormLayout()
+        lay_mode.addRow("Modo de Conexión / Proxy:", self.cmb_proxy_mode)
+        lay_proxy.addLayout(lay_mode)
+
+        # Sub-sección SSO Windows
+        self.widget_sso = QWidget()
+        lay_sso = QFormLayout(self.widget_sso)
+        lay_sso.setContentsMargins(0, 4, 0, 4)
+        self.txt_proxy_sso = QLineEdit()
+        self.txt_proxy_sso.setPlaceholderText("Vacío = Autodetectar desde Windows (Internet Settings / WPAD)")
+        self.txt_proxy_sso.setMaximumWidth(380)
+        self.lbl_proxy_sso_info = QLabel("<b>Proxy detectado en Windows:</b> ...")
+        self.lbl_proxy_sso_info.setStyleSheet("color:#1e40af; font-size:11px;")
+        lay_sso.addRow("Servidor:Puerto Proxy (opcional):", self.txt_proxy_sso)
+        lay_sso.addRow("", self.lbl_proxy_sso_info)
+        lay_proxy.addWidget(self.widget_sso)
+
+        # Sub-sección Proxy Manual
+        self.widget_manual = QWidget()
+        lay_manual = QFormLayout(self.widget_manual)
+        lay_manual.setContentsMargins(0, 4, 0, 4)
+
+        self.cmb_proxy_auth = QComboBox()
+        for auth_id, auth_desc in OPCIONES_AUTH_PROXY:
+            self.cmb_proxy_auth.addItem(auth_desc, auth_id)
+
+        self.txt_proxy_host = QLineEdit()
+        self.txt_proxy_host.setPlaceholderText("ej. proxy.empresa.com.ar o 10.0.0.1")
+        self.txt_proxy_host.setMaximumWidth(260)
+
+        self.spin_proxy_port = QSpinBox()
+        self.spin_proxy_port.setRange(1, 65535)
+        self.spin_proxy_port.setValue(8080)
+        self.spin_proxy_port.setFixedWidth(90)
+
+        box_host_port = QHBoxLayout()
+        box_host_port.addWidget(self.txt_proxy_host, 1)
+        box_host_port.addWidget(QLabel("Puerto:"))
+        box_host_port.addWidget(self.spin_proxy_port)
+
+        self.txt_proxy_user = QLineEdit()
+        self.txt_proxy_user.setPlaceholderText("ej. DOMINIO\\usuario o usuario")
+        self.txt_proxy_user.setMaximumWidth(380)
+
+        self.txt_proxy_pass = QLineEdit()
+        self.txt_proxy_pass.setEchoMode(QLineEdit.Password)
+        self.txt_proxy_pass.setMaximumWidth(330)
+
+        self.btn_toggle_pass = QPushButton("👁️")
+        self.btn_toggle_pass.setFixedWidth(36)
+        self.btn_toggle_pass.setToolTip("Mostrar / Ocultar Contraseña")
+        self.btn_toggle_pass.clicked.connect(self._toggle_ver_pass_proxy)
+
+        box_pass = QHBoxLayout()
+        box_pass.addWidget(self.txt_proxy_pass, 1)
+        box_pass.addWidget(self.btn_toggle_pass)
+
+        lay_manual.addRow("Autenticación del Proxy:", self.cmb_proxy_auth)
+        lay_manual.addRow("Servidor / IP Proxy:", box_host_port)
+        lay_manual.addRow("Usuario Proxy:", self.txt_proxy_user)
+        lay_manual.addRow("Contraseña Proxy:", box_pass)
+        lay_proxy.addWidget(self.widget_manual)
+
+        self.cmb_proxy_mode.currentIndexChanged.connect(self._actualizar_visibilidad_proxy)
+        lay_card_sync.addWidget(self.box_proxy)
+
+        # Botón de prueba
+        btn_test_box = QHBoxLayout()
+        self.btn_probar_supa = QPushButton("🔌 Probar Conexión Ahora (Testear Modo Seleccionado)")
+        self.btn_probar_supa.setObjectName("btnSecondary")
+        self.btn_probar_supa.clicked.connect(self._probar_conexion_supa)
+        btn_test_box.addWidget(self.btn_probar_supa)
+        btn_test_box.addStretch()
+        lay_card_sync.addLayout(btn_test_box)
+        lay_card_sync.addStretch()
+
+        lay_scroll.addWidget(card_sync)
+        lay_scroll.addStretch(1)
+        scroll_sync.setWidget(scroll_content)
+        lay_sync_root.addWidget(scroll_sync)
+        tabs.addTab(tab_sync, "☁️ Sincronización Supabase")
+
+        layout.addWidget(tabs)
+
+        # Botón Guardar
         btn_box = QHBoxLayout()
         btn_box.addStretch()
-        btn_cancel = QPushButton("Cancelar")
-        btn_cancel.setObjectName("btnSecondary")
-        btn_cancel.clicked.connect(self.reject)
-        btn_save = QPushButton("Guardar Configuración")
-        btn_save.clicked.connect(self._guardar)
-        btn_box.addWidget(btn_cancel)
-        btn_box.addWidget(btn_save)
+        self.btn_save = QPushButton("💾 Guardar Configuración")
+        self.btn_save.clicked.connect(self._guardar)
+        btn_box.addWidget(self.btn_save)
         layout.addLayout(btn_box)
 
         self._cargar()
+
+    def recargar(self) -> None:
+        self._cargar()
+
+    def _actualizar_visibilidad_proxy(self) -> None:
+        modo = self.cmb_proxy_mode.currentData() or MODO_DIRECTO
+        self.widget_sso.setVisible(modo == MODO_WINDOWS_SSO)
+        self.widget_manual.setVisible(modo == MODO_MANUAL)
+
+    def _toggle_ver_pass_proxy(self) -> None:
+        if self.txt_proxy_pass.echoMode() == QLineEdit.Password:
+            self.txt_proxy_pass.setEchoMode(QLineEdit.Normal)
+            self.btn_toggle_pass.setText("🔒")
+        else:
+            self.txt_proxy_pass.setEchoMode(QLineEdit.Password)
+            self.btn_toggle_pass.setText("👁️")
+
+    def _recopilar_config_pantalla(self) -> dict[str, Any]:
+        return {
+            "supabase_url": self.txt_supa_url.text().strip(),
+            "supabase_anon_key": self.txt_supa_key.text().strip(),
+            "proxy_mode": self.cmb_proxy_mode.currentData() or MODO_DIRECTO,
+            "proxy_sso_server": self.txt_proxy_sso.text().strip(),
+            "proxy_auth": self.cmb_proxy_auth.currentData() or AUTH_MANUAL_FIJO,
+            "proxy_host": self.txt_proxy_host.text().strip(),
+            "proxy_port": self.spin_proxy_port.value(),
+            "proxy_user": self.txt_proxy_user.text().strip(),
+            "proxy_pass": self.txt_proxy_pass.text(),
+        }
 
     def _cargar(self) -> None:
         with self.db.read_connection() as conn:
@@ -775,6 +1534,70 @@ class AdminConfigDialog(BaseMaximizedDialog):
         self.txt_dom.setText(str(rows.get("correo_dominio", "@trenesargentinos.gob.ar")))
         self.chk_notif.setChecked(bool(int(rows.get("notificaciones_activo", 1))))
         self.spin_toast.setValue(int(rows.get("toast_duracion", 6)))
+
+        from src.core.config import cargar_configuracion_json
+        app_cfg = cargar_configuracion_json()
+        self.chk_sync_enabled.setChecked(bool(app_cfg.get("autosync_habilitado", False)))
+        self.txt_supa_url.setText(str(app_cfg.get("supabase_url", "")))
+        self.txt_supa_key.setText(str(app_cfg.get("supabase_anon_key", "")))
+        self.spin_sync_interval.setValue(int(app_cfg.get("autosync_intervalo_min", 5)))
+
+        modo_guardado = app_cfg.get("proxy_mode", MODO_DIRECTO)
+        idx_modo = self.cmb_proxy_mode.findData(modo_guardado)
+        if idx_modo >= 0:
+            self.cmb_proxy_mode.setCurrentIndex(idx_modo)
+
+        self.txt_proxy_sso.setText(str(app_cfg.get("proxy_sso_server", "")))
+        self.lbl_proxy_sso_info.setText(f"<b>Proxy detectado en Windows:</b> {detectar_proxy_sistema(app_cfg)}")
+
+        auth_guardado = app_cfg.get("proxy_auth", AUTH_MANUAL_FIJO)
+        idx_auth = self.cmb_proxy_auth.findData(auth_guardado)
+        if idx_auth >= 0:
+            self.cmb_proxy_auth.setCurrentIndex(idx_auth)
+
+        self.txt_proxy_host.setText(str(app_cfg.get("proxy_host", "")))
+        self.spin_proxy_port.setValue(int(app_cfg.get("proxy_port", 8080) or 8080))
+        self.txt_proxy_user.setText(str(app_cfg.get("proxy_user", "")))
+        self.txt_proxy_pass.setText(str(app_cfg.get("proxy_pass", "")))
+
+        self._actualizar_visibilidad_proxy()
+
+    def _probar_conexion_supa(self) -> None:
+        cfg_test = self._recopilar_config_pantalla()
+        url = cfg_test.get("supabase_url", "")
+        key = cfg_test.get("supabase_anon_key", "")
+        if not url or not key:
+            QMessageBox.warning(self, "Supabase", "Ingrese tanto la URL como la Anon Key para realizar la prueba.")
+            return
+
+        self.btn_probar_supa.setEnabled(False)
+        self.btn_probar_supa.setText("⏳ Probando conexión...")
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+
+        try:
+            res = probar_conexion_supabase(cfg_test)
+            ok = res.get("ok", False)
+            modo = res.get("modo_usado", "—")
+            proxy_det = res.get("proxy_detectado", "—")
+            code = res.get("status_code", 0)
+            det = res.get("detalle", "")
+
+            msg = (
+                f"<b>Resultado de la Prueba de Conexión:</b><br><br>"
+                f"• <b>Modo Utilizado:</b> {modo}<br>"
+                f"• <b>Proxy Detectado / Usado:</b> {proxy_det}<br>"
+                f"• <b>Código HTTP:</b> {code or 'Sin respuesta'}<br><br>"
+                f"<b>Detalle:</b><br>{det}"
+            )
+
+            if ok:
+                QMessageBox.information(self, "Conexión Exitosa", msg)
+            else:
+                QMessageBox.warning(self, "Fallo de Conexión", msg)
+        finally:
+            self.btn_probar_supa.setEnabled(True)
+            self.btn_probar_supa.setText("🔌 Probar Conexión Ahora (Testear Modo Seleccionado)")
 
     def _guardar(self) -> None:
         with self.db.write_transaction() as conn:
@@ -791,29 +1614,87 @@ class AdminConfigDialog(BaseMaximizedDialog):
                     "INSERT INTO configuracion (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor",
                     (k, v),
                 )
+
+        from src.core.config import cargar_configuracion_json, guardar_configuracion_json
+        from src.core.theme import obtener_tema_visual
+        app_cfg = cargar_configuracion_json()
+        app_cfg["tema_visual"] = obtener_tema_visual(self.db)
+        app_cfg["autosync_habilitado"] = self.chk_sync_enabled.isChecked()
+        app_cfg["supabase_url"] = self.txt_supa_url.text().strip()
+        app_cfg["supabase_anon_key"] = self.txt_supa_key.text().strip()
+        app_cfg["autosync_intervalo_min"] = self.spin_sync_interval.value()
+
+        app_cfg["proxy_mode"] = self.cmb_proxy_mode.currentData() or MODO_DIRECTO
+        app_cfg["proxy_sso_server"] = self.txt_proxy_sso.text().strip()
+        app_cfg["proxy_auth"] = self.cmb_proxy_auth.currentData() or AUTH_MANUAL_FIJO
+        app_cfg["proxy_host"] = self.txt_proxy_host.text().strip()
+        app_cfg["proxy_port"] = self.spin_proxy_port.value()
+        app_cfg["proxy_user"] = self.txt_proxy_user.text().strip()
+        app_cfg["proxy_pass"] = self.txt_proxy_pass.text()
+
+        guardar_configuracion_json(app_cfg)
+        aplicar_configuracion_proxy(app_cfg)
+
         QMessageBox.information(self, "Éxito", "Configuración guardada exitosamente.")
-        self.accept()
+
+
+class AdminConfigDialog(BaseMaximizedDialog):
+    """Diálogo maximizado de configuración del sistema."""
+
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configuración del Sistema")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminConfigWidget(db, parent=self)
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
 
 
 # ---------------------------------------------------------------------------
 # 6. Copias de Seguridad (Backups)
 # ---------------------------------------------------------------------------
 
-class AdminBackupsDialog(BaseMaximizedDialog):
-    """Gestor de copias de seguridad de la base SQLite."""
+class AdminBackupsWidget(QWidget):
+    """Panel gestor de copias de seguridad de la base SQLite."""
 
     def __init__(self, backup_service: BackupService, parent=None):
         super().__init__(parent)
         self.backup_service = backup_service
-        self.setWindowTitle("Copias de Seguridad (Backups)")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
+        # 1. Barra de ruta de almacenamiento
+        dir_bar = QHBoxLayout()
+        dir_bar.addWidget(QLabel("<b>Carpeta de Almacenamiento:</b>"))
+        self.txt_ruta_dir = QLineEdit(self.backup_service.ruta_directorio_backups())
+        self.txt_ruta_dir.setReadOnly(True)
+        dir_bar.addWidget(self.txt_ruta_dir, stretch=1)
+
+        self.btn_cambiar_dir = QPushButton("📁 Cambiar Carpeta...")
+        self.btn_cambiar_dir.setObjectName("btnSecondary")
+        self.btn_cambiar_dir.clicked.connect(self._cambiar_directorio)
+        dir_bar.addWidget(self.btn_cambiar_dir)
+        layout.addLayout(dir_bar)
+
+        # 2. Botones de acción
         bar = QHBoxLayout()
         self.btn_crear = QPushButton("💾 Crear Backup Ahora")
         self.btn_crear.clicked.connect(self._crear_backup)
         bar.addWidget(self.btn_crear)
+
+        self.btn_guardar_en = QPushButton("💾 Guardar Copia en...")
+        self.btn_guardar_en.setObjectName("btnSecondary")
+        self.btn_guardar_en.clicked.connect(self._guardar_copia_en)
+        bar.addWidget(self.btn_guardar_en)
 
         self.btn_restaurar = QPushButton("🔄 Restaurar Copia Seleccionada")
         self.btn_restaurar.setObjectName("btnDanger")
@@ -831,23 +1712,43 @@ class AdminBackupsDialog(BaseMaximizedDialog):
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 360)
+        self.table.setColumnWidth(1, 140)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         layout.addWidget(self.table)
-
-        btn_cerrar = QPushButton("Cerrar")
-        btn_cerrar.setObjectName("btnSecondary")
-        btn_cerrar.clicked.connect(self.accept)
-        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
 
         self.recargar()
 
     def recargar(self) -> None:
+        if hasattr(self, "txt_ruta_dir"):
+            self.txt_ruta_dir.setText(self.backup_service.ruta_directorio_backups())
         items = self.backup_service.listar_backups()
         datos = [
             {"nombre": n, "tamano_str": f"{sz / 1024:.1f} KB", "fecha": f}
             for n, sz, f in items
         ]
         self.model.set_data(datos)
+
+    def _cambiar_directorio(self) -> None:
+        curr = self.backup_service.ruta_directorio_backups()
+        nueva_ruta = QFileDialog.getExistingDirectory(self, "Seleccionar Carpeta para Copias de Seguridad", curr)
+        if nueva_ruta:
+            self.backup_service.set_directorio_backups(nueva_ruta)
+            self.txt_ruta_dir.setText(nueva_ruta)
+            self.recargar()
+            QMessageBox.information(self, "Carpeta Actualizada", f"La carpeta predeterminada de backups ahora es:\n{nueva_ruta}")
+
+    def _guardar_copia_en(self) -> None:
+        dest_dir = QFileDialog.getExistingDirectory(self, "Seleccionar Carpeta Destino para la Copia")
+        if not dest_dir:
+            return
+        try:
+            ruta = self.backup_service.crear_backup(directorio_destino=dest_dir)
+            QMessageBox.information(self, "Backup Guardado", f"Copia de seguridad guardada con éxito en:\n{ruta}")
+            self.recargar()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo guardar la copia:\n{e}")
 
     def _crear_backup(self) -> None:
         try:
@@ -885,21 +1786,42 @@ class AdminBackupsDialog(BaseMaximizedDialog):
             QMessageBox.critical(self, "Error de Restauración", f"Fallo al restaurar:\n{e}")
 
 
+class AdminBackupsDialog(BaseMaximizedDialog):
+    """Diálogo gestor de copias de seguridad de la base SQLite."""
+
+    def __init__(self, backup_service: BackupService, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Copias de Seguridad (Backups)")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminBackupsWidget(backup_service, parent=self)
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar(self) -> None:
+        self.widget.recargar()
+
+
 # ---------------------------------------------------------------------------
 # 7. Registros Eliminados (Papelera)
 # ---------------------------------------------------------------------------
 
-class AdminEliminadosDialog(BaseMaximizedDialog):
-    """Papelera de recuperación y borrado permanente de registros."""
+class AdminEliminadosWidget(QWidget):
+    """Panel de papelera de recuperación y borrado permanente de registros."""
 
     def __init__(self, records_service: RecordsService, usuario_actual: Optional[Dict[str, Any]] = None, parent=None):
         super().__init__(parent)
         self.records_service = records_service
         self.usuario_actual = usuario_actual or {}
-        self.setWindowTitle("Registros Eliminados (Papelera)")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         bar = QHBoxLayout()
         self.btn_recuperar = QPushButton("♻️ Recuperar Registro")
@@ -922,14 +1844,16 @@ class AdminEliminadosDialog(BaseMaximizedDialog):
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 90)
+        self.table.setColumnWidth(1, 60)
+        self.table.setColumnWidth(2, 140)
+        self.table.setColumnWidth(3, 80)
+        self.table.setColumnWidth(4, 180)
+        self.table.setColumnWidth(5, 110)
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Stretch)
         layout.addWidget(self.table)
-
-        btn_cerrar = QPushButton("Cerrar")
-        btn_cerrar.setObjectName("btnSecondary")
-        btn_cerrar.clicked.connect(self.accept)
-        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
 
         self.recargar()
 
@@ -982,20 +1906,41 @@ class AdminEliminadosDialog(BaseMaximizedDialog):
             QMessageBox.critical(self, "Error", str(e))
 
 
+class AdminEliminadosDialog(BaseMaximizedDialog):
+    """Diálogo de papelera de recuperación y borrado permanente de registros."""
+
+    def __init__(self, records_service: RecordsService, usuario_actual: Optional[Dict[str, Any]] = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Registros Eliminados (Papelera)")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminEliminadosWidget(records_service, usuario_actual=usuario_actual, parent=self)
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar(self) -> None:
+        self.widget.recargar()
+
+
 # ---------------------------------------------------------------------------
 # 8. Auditoría del Sistema
 # ---------------------------------------------------------------------------
 
-class AdminAuditoriaDialog(BaseMaximizedDialog):
-    """Visor de logs de auditoría de modificaciones y accesos."""
+class AdminAuditoriaWidget(QWidget):
+    """Panel visor de logs de auditoría de modificaciones y accesos."""
 
     def __init__(self, records_service: RecordsService, parent=None):
         super().__init__(parent)
         self.records_service = records_service
-        self.setWindowTitle("Trazabilidad y Auditoría del Sistema")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         bar = QHBoxLayout()
         bar.addWidget(QLabel("Filtrar auditoría:"))
@@ -1014,14 +1959,16 @@ class AdminAuditoriaDialog(BaseMaximizedDialog):
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 60)
+        self.table.setColumnWidth(1, 140)
+        self.table.setColumnWidth(2, 110)
+        self.table.setColumnWidth(3, 100)
+        self.table.setColumnWidth(4, 120)
+        self.table.setColumnWidth(5, 90)
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Stretch)
         layout.addWidget(self.table)
-
-        btn_cerrar = QPushButton("Cerrar")
-        btn_cerrar.setObjectName("btnSecondary")
-        btn_cerrar.clicked.connect(self.accept)
-        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
 
         self.recargar()
 
@@ -1031,3 +1978,25 @@ class AdminAuditoriaDialog(BaseMaximizedDialog):
 
     def _on_search(self, text: str) -> None:
         self.recargar(text)
+
+
+class AdminAuditoriaDialog(BaseMaximizedDialog):
+    """Diálogo visor de logs de auditoría de modificaciones y accesos."""
+
+    def __init__(self, records_service: RecordsService, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Trazabilidad y Auditoría del Sistema")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminAuditoriaWidget(records_service, parent=self)
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar(self, text: str = "") -> None:
+        self.widget.recargar(text)

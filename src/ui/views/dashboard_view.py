@@ -7,7 +7,7 @@ y exportar gráficos en PNG, informe ejecutivo PDF con ReportLab y detalle anal�
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QComboBox,
@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.logger import get_logger
+from src.core.settings import AppSettings
+from src.core.theme import obtener_tema_visual
 from src.services.excel_service import ExcelService
 from src.services.pdf_service import PDFService
 from src.services.records_service import RecordsService
@@ -38,8 +40,26 @@ class BaseChartWidget(QWidget):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.title = title
+        self._es_oscuro: bool = obtener_tema_visual() == "oscuro"
         self.setMinimumSize(320, 260)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setAttribute(Qt.WA_OpaquePaintEvent, False)
+
+    def set_tema(self, es_oscuro: bool) -> None:
+        self._es_oscuro = bool(es_oscuro)
+        self.update()
+        self.repaint()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._es_oscuro = obtener_tema_visual() == "oscuro"
+        self.update()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event is not None and event.type() in (QEvent.StyleChange, QEvent.PaletteChange):
+            self._es_oscuro = obtener_tema_visual() == "oscuro"
+            self.update()
 
     def export_as_image(self, file_path: str) -> None:
         pixmap = self.grab()
@@ -49,9 +69,10 @@ class BaseChartWidget(QWidget):
 class BarChartHWidget(BaseChartWidget):
     """Gráfico de barras horizontales optimizado para tipos de novedad, dotaciones y días."""
 
-    def __init__(self, title: str, bar_color: QColor, parent=None):
+    def __init__(self, title: str, bar_color: QColor, bar_color_dark: Optional[QColor] = None, parent=None):
         super().__init__(title, parent)
         self.bar_color = bar_color
+        self.bar_color_dark = bar_color_dark or bar_color
         self._data: List[Tuple[str, int]] = []
 
     def set_data(self, data: List[Tuple[str, int]]) -> None:
@@ -65,19 +86,29 @@ class BarChartHWidget(BaseChartWidget):
         w = self.width()
         h = self.height()
 
+        es_oscuro = obtener_tema_visual() == "oscuro"
+        self._es_oscuro = es_oscuro
+        bg_card = QColor("#2A2A3C") if es_oscuro else QColor("#FFFFFF")
+        border_card = QColor("#3E3E55") if es_oscuro else QColor("#E5E7EB")
+        title_color = QColor("#60A5FA") if es_oscuro else QColor("#1F497D")
+        empty_color = QColor("#94A3B8") if es_oscuro else QColor("#9CA3AF")
+        label_color = QColor("#CBD5E1") if es_oscuro else QColor("#374151")
+        val_color = QColor("#F8FAFC") if es_oscuro else QColor("#1F2937")
+        active_bar_color = self.bar_color_dark if es_oscuro else self.bar_color
+
         # Fondo de la tarjeta
-        painter.fillRect(0, 0, w, h, QColor("#FFFFFF"))
-        painter.setPen(QPen(QColor("#E5E7EB"), 1))
+        painter.fillRect(0, 0, w, h, bg_card)
+        painter.setPen(QPen(border_card, 1))
         painter.drawRoundedRect(0, 0, w - 1, h - 1, 6, 6)
 
         # Título
-        painter.setPen(QColor("#1F497D"))
+        painter.setPen(title_color)
         font_title = QFont("Segoe UI", 10, QFont.Bold)
         painter.setFont(font_title)
         painter.drawText(14, 24, self.title)
 
         if not self._data:
-            painter.setPen(QColor("#9CA3AF"))
+            painter.setPen(empty_color)
             painter.setFont(QFont("Segoe UI", 9))
             painter.drawText(QRectF(0, 30, w, h - 30), Qt.AlignCenter, "Sin datos para el período")
             return
@@ -104,7 +135,7 @@ class BarChartHWidget(BaseChartWidget):
             bar_w = (val / max_val) * available_w
 
             # Etiqueta
-            painter.setPen(QColor("#374151"))
+            painter.setPen(label_color)
             painter.setFont(font_label)
             rect_label = QRectF(6, y, left_margin - 12, row_height)
             label_text = str(label)
@@ -113,12 +144,12 @@ class BarChartHWidget(BaseChartWidget):
             painter.drawText(rect_label, Qt.AlignRight | Qt.AlignVCenter, label_text)
 
             # Barra
-            painter.setBrush(QBrush(self.bar_color))
+            painter.setBrush(QBrush(active_bar_color))
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(QRectF(left_margin, bar_y, bar_w, bar_h), 3, 3)
 
             # Valor numérico
-            painter.setPen(QColor("#1F2937"))
+            painter.setPen(val_color)
             painter.setFont(font_val)
             painter.drawText(left_margin + bar_w + 6, bar_y + bar_h - 2, str(val))
 
@@ -129,8 +160,8 @@ class TrendChartVWidget(BaseChartWidget):
     def __init__(self, title: str, parent=None):
         super().__init__(title, parent)
         self._data: List[Tuple[str, int, int]] = []  # (fecha, novedades, cambios)
-        self.color_nov = QColor("#1F497D")
-        self.color_cam = QColor("#4682B4")
+        self.color_nov = QColor("#3B82F6")
+        self.color_cam = QColor("#60A5FA")
 
     def set_data(self, data: List[Tuple[str, int, int]]) -> None:
         self._data = list(data)
@@ -143,33 +174,45 @@ class TrendChartVWidget(BaseChartWidget):
         w = self.width()
         h = self.height()
 
-        painter.fillRect(0, 0, w, h, QColor("#FFFFFF"))
-        painter.setPen(QPen(QColor("#E5E7EB"), 1))
+        es_oscuro = obtener_tema_visual() == "oscuro"
+        self._es_oscuro = es_oscuro
+        bg_card = QColor("#2A2A3C") if es_oscuro else QColor("#FFFFFF")
+        border_card = QColor("#3E3E55") if es_oscuro else QColor("#E5E7EB")
+        title_color = QColor("#60A5FA") if es_oscuro else QColor("#1F497D")
+        legend_color = QColor("#CBD5E1") if es_oscuro else QColor("#374151")
+        empty_color = QColor("#94A3B8") if es_oscuro else QColor("#9CA3AF")
+        date_color = QColor("#94A3B8") if es_oscuro else QColor("#6B7280")
+
+        painter.fillRect(0, 0, w, h, bg_card)
+        painter.setPen(QPen(border_card, 1))
         painter.drawRoundedRect(0, 0, w - 1, h - 1, 6, 6)
 
         # Título
-        painter.setPen(QColor("#1F497D"))
+        painter.setPen(title_color)
         painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
         painter.drawText(14, 24, self.title)
 
         # Leyenda
         painter.setFont(QFont("Segoe UI", 8))
         # Novedades
-        painter.setBrush(QBrush(self.color_nov))
+        color_nov = QColor("#3B82F6") if es_oscuro else QColor("#1F497D")
+        color_cam = QColor("#60A5FA") if es_oscuro else QColor("#4682B4")
+
+        painter.setBrush(QBrush(color_nov))
         painter.setPen(Qt.NoPen)
         painter.drawRect(w - 180, 14, 10, 10)
-        painter.setPen(QColor("#374151"))
+        painter.setPen(legend_color)
         painter.drawText(w - 165, 23, "Novedades")
 
         # Cambios
-        painter.setBrush(QBrush(self.color_cam))
+        painter.setBrush(QBrush(color_cam))
         painter.setPen(Qt.NoPen)
         painter.drawRect(w - 95, 14, 10, 10)
-        painter.setPen(QColor("#374151"))
+        painter.setPen(legend_color)
         painter.drawText(w - 80, 23, "Cambios")
 
         if not self._data:
-            painter.setPen(QColor("#9CA3AF"))
+            painter.setPen(empty_color)
             painter.drawText(QRectF(0, 30, w, h - 30), Qt.AlignCenter, "Sin datos para el período")
             return
 
@@ -198,13 +241,13 @@ class TrendChartVWidget(BaseChartWidget):
 
             # Barra Novedades
             if nov_cnt > 0:
-                painter.setBrush(QBrush(self.color_nov))
+                painter.setBrush(QBrush(color_nov))
                 painter.setPen(Qt.NoPen)
                 painter.drawRect(QRectF(x, y_base - h_nov, bar_w, h_nov))
 
             # Barra Cambios apilada arriba
             if cam_cnt > 0:
-                painter.setBrush(QBrush(self.color_cam))
+                painter.setBrush(QBrush(color_cam))
                 painter.setPen(Qt.NoPen)
                 painter.drawRect(QRectF(x, y_base - h_nov - h_cam, bar_w, h_cam))
 
@@ -212,7 +255,7 @@ class TrendChartVWidget(BaseChartWidget):
             if i % label_step == 0 or i == total_items - 1:
                 partes = fecha_str.split("-")
                 etiqueta = f"{partes[2]}/{partes[1]}" if len(partes) == 3 else fecha_str
-                painter.setPen(QColor("#6B7280"))
+                painter.setPen(date_color)
                 painter.setFont(font_date)
                 painter.drawText(QRectF(x - 12, y_base + 4, bar_w + 24, 16), Qt.AlignCenter, etiqueta)
 
@@ -247,16 +290,14 @@ class DashboardView(QWidget):
 
         # 1. Cabecera y Barra de Acciones / Exportación
         header_layout = QHBoxLayout()
-        lbl_titulo = QLabel("Panel de Control")
-        lbl_titulo.setStyleSheet("font-size: 18pt; font-weight: bold; color: #1F497D;")
-        header_layout.addWidget(lbl_titulo)
+        self.lbl_titulo = QLabel("Panel de Control")
+        header_layout.addWidget(self.lbl_titulo)
 
         header_layout.addStretch()
 
         # Selector de período
-        lbl_periodo = QLabel("Período tendencia:")
-        lbl_periodo.setStyleSheet("font-weight: 600; color: #4B5563;")
-        header_layout.addWidget(lbl_periodo)
+        self.lbl_periodo = QLabel("Período tendencia:")
+        header_layout.addWidget(self.lbl_periodo)
 
         self.combo_periodo = QComboBox()
         self.combo_periodo.addItems(["7 días", "30 días", "90 días"])
@@ -302,31 +343,31 @@ class DashboardView(QWidget):
         main_layout.addLayout(cards_layout)
 
         # 3. Gráficos en ScrollArea o Grid de 2x2
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll_charts = QScrollArea()
+        self.scroll_charts.setWidgetResizable(True)
+        self.scroll_charts.setFrameShape(QFrame.NoFrame)
 
-        container = QWidget()
-        self.grid_charts = QGridLayout(container)
+        self.charts_container = QWidget()
+        self.grid_charts = QGridLayout(self.charts_container)
         self.grid_charts.setContentsMargins(0, 8, 0, 0)
         self.grid_charts.setSpacing(12)
 
         # Gráfico 1: Novedades por tipo
-        self.chart_tipo = BarChartHWidget("Novedades por Tipo", QColor("#1F497D"))
+        self.chart_tipo = BarChartHWidget("Novedades por Tipo", QColor("#1F497D"), QColor("#3B82F6"))
         # Gráfico 2: Registros por dotación
-        self.chart_dotacion = BarChartHWidget("Registros por Dotación (Top 10)", QColor("#2E7D32"))
+        self.chart_dotacion = BarChartHWidget("Registros por Dotación (Top 10)", QColor("#2E7D32"), QColor("#10B981"))
         # Gráfico 3: Tendencia diaria
         self.chart_tendencia = TrendChartVWidget("Tendencia de Cargas Diarias")
         # Gráfico 4: Registros por día de la semana
-        self.chart_dia_semana = BarChartHWidget("Registros por Día de la Semana", QColor("#F57C00"))
+        self.chart_dia_semana = BarChartHWidget("Registros por Día de la Semana", QColor("#F57C00"), QColor("#F59E0B"))
 
         self.grid_charts.addWidget(self.chart_tipo, 0, 0)
         self.grid_charts.addWidget(self.chart_dotacion, 0, 1)
         self.grid_charts.addWidget(self.chart_tendencia, 1, 0)
         self.grid_charts.addWidget(self.chart_dia_semana, 1, 1)
 
-        scroll.setWidget(container)
-        main_layout.addWidget(scroll)
+        self.scroll_charts.setWidget(self.charts_container)
+        main_layout.addWidget(self.scroll_charts)
 
         # Timestamp de actualización
         self.lbl_timestamp = QLabel("")
@@ -334,38 +375,104 @@ class DashboardView(QWidget):
         self.lbl_timestamp.setAlignment(Qt.AlignRight)
         main_layout.addWidget(self.lbl_timestamp)
 
+        self.actualizar_tema()
+
     def _crear_tarjeta_kpi(self, titulo: str, valor_inicial: str, color_borde: str, subtitulo: str) -> QFrame:
         card = QFrame()
         card.setObjectName("kpiCard")
-        card.setStyleSheet(f"""
-            QFrame#kpiCard {{
-                background-color: #FFFFFF;
-                border-left: 4px solid {color_borde};
-                border-top: 1px solid #E5E7EB;
-                border-right: 1px solid #E5E7EB;
-                border-bottom: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding: 10px;
-            }}
-        """)
+        card._color_borde = color_borde
+
         layout = QVBoxLayout(card)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
         lbl_tit = QLabel(titulo)
-        lbl_tit.setStyleSheet("font-size: 8.5pt; font-weight: bold; color: #6B7280;")
+        lbl_tit.setObjectName("kpiTitle")
 
         lbl_val = QLabel(valor_inicial)
-        lbl_val.setStyleSheet(f"font-size: 18pt; font-weight: bold; color: {color_borde};")
+        lbl_val.setObjectName("kpiValue")
         card.lbl_val = lbl_val  # type: ignore
-
-        lbl_sub = QLabel(subtitulo)
-        lbl_sub.setStyleSheet("font-size: 7.5pt; color: #9CA3AF;")
+        card.lbl_tit = lbl_tit  # type: ignore
 
         layout.addWidget(lbl_tit)
         layout.addWidget(lbl_val)
-        layout.addWidget(lbl_sub)
+
+        if subtitulo:
+            lbl_sub = QLabel(subtitulo)
+            lbl_sub.setObjectName("kpiSub")
+            card.lbl_sub = lbl_sub  # type: ignore
+            layout.addWidget(lbl_sub)
+
+        self._estilar_tarjeta_kpi(card)
         return card
+
+    def _estilar_tarjeta_kpi(self, card: QFrame, es_oscuro: Optional[bool] = None) -> None:
+        if es_oscuro is None:
+            es_oscuro = obtener_tema_visual() == "oscuro"
+        bg = "#2A2A3C" if es_oscuro else "#FFFFFF"
+        border_box = "#3E3E55" if es_oscuro else "#E5E7EB"
+        color_borde = getattr(card, "_color_borde", "#1F497D")
+
+        card.setStyleSheet(f"""
+            QFrame#kpiCard {{
+                background-color: {bg};
+                border-left: 4px solid {color_borde};
+                border-top: 1px solid {border_box};
+                border-right: 1px solid {border_box};
+                border-bottom: 1px solid {border_box};
+                border-radius: 6px;
+                padding: 10px;
+            }}
+        """)
+        if hasattr(card, "lbl_val"):
+            val_col = "#60A5FA" if (es_oscuro and color_borde == "#1F497D") else color_borde
+            card.lbl_val.setStyleSheet(f"font-size: 18pt; font-weight: bold; color: {val_col}; background: transparent;")
+        if hasattr(card, "lbl_tit"):
+            card.lbl_tit.setStyleSheet(f"font-size: 8.5pt; font-weight: bold; color: {'#94A3B8' if es_oscuro else '#6B7280'}; background: transparent;")
+        if hasattr(card, "lbl_sub"):
+            card.lbl_sub.setStyleSheet(f"font-size: 7.5pt; color: {'#64748B' if es_oscuro else '#9CA3AF'}; background: transparent;")
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.actualizar_tema()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event is not None and event.type() in (QEvent.StyleChange, QEvent.PaletteChange):
+            self.actualizar_tema()
+
+    def actualizar_tema(self, tema: Optional[str] = None) -> None:
+        """Aplica colores adaptados al modo claro/oscuro a los componentes nativos y gráficos."""
+        if tema in ("claro", "oscuro"):
+            es_oscuro = tema == "oscuro"
+        else:
+            es_oscuro = obtener_tema_visual() == "oscuro"
+
+        title_color = "#60A5FA" if es_oscuro else "#1F497D"
+        bg_panel = "#1E1E2E" if es_oscuro else "#FFFFFF"
+
+        if hasattr(self, "scroll_charts"):
+            self.scroll_charts.setStyleSheet(f"QScrollArea {{ background-color: {bg_panel}; border: none; }}")
+            if self.scroll_charts.viewport():
+                self.scroll_charts.viewport().setStyleSheet(f"background-color: {bg_panel};")
+        if hasattr(self, "charts_container"):
+            self.charts_container.setStyleSheet(f"background-color: {bg_panel};")
+
+        if hasattr(self, "lbl_titulo"):
+            self.lbl_titulo.setStyleSheet(f"font-size: 18pt; font-weight: bold; color: {title_color};")
+        if hasattr(self, "lbl_periodo"):
+            self.lbl_periodo.setStyleSheet(f"font-weight: 600; color: {'#94A3B8' if es_oscuro else '#4B5563'};")
+        if hasattr(self, "lbl_timestamp"):
+            self.lbl_timestamp.setStyleSheet(f"color: {'#94A3B8' if es_oscuro else '#6B7280'}; font-size: 8.5pt;")
+
+        for card_name in ("card_novedades_hoy", "card_cambios_hoy", "card_total_mes", "card_sin_revisar"):
+            if hasattr(self, card_name):
+                self._estilar_tarjeta_kpi(getattr(self, card_name), es_oscuro=es_oscuro)
+
+        for chart_name in ("chart_tipo", "chart_dotacion", "chart_tendencia", "chart_dia_semana"):
+            chart = getattr(self, chart_name, None)
+            if chart is not None:
+                chart.set_tema(es_oscuro)
 
     def _cambiar_periodo(self, index: int) -> None:
         dias_map = {0: 7, 1: 30, 2: 90}

@@ -34,17 +34,40 @@ class BackgroundTask(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        self.signals.started.emit()
+        try:
+            self.signals.started.emit()
+        except Exception:
+            pass
+
         try:
             # Si la función acepta un callback de progreso, se lo inyectamos
             if "progress_callback" in self.kwargs or "progress_callback" in self.fn.__code__.co_varnames:
-                self.kwargs["progress_callback"] = lambda pct, msg="": self.signals.progress.emit(int(pct), str(msg))
+                self.kwargs["progress_callback"] = lambda pct, msg="": self._emit_progress(int(pct), str(msg))
             res = self.fn(*self.args, **self.kwargs)
-            self.signals.finished.emit(res)
+            try:
+                self.signals.finished.emit(res)
+            except Exception:
+                pass
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"Error en tarea asíncrona: {e}\n{tb}")
-            self.signals.error.emit(str(e), tb)
+            try:
+                self.signals.error.emit(str(e), tb)
+            except Exception:
+                pass
+
+    def _emit_progress(self, pct: int, msg: str) -> None:
+        try:
+            self.signals.progress.emit(pct, msg)
+        except Exception:
+            pass
+
+
+_ACTIVE_TASKS: set[BackgroundTask] = set()
+
+
+def _cleanup_task(task: BackgroundTask) -> None:
+    _ACTIVE_TASKS.discard(task)
 
 
 def run_async(
@@ -59,14 +82,29 @@ def run_async(
 ) -> BackgroundTask:
     """Envía una función para ejecutarse de inmediato en el thread pool con callbacks conectados."""
     task = BackgroundTask(fn, *args, **kwargs)
+    _ACTIVE_TASKS.add(task)
+
     if on_started:
         task.signals.started.connect(on_started)
     if on_progress:
         task.signals.progress.connect(on_progress)
-    if on_success:
-        task.signals.finished.connect(on_success)
-    if on_error:
-        task.signals.error.connect(on_error)
+
+    def _wrapped_success(res: Any) -> None:
+        try:
+            if on_success:
+                on_success(res)
+        finally:
+            _cleanup_task(task)
+
+    def _wrapped_error(err: str, tb: str) -> None:
+        try:
+            if on_error:
+                on_error(err, tb)
+        finally:
+            _cleanup_task(task)
+
+    task.signals.finished.connect(_wrapped_success)
+    task.signals.error.connect(_wrapped_error)
 
     target_pool = pool or QThreadPool.globalInstance()
     target_pool.start(task)

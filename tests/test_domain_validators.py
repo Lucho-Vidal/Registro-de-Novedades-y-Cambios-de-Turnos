@@ -21,6 +21,8 @@ from src.domain.validators import (
 def test_parsear_fecha():
     assert parsear_fecha("15/06/2026").strftime("%d/%m/%Y") == "15/06/2026"
     assert parsear_fecha("2026-06-15").strftime("%d/%m/%Y") == "15/06/2026"
+    assert parsear_fecha("1\xa14/08/2025").strftime("%d/%m/%Y") == "14/08/2025"
+    assert parsear_fecha("2026-11-04T12:00:00").strftime("%d/%m/%Y") == "04/11/2026"
     assert parsear_fecha("", obligatorio=False) is None
     with pytest.raises(ValueError):
         parsear_fecha("", obligatorio=True)

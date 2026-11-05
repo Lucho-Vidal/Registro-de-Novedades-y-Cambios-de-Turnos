@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.logger import get_logger
+from src.core.config import obtener_usuario_windows
 from src.domain.validators import es_turno_ciclo, parsear_fecha
 from src.services.records_service import RecordsService
 from src.ui.views.dialogs.legajo_search_dialog import LegajoSearchDialog
@@ -173,7 +174,7 @@ class NovedadDialog(QDialog):
 
         self.setWindowTitle("Modificar Novedad" if novedad_existente else "Nueva Novedad Operativa")
         self.resize(840, 680)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags((self.windowFlags() & ~Qt.WindowContextHelpButtonHint) | Qt.WindowCloseButtonHint)
 
         self._empleados_cache: List[Dict[str, Any]] = self.records_service.listar_empleados(incluir_inactivos=False)
         self._tipos_cache: List[Dict[str, Any]] = self.records_service.listar_tipos(incluir_inactivos=False)
@@ -182,6 +183,10 @@ class NovedadDialog(QDialog):
         self._init_ui()
         if self.novedad_existente:
             self._cargar_datos_existentes()
+
+    def closeEvent(self, event) -> None:
+        self.reject()
+        event.accept()
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -264,18 +269,37 @@ class NovedadDialog(QDialog):
         h_fin.addWidget(self.date_fin)
         lay_nov.addLayout(h_fin, 1, 1)
 
-        lay_nov.addWidget(QLabel("Referencia Estación:"), 1, 2)
+        lay_nov.addWidget(QLabel("Referencia Estación (*):"), 1, 2)
         self.combo_estacion = QComboBox()
-        self.combo_estacion.setEditable(True)
+        self.combo_estacion.setEditable(False)
         self.combo_estacion.addItem("")
         for pe in self._personal_estacion_cache:
             dot_txt = f" ({pe['dotacion']})" if pe.get("dotacion") else ""
             self.combo_estacion.addItem(f"{pe['nombre']}{dot_txt}")
+        # Agregar dotaciones si no figuran
+        try:
+            for d in self.records_service.listar_dotaciones(incluir_inactivos=False):
+                d_nom = d.get("nombre")
+                if d_nom and self.combo_estacion.findText(d_nom) == -1:
+                    self.combo_estacion.addItem(d_nom)
+        except Exception:
+            pass
         lay_nov.addWidget(self.combo_estacion, 1, 3)
 
         lay_nov.addWidget(QLabel("Supervisor:"), 2, 0)
         self.txt_supervisor = QLineEdit()
+        self.txt_supervisor.setReadOnly(True)
+        self.txt_supervisor.setEnabled(False)
+        u_sup = self.usuario_actual.get("username") or self.usuario_actual.get("nombre") or ""
+        self.txt_supervisor.setText(u_sup)
         lay_nov.addWidget(self.txt_supervisor, 2, 1)
+
+        lay_nov.addWidget(QLabel("Usuario Windows:"), 2, 2)
+        self.txt_usuario_windows = QLineEdit()
+        self.txt_usuario_windows.setReadOnly(True)
+        self.txt_usuario_windows.setEnabled(False)
+        self.txt_usuario_windows.setText(obtener_usuario_windows())
+        lay_nov.addWidget(self.txt_usuario_windows, 2, 3)
 
         lay_nov.addWidget(QLabel("Observaciones:"), 3, 0)
         self.txt_observaciones = QPlainTextEdit()
@@ -449,6 +473,17 @@ class NovedadDialog(QDialog):
         if dlg.exec():
             res = dlg.tramo_result
             if res:
+                leg_r = res.get("legajo_reemplazo") or res.get("legajo")
+                try:
+                    self.records_service.validar_reemplazo_disponible(
+                        int(leg_r),
+                        res.get("fecha_inicio"),
+                        res.get("fecha_fin"),
+                        excluir_novedad_id=self.novedad_existente.get("id") if self.novedad_existente else None,
+                    )
+                except ValueError as e:
+                    QMessageBox.warning(self, "Relevo No Disponible", str(e))
+                    return
                 self.tramos.append(res)
                 self._render_tramos()
 
@@ -470,6 +505,17 @@ class NovedadDialog(QDialog):
         if dlg.exec():
             res = dlg.tramo_result
             if res:
+                leg_r = res.get("legajo_reemplazo") or res.get("legajo")
+                try:
+                    self.records_service.validar_reemplazo_disponible(
+                        int(leg_r),
+                        res.get("fecha_inicio"),
+                        res.get("fecha_fin"),
+                        excluir_novedad_id=self.novedad_existente.get("id") if self.novedad_existente else None,
+                    )
+                except ValueError as e:
+                    QMessageBox.warning(self, "Relevo No Disponible", str(e))
+                    return
                 self.tramos[idx] = res
                 self._render_tramos()
 
@@ -507,15 +553,24 @@ class NovedadDialog(QDialog):
             self.chk_fecha_fin.setChecked(False)
 
         if nov.get("referencia_estacion"):
-            self.combo_estacion.setEditText(str(nov["referencia_estacion"]))
+            ref_txt = str(nov["referencia_estacion"]).strip()
+            idx = self.combo_estacion.findText(ref_txt)
+            if idx >= 0:
+                self.combo_estacion.setCurrentIndex(idx)
+            else:
+                self.combo_estacion.addItem(ref_txt)
+                self.combo_estacion.setCurrentIndex(self.combo_estacion.count() - 1)
         if nov.get("supervisor"):
             self.txt_supervisor.setText(str(nov["supervisor"]))
+        if nov.get("usuario_windows"):
+            self.txt_usuario_windows.setText(str(nov["usuario_windows"]))
         if nov.get("observaciones"):
             self.txt_observaciones.setPlainText(str(nov["observaciones"]))
 
         self._render_tramos()
 
     def _guardar(self) -> None:
+        win_usr = self.txt_usuario_windows.text().strip() or obtener_usuario_windows()
         if self.modo_restringido:
             # En modo restringido solo guardamos fecha de fin y/o nueva observación
             f_fin_str = self.date_fin.date().toString("dd/MM/yyyy") if self.chk_fecha_fin.isChecked() else None
@@ -526,7 +581,7 @@ class NovedadDialog(QDialog):
                     fecha_fin=f_fin_str,
                     nueva_observacion=nueva_obs,
                     user_id=self.usuario_actual.get("id"),
-                    windows_user=self.usuario_actual.get("username"),
+                    windows_user=win_usr,
                 )
                 self.accept()
             except Exception as e:
@@ -551,6 +606,17 @@ class NovedadDialog(QDialog):
             QMessageBox.warning(self, "Validación", "La fecha de fin no puede ser anterior a la de inicio.")
             return
 
+        ref_est = self.combo_estacion.currentText().strip()
+        if not ref_est:
+            QMessageBox.warning(self, "Validación", "La Referencia de Estación es obligatoria.")
+            self.combo_estacion.setFocus()
+            return
+
+        superv = self.txt_supervisor.text().strip()
+        if not superv:
+            superv = self.usuario_actual.get("username") or self.usuario_actual.get("nombre") or "Supervisor"
+            self.txt_supervisor.setText(superv)
+
         data_payload = {
             "legajo": int(leg_str),
             "apellidos_nombres": self.txt_nombre.text().strip(),
@@ -561,9 +627,10 @@ class NovedadDialog(QDialog):
             "novedad": tipo_str,
             "fecha_inicio": f_ini_py.strftime("%d/%m/%Y"),
             "fecha_fin": f_fin_py.strftime("%d/%m/%Y") if f_fin_py else "-",
-            "referencia_estacion": self.combo_estacion.currentText().strip(),
-            "supervisor": self.txt_supervisor.text().strip(),
+            "referencia_estacion": ref_est,
+            "supervisor": superv,
             "observaciones": self.txt_observaciones.toPlainText().strip(),
+            "usuario_windows": win_usr,
         }
 
         try:
@@ -573,14 +640,14 @@ class NovedadDialog(QDialog):
                     nov_id,
                     data_payload,
                     user_id=self.usuario_actual.get("id"),
-                    windows_user=self.usuario_actual.get("username"),
+                    windows_user=win_usr,
                     bypass_window=True,
                 )
             else:
                 nov_id = self.records_service.crear_novedad(
                     data_payload,
                     user_id=self.usuario_actual.get("id"),
-                    windows_user=self.usuario_actual.get("username"),
+                    windows_user=win_usr,
                 )
 
             # Guardar tramos de relevo
@@ -589,7 +656,7 @@ class NovedadDialog(QDialog):
                     nov_id,
                     self.tramos,
                     user_id=self.usuario_actual.get("id"),
-                    windows_user=self.usuario_actual.get("username"),
+                    windows_user=win_usr,
                 )
 
             self.accept()

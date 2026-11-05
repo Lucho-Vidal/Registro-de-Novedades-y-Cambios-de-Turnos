@@ -26,10 +26,27 @@ class BackupService:
         self.db = db
 
     def ruta_directorio_backups(self) -> str:
+        try:
+            with self.db.read_connection() as conn:
+                row = conn.execute("SELECT valor FROM configuracion WHERE clave='backup_directorio'").fetchone()
+                if row and row[0] and os.path.isdir(str(row[0]).strip()):
+                    return str(row[0]).strip()
+        except Exception:
+            pass
         base_dir = os.path.dirname(self.db.db_path) or "."
         ruta = os.path.join(base_dir, DIRECTORIO_BACKUPS)
         os.makedirs(ruta, exist_ok=True)
         return ruta
+
+    def set_directorio_backups(self, ruta: str) -> None:
+        """Configura una carpeta personalizada para almacenar los backups."""
+        if not os.path.isdir(ruta):
+            os.makedirs(ruta, exist_ok=True)
+        with self.db.write_transaction() as conn:
+            conn.execute(
+                "INSERT INTO configuracion (clave, valor) VALUES ('backup_directorio', ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor;",
+                (ruta,),
+            )
 
     def listar_backups(self) -> List[Tuple[str, int, str]]:
         """Devuelve una lista de (nombre_archivo, tamaño_bytes, fecha_modificacion)."""
@@ -67,8 +84,9 @@ class BackupService:
                 logger.warning(f"No se pudo eliminar backup antiguo {nombre}: {e}")
         return purgados
 
-    def crear_backup(self) -> str:
-        directorio = self.ruta_directorio_backups()
+    def crear_backup(self, directorio_destino: Optional[str] = None) -> str:
+        directorio = directorio_destino or self.ruta_directorio_backups()
+        os.makedirs(directorio, exist_ok=True)
         base = datetime.now().strftime("%Y%m%d_%H%M%S")
         destino = os.path.join(directorio, f"backup_{base}.sqlite")
         contador = 1
@@ -86,7 +104,8 @@ class BackupService:
                 destino_con.close()
                 origen.close()
             os.replace(destino_tmp, destino)
-            self.aplicar_retencion()
+            if not directorio_destino:
+                self.aplicar_retencion()
             logger.info(f"Copia de seguridad creada exitosamente: {destino}")
             return destino
         except Exception as e:

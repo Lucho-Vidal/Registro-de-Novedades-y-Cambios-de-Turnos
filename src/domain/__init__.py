@@ -37,4 +37,6 @@ from .validators import (
     validar_horario_hm,
     calcular_descansos_y_horas_ciclo,
     dentro_de_ventana_horaria,
+    resolver_subindice_diagrama_6d,
+    resolver_jornada_itinerario,
 )

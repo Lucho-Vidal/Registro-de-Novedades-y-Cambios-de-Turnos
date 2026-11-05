@@ -284,6 +284,72 @@ class ExcelService:
         wb.save(out_file)
         return str(out_file)
 
+    def export_ordenamientos(
+        self,
+        ordenamientos: List[Dict[str, Any]],
+        output_path: str,
+    ) -> str:
+        """Exporta el listado de Ordenamientos Operativos y sus tramos a un libro Excel."""
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        _write_sheet(
+            wb,
+            "Ordenamientos",
+            [
+                "ID", "N° ORDEN", "FECHA EMISIÓN", "HORA EMISIÓN", "LEGAJO",
+                "NOMBRE Y APELLIDO", "DOTACIÓN", "ITINERARIO", "TURNO / CICLO",
+                "RÉGIMEN", "TRENES", "MOTIVO DE LA ORDEN", "REF ESTACIÓN",
+                "EMISOR", "USUARIO WINDOWS", "OBSERVACIONES",
+            ],
+            ordenamientos,
+            [
+                "id", "nro_orden", "fecha_emision", "hora_emision", "legajo_personal",
+                "nombre_personal", "deposito", "itinerario", "ciclo_o_turno",
+                "regimen", "trenes_involucrados", "motivo_orden", "ref_pct",
+                "emisor", "usuario_windows", "observacion_pie",
+            ],
+        )
+
+        # Hoja de detalle de tramos si están disponibles en la BD
+        with self.db.read_connection() as conn:
+            ids = [int(o["id"]) for o in ordenamientos if o.get("id")]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                tramos_rows = conn.execute(
+                    f"""
+                    SELECT o.nro_orden, o.fecha_emision, o.legajo_personal, o.nombre_personal,
+                           o.deposito, ot.nro_secuencia, ot.ref, ot.nro_tren,
+                           ot.origen, ot.hora_salida, ot.destino, ot.hora_llegada, ot.observaciones
+                    FROM ordenamiento_tramos ot
+                    JOIN ordenamientos o ON o.id = ot.ordenamiento_id
+                    WHERE o.id IN ({placeholders})
+                    ORDER BY o.id ASC, ot.nro_secuencia ASC
+                    """,
+                    ids,
+                ).fetchall()
+                _write_sheet(
+                    wb,
+                    "Detalle de Tramos",
+                    [
+                        "N° ORDEN", "FECHA", "LEGAJO", "AGENTE", "DOTACIÓN",
+                        "SECUENCIA", "REF", "N° TREN", "ORIGEN", "HORA SALIDA",
+                        "DESTINO", "HORA LLEGADA", "OBSERVACIONES",
+                    ],
+                    [dict(r) for r in tramos_rows],
+                    [
+                        "nro_orden", "fecha_emision", "legajo_personal", "nombre_personal", "deposito",
+                        "nro_secuencia", "ref", "nro_tren", "origen", "hora_salida",
+                        "destino", "hora_llegada", "observaciones",
+                    ],
+                )
+
+        wb.save(out_file)
+        return str(out_file)
+
     # ---------------------------------------------------------
     # Exportación Detallada del Dashboard (Requerimiento Usuario)
     # ---------------------------------------------------------
@@ -382,6 +448,72 @@ class ExcelService:
             filas_tendencia,
             ["fecha", "novedades", "cambios", "total"],
         )
+
+        wb.save(out_file)
+        return str(out_file)
+
+    def export_ordenamientos(
+        self,
+        ordenamientos: List[Dict[str, Any]],
+        output_path: str,
+    ) -> str:
+        """Exporta el listado de Ordenamientos Operativos y sus tramos a un libro Excel."""
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        _write_sheet(
+            wb,
+            "Ordenamientos",
+            [
+                "ID", "N° ORDEN", "FECHA EMISIÓN", "HORA EMISIÓN", "LEGAJO",
+                "NOMBRE Y APELLIDO", "DOTACIÓN", "ITINERARIO", "TURNO / CICLO",
+                "RÉGIMEN", "TRENES", "MOTIVO DE LA ORDEN", "REF ESTACIÓN",
+                "EMISOR", "USUARIO WINDOWS", "OBSERVACIONES",
+            ],
+            ordenamientos,
+            [
+                "id", "nro_orden", "fecha_emision", "hora_emision", "legajo_personal",
+                "nombre_personal", "deposito", "itinerario", "ciclo_o_turno",
+                "regimen", "trenes_involucrados", "motivo_orden", "ref_pct",
+                "emisor", "usuario_windows", "observacion_pie",
+            ],
+        )
+
+        # Hoja de detalle de tramos si están disponibles en la BD
+        with self.db.read_connection() as conn:
+            ids = [int(o["id"]) for o in ordenamientos if o.get("id")]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                tramos_rows = conn.execute(
+                    f"""
+                    SELECT o.nro_orden, o.fecha_emision, o.legajo_personal, o.nombre_personal,
+                           o.deposito, ot.nro_secuencia, ot.ref, ot.nro_tren,
+                           ot.origen, ot.hora_salida, ot.destino, ot.hora_llegada, ot.observaciones
+                    FROM ordenamiento_tramos ot
+                    JOIN ordenamientos o ON o.id = ot.ordenamiento_id
+                    WHERE o.id IN ({placeholders})
+                    ORDER BY o.id ASC, ot.nro_secuencia ASC
+                    """,
+                    ids,
+                ).fetchall()
+                _write_sheet(
+                    wb,
+                    "Detalle de Tramos",
+                    [
+                        "N° ORDEN", "FECHA", "LEGAJO", "AGENTE", "DOTACIÓN",
+                        "SECUENCIA", "REF", "N° TREN", "ORIGEN", "HORA SALIDA",
+                        "DESTINO", "HORA LLEGADA", "OBSERVACIONES",
+                    ],
+                    [dict(r) for r in tramos_rows],
+                    [
+                        "nro_orden", "fecha_emision", "legajo_personal", "nombre_personal", "deposito",
+                        "nro_secuencia", "ref", "nro_tren", "origen", "hora_salida",
+                        "destino", "hora_llegada", "observaciones",
+                    ],
+                )
 
         wb.save(out_file)
         return str(out_file)
@@ -511,3 +643,292 @@ class ExcelService:
                     (nombre, dotacion),
                 )
         return len(items)
+
+    # ---------------------------------------------------------
+    # Exportaciones de Calendario de Ciclo (Individual y Masivo)
+    # ---------------------------------------------------------
+
+    def export_calendario_ciclo_individual(
+        self,
+        output_path: str,
+        empleado: Dict[str, Any],
+        dias_datos: List[Dict[str, Any]],
+        mes: int,
+        anio: int,
+    ) -> str:
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        legajo = empleado.get("legajo", "")
+        nombre = empleado.get("apellidos_nombres", "")
+        ws = wb.create_sheet(title=f"Ciclo_{legajo}"[:31])
+
+        # Encabezado informativo del empleado
+        ws.append(["CRONOGRAMA MENSUAL DE CICLO", f"Período: {mes:02d}/{anio}"])
+        ws.append(["Agente:", f"{nombre} (Legajo: {legajo})"])
+        ws.append(["Dotación / Especialidad:", f"{empleado.get('dotacion', '')} - {empleado.get('especialidad', '')}"])
+        ws.append(["Turno / Franco CCT:", f"{empleado.get('turnos', '')} | Franco: {empleado.get('franco', '')} ({empleado.get('franco_horario', '')}) | Jornada: {empleado.get('jornada_horas', 6)} hs"])
+        ws.append([])  # Fila en blanco
+
+        # Título principal
+        title_font = Font(name="Calibri", size=13, bold=True, color="1F497D")
+        ws.cell(row=1, column=1).font = title_font
+
+        headers = [
+            "DÍA", "FECHA", "DÍA SEM.", "ESTADO", "HORA DISPONIBLE",
+            "TOMA", "DEJA", "HS TRABAJADAS", "HS SEMANA", "REEMPLAZA A / MOTIVO", "OBSERVACIONES",
+        ]
+        keys = [
+            "dia", "fecha", "dia_semana", "estado", "hora_disponible",
+            "toma", "deja", "horas_trabajadas", "hs_semana", "reemplaza_a", "observaciones",
+        ]
+
+        ws.append(headers)
+        header_row_idx = 6
+
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+        center_align = Alignment(horizontal="center", vertical="center")
+
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=header_row_idx, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+
+        fill_franco = PatternFill(start_color="FFF9C4", end_color="FFF9C4", fill_type="solid")
+        fill_relevo = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
+        fill_disponible = PatternFill(start_color="F0F7FF", end_color="F0F7FF", fill_type="solid")
+
+        for row_data in dias_datos:
+            row_vals = [row_data.get(k, "") for k in keys]
+            ws.append(row_vals)
+            curr_row = ws.max_row
+            estado = str(row_data.get("estado", ""))
+            row_fill = None
+            if "Franco" in estado:
+                row_fill = fill_franco
+            elif "Reemplazando" in estado or "Relevo" in estado:
+                row_fill = fill_relevo
+            elif estado == "Disponible":
+                row_fill = fill_disponible
+
+            if row_fill:
+                for c in range(1, len(headers) + 1):
+                    ws.cell(row=curr_row, column=c).fill = row_fill
+
+        ws.freeze_panes = f"A{header_row_idx + 1}"
+        for index, header in enumerate(headers, start=1):
+            ws.column_dimensions[get_column_letter(index)].width = max(12, min(36, len(str(header)) + 4))
+
+        wb.save(out_file)
+        return str(out_file)
+
+    def export_ordenamientos(
+        self,
+        ordenamientos: List[Dict[str, Any]],
+        output_path: str,
+    ) -> str:
+        """Exporta el listado de Ordenamientos Operativos y sus tramos a un libro Excel."""
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        _write_sheet(
+            wb,
+            "Ordenamientos",
+            [
+                "ID", "N° ORDEN", "FECHA EMISIÓN", "HORA EMISIÓN", "LEGAJO",
+                "NOMBRE Y APELLIDO", "DOTACIÓN", "ITINERARIO", "TURNO / CICLO",
+                "RÉGIMEN", "TRENES", "MOTIVO DE LA ORDEN", "REF ESTACIÓN",
+                "EMISOR", "USUARIO WINDOWS", "OBSERVACIONES",
+            ],
+            ordenamientos,
+            [
+                "id", "nro_orden", "fecha_emision", "hora_emision", "legajo_personal",
+                "nombre_personal", "deposito", "itinerario", "ciclo_o_turno",
+                "regimen", "trenes_involucrados", "motivo_orden", "ref_pct",
+                "emisor", "usuario_windows", "observacion_pie",
+            ],
+        )
+
+        # Hoja de detalle de tramos si están disponibles en la BD
+        with self.db.read_connection() as conn:
+            ids = [int(o["id"]) for o in ordenamientos if o.get("id")]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                tramos_rows = conn.execute(
+                    f"""
+                    SELECT o.nro_orden, o.fecha_emision, o.legajo_personal, o.nombre_personal,
+                           o.deposito, ot.nro_secuencia, ot.ref, ot.nro_tren,
+                           ot.origen, ot.hora_salida, ot.destino, ot.hora_llegada, ot.observaciones
+                    FROM ordenamiento_tramos ot
+                    JOIN ordenamientos o ON o.id = ot.ordenamiento_id
+                    WHERE o.id IN ({placeholders})
+                    ORDER BY o.id ASC, ot.nro_secuencia ASC
+                    """,
+                    ids,
+                ).fetchall()
+                _write_sheet(
+                    wb,
+                    "Detalle de Tramos",
+                    [
+                        "N° ORDEN", "FECHA", "LEGAJO", "AGENTE", "DOTACIÓN",
+                        "SECUENCIA", "REF", "N° TREN", "ORIGEN", "HORA SALIDA",
+                        "DESTINO", "HORA LLEGADA", "OBSERVACIONES",
+                    ],
+                    [dict(r) for r in tramos_rows],
+                    [
+                        "nro_orden", "fecha_emision", "legajo_personal", "nombre_personal", "deposito",
+                        "nro_secuencia", "ref", "nro_tren", "origen", "hora_salida",
+                        "destino", "hora_llegada", "observaciones",
+                    ],
+                )
+
+        wb.save(out_file)
+        return str(out_file)
+
+    def export_calendario_ciclo_todos(
+        self,
+        output_path: str,
+        records_service: Any,
+        mes: int,
+        anio: int,
+    ) -> str:
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        empleados = records_service.listar_empleados_ciclo()
+        ws = wb.create_sheet(title=f"Consolidado_Ciclo_{mes:02d}_{anio}"[:31])
+
+        headers = [
+            "LEGAJO", "APELLIDOS Y NOMBRES", "DOTACIÓN", "ESPECIALIDAD", "TURNO BASE", "FRANCO CCT",
+            "DÍA", "FECHA", "DÍA SEM.", "ESTADO", "HORA DISPONIBLE",
+            "TOMA", "DEJA", "HS TRABAJADAS", "HS SEMANA", "REEMPLAZA A / MOTIVO", "OBSERVACIONES",
+        ]
+        ws.append(headers)
+
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+        center_align = Alignment(horizontal="center", vertical="center")
+
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+
+        fill_franco = PatternFill(start_color="FFF9C4", end_color="FFF9C4", fill_type="solid")
+        fill_relevo = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
+
+        keys_dia = [
+            "dia", "fecha", "dia_semana", "estado", "hora_disponible",
+            "toma", "deja", "horas_trabajadas", "hs_semana", "reemplaza_a", "observaciones",
+        ]
+
+        for emp in empleados:
+            leg = int(emp["legajo"])
+            dias_datos = records_service.obtener_calendario_mensual_ciclo(leg, anio, mes)
+            emp_prefix = [
+                emp.get("legajo", ""),
+                emp.get("apellidos_nombres", ""),
+                emp.get("dotacion", ""),
+                emp.get("especialidad", ""),
+                emp.get("turnos", ""),
+                emp.get("franco", ""),
+            ]
+            for row_data in dias_datos:
+                row_vals = emp_prefix + [row_data.get(k, "") for k in keys_dia]
+                ws.append(row_vals)
+                curr_row = ws.max_row
+                estado = str(row_data.get("estado", ""))
+                if "Franco" in estado:
+                    for c in range(1, len(headers) + 1):
+                        ws.cell(row=curr_row, column=c).fill = fill_franco
+                elif "Reemplazando" in estado or "Relevo" in estado:
+                    for c in range(1, len(headers) + 1):
+                        ws.cell(row=curr_row, column=c).fill = fill_relevo
+
+        ws.freeze_panes = "A2"
+        if ws.max_row > 1:
+            ws.auto_filter.ref = ws.dimensions
+
+        for index, header in enumerate(headers, start=1):
+            ws.column_dimensions[get_column_letter(index)].width = max(12, min(36, len(str(header)) + 4))
+
+        wb.save(out_file)
+        return str(out_file)
+
+    def export_ordenamientos(
+        self,
+        ordenamientos: List[Dict[str, Any]],
+        output_path: str,
+    ) -> str:
+        """Exporta el listado de Ordenamientos Operativos y sus tramos a un libro Excel."""
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        _write_sheet(
+            wb,
+            "Ordenamientos",
+            [
+                "ID", "N° ORDEN", "FECHA EMISIÓN", "HORA EMISIÓN", "LEGAJO",
+                "NOMBRE Y APELLIDO", "DOTACIÓN", "ITINERARIO", "TURNO / CICLO",
+                "RÉGIMEN", "TRENES", "MOTIVO DE LA ORDEN", "REF ESTACIÓN",
+                "EMISOR", "USUARIO WINDOWS", "OBSERVACIONES",
+            ],
+            ordenamientos,
+            [
+                "id", "nro_orden", "fecha_emision", "hora_emision", "legajo_personal",
+                "nombre_personal", "deposito", "itinerario", "ciclo_o_turno",
+                "regimen", "trenes_involucrados", "motivo_orden", "ref_pct",
+                "emisor", "usuario_windows", "observacion_pie",
+            ],
+        )
+
+        # Hoja de detalle de tramos si están disponibles en la BD
+        with self.db.read_connection() as conn:
+            ids = [int(o["id"]) for o in ordenamientos if o.get("id")]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                tramos_rows = conn.execute(
+                    f"""
+                    SELECT o.nro_orden, o.fecha_emision, o.legajo_personal, o.nombre_personal,
+                           o.deposito, ot.nro_secuencia, ot.ref, ot.nro_tren,
+                           ot.origen, ot.hora_salida, ot.destino, ot.hora_llegada, ot.observaciones
+                    FROM ordenamiento_tramos ot
+                    JOIN ordenamientos o ON o.id = ot.ordenamiento_id
+                    WHERE o.id IN ({placeholders})
+                    ORDER BY o.id ASC, ot.nro_secuencia ASC
+                    """,
+                    ids,
+                ).fetchall()
+                _write_sheet(
+                    wb,
+                    "Detalle de Tramos",
+                    [
+                        "N° ORDEN", "FECHA", "LEGAJO", "AGENTE", "DOTACIÓN",
+                        "SECUENCIA", "REF", "N° TREN", "ORIGEN", "HORA SALIDA",
+                        "DESTINO", "HORA LLEGADA", "OBSERVACIONES",
+                    ],
+                    [dict(r) for r in tramos_rows],
+                    [
+                        "nro_orden", "fecha_emision", "legajo_personal", "nombre_personal", "deposito",
+                        "nro_secuencia", "ref", "nro_tren", "origen", "hora_salida",
+                        "destino", "hora_llegada", "observaciones",
+                    ],
+                )
+
+        wb.save(out_file)
+        return str(out_file)
