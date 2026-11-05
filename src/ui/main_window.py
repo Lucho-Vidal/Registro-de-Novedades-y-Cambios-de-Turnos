@@ -62,6 +62,7 @@ from src.ui.views.dialogs.admin_dialogs import (
     AdminBackupsDialog,
     AdminCatalogosDialog,
     AdminConfigDialog,
+    AdminDestinatariosDialog,
     AdminEliminadosDialog,
     AdminEmpleadosDialog,
     AdminRolesDialog,
@@ -223,7 +224,26 @@ class MainWindow(QMainWindow):
 
         if self._tiene_permiso("sesion.configurar"):
             act_cfg = menu_admin.addAction("⚙️ Configuración del Sistema")
-            act_cfg.triggered.connect(lambda: AdminConfigDialog(self.db, parent=self).exec())
+            act_cfg.triggered.connect(
+                lambda: AdminConfigDialog(
+                    self.db,
+                    records_service=self.records_service,
+                    usuario_actual=self.usuario_actual,
+                    tiene_permiso_fn=self._tiene_permiso,
+                    parent=self,
+                ).exec()
+            )
+
+        if self._tiene_permiso("destinatarios.administrar") or self._tiene_permiso("destinatarios_ordenamiento.administrar"):
+            act_dest = menu_admin.addAction("📧 Destinatarios de Correo")
+            act_dest.triggered.connect(
+                lambda: AdminDestinatariosDialog(
+                    self.records_service,
+                    usuario_actual=self.usuario_actual,
+                    tiene_permiso_fn=self._tiene_permiso,
+                    parent=self,
+                ).exec()
+            )
 
         if self._tiene_permiso("backup.gestionar"):
             act_bak = menu_admin.addAction("💾 Copias de Seguridad")

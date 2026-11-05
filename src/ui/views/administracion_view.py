@@ -136,7 +136,13 @@ class AdministracionView(QWidget):
 
         # 4. Sub-pestaña: Configuración del Sistema
         if self._can("sesion.configurar"):
-            self.widget_config = AdminConfigWidget(self.db, parent=self)
+            self.widget_config = AdminConfigWidget(
+                self.db,
+                records_service=self.records_service,
+                usuario_actual=self.usuario_actual,
+                tiene_permiso_fn=self.tiene_permiso_fn,
+                parent=self,
+            )
             self.tabs.addTab(self.widget_config, "⚙️ Configuración del Sistema")
 
         layout.addWidget(self.tabs)

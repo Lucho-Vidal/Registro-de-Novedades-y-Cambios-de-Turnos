@@ -439,7 +439,7 @@ class AdminRolesWidget(QWidget):
             "Administración General y Seguridad": [
                 "usuarios.administrar", "roles.administrar", "auditoria.ver", "sesion.configurar",
                 "registros.recuperar", "registros.modificar", "backup.gestionar",
-                "destinatarios_informe.administrar",
+                "destinatarios_informe.administrar", "destinatarios_ordenamiento.administrar",
             ],
         }
 
@@ -1277,21 +1277,428 @@ class AdminCatalogosDialog(BaseMaximizedDialog):
 
 
 # ---------------------------------------------------------------------------
-# 5. Configuración General (Tiempos, Contraseñas, Toasts)
+# 5. Configuración General y Destinatarios de Correo
 # ---------------------------------------------------------------------------
 
-class AdminConfigWidget(QWidget):
-    """Panel de configuración de parámetros operativos, seguridad y sincronización Supabase."""
+class AdminDestinatariosWidget(QWidget):
+    """Gestión de destinatarios de correo para Novedades (Informe) y Ordenamientos Operativos."""
 
-    def __init__(self, db, parent=None):
+    def __init__(
+        self,
+        records_service: RecordsService,
+        usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.records_service = records_service
+        self.usuario_actual = usuario_actual or {}
+        self.tiene_permiso_fn = tiene_permiso_fn
+
+        self._datos_informe: List[Dict[str, Any]] = []
+        self._datos_ordenamiento: List[Dict[str, Any]] = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+
+        self.tabs = QTabWidget()
+
+        # Tab Informe
+        self.tab_inf, self.table_inf, self.txt_search_inf = self._crear_panel_tipo("informe")
+        self.tabs.addTab(self.tab_inf, "📋 Novedades (Informe Diario)")
+
+        # Tab Ordenamiento
+        self.tab_ord, self.table_ord, self.txt_search_ord = self._crear_panel_tipo("ordenamiento")
+        self.tabs.addTab(self.tab_ord, "🚂 Ordenamientos Operativos")
+
+        layout.addWidget(self.tabs)
+        self.recargar()
+
+    def _can(self, perm: str) -> bool:
+        if self.tiene_permiso_fn:
+            return bool(self.tiene_permiso_fn(perm))
+        return True
+
+    def _u_info(self):
+        u_id = self.usuario_actual.get("id") if self.usuario_actual else None
+        win_u = self.usuario_actual.get("windows_user") if self.usuario_actual else None
+        if not win_u:
+            from src.core.config import obtener_usuario_windows
+            win_u = obtener_usuario_windows()
+        return u_id, win_u
+
+    def _crear_panel_tipo(self, tipo: str):
+        widget = QWidget()
+        lay = QVBoxLayout(widget)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(8)
+
+        if tipo == "informe":
+            lbl_desc = QLabel(
+                "<b>Lista de distribución para el Informe Diario de Novedades:</b> "
+                "Los contactos activos en esta lista recibirán el consolidado diario de novedades operativas por correo."
+            )
+        else:
+            lbl_desc = QLabel(
+                "<b>Lista de distribución para Ordenamientos Operativos:</b> "
+                "Los contactos activos en esta lista recibirán los ordenamientos de trenes transmitidos desde el módulo operativo."
+            )
+        lbl_desc.setWordWrap(True)
+        lbl_desc.setStyleSheet("color: #475569; margin-bottom: 4px;")
+        lay.addWidget(lbl_desc)
+
+        # Toolbar
+        bar = QHBoxLayout()
+        btn_nuevo = QPushButton("➕ Nuevo Destinatario")
+        btn_nuevo.clicked.connect(lambda: self._nuevo_destinatario(tipo))
+        bar.addWidget(btn_nuevo)
+
+        btn_editar = QPushButton("✏️ Modificar")
+        btn_editar.setObjectName("btnSecondary")
+        btn_editar.clicked.connect(lambda: self._modificar_destinatario(tipo))
+        bar.addWidget(btn_editar)
+
+        btn_toggle = QPushButton("🔄 Activar / Desactivar")
+        btn_toggle.setObjectName("btnSecondary")
+        btn_toggle.clicked.connect(lambda: self._toggle_destinatario(tipo))
+        bar.addWidget(btn_toggle)
+
+        bar.addStretch()
+
+        bar.addWidget(QLabel("Buscar:"))
+        txt_search = QLineEdit()
+        txt_search.setPlaceholderText("Nombre o correo...")
+        txt_search.setClearButtonEnabled(True)
+        txt_search.setMaximumWidth(250)
+        bar.addWidget(txt_search)
+
+        lay.addLayout(bar)
+
+        # Tabla
+        table = QTableWidget()
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["ID", "NOMBRE / ÁREA", "CORREO ELECTRÓNICO", "ESTADO"])
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QTableWidget.SingleSelection)
+        table.setAlternatingRowColors(True)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.verticalHeader().setVisible(False)
+        table.doubleClicked.connect(lambda: self._modificar_destinatario(tipo))
+
+        txt_search.textChanged.connect(lambda text: self._filtrar_tabla(table, text))
+
+        lay.addWidget(table)
+        return widget, table, txt_search
+
+    def _filtrar_tabla(self, table: QTableWidget, text: str) -> None:
+        term = text.strip().lower()
+        for r in range(table.rowCount()):
+            coincide = False
+            for c in range(table.columnCount()):
+                item = table.item(r, c)
+                if item and term in item.text().lower():
+                    coincide = True
+                    break
+            table.setRowHidden(r, not coincide)
+
+    def recargar(self) -> None:
+        self.recargar_informe()
+        self.recargar_ordenamiento()
+
+    def recargar_informe(self) -> None:
+        try:
+            self._datos_informe = self.records_service.listar_destinatarios_informe(incluir_inactivos=True)
+        except Exception:
+            self._datos_informe = []
+        self._popular_tabla(self.table_inf, self._datos_informe)
+        self._filtrar_tabla(self.table_inf, self.txt_search_inf.text())
+
+    def recargar_ordenamiento(self) -> None:
+        try:
+            self._datos_ordenamiento = self.records_service.listar_destinatarios_ordenamiento(incluir_inactivos=True)
+        except Exception:
+            self._datos_ordenamiento = []
+        self._popular_tabla(self.table_ord, self._datos_ordenamiento)
+        self._filtrar_tabla(self.table_ord, self.txt_search_ord.text())
+
+    def _popular_tabla(self, table: QTableWidget, datos: List[Dict[str, Any]]) -> None:
+        table.setRowCount(len(datos))
+        for r, d in enumerate(datos):
+            item_id = QTableWidgetItem(str(d["id"]))
+            item_id.setTextAlignment(Qt.AlignCenter)
+            item_nom = QTableWidgetItem(str(d["nombre"]))
+            item_email = QTableWidgetItem(str(d["email"]))
+
+            activo = bool(d.get("activo"))
+            item_est = QTableWidgetItem("Activo" if activo else "Inactivo")
+            item_est.setTextAlignment(Qt.AlignCenter)
+            if not activo:
+                item_est.setForeground(Qt.gray)
+
+            table.setItem(r, 0, item_id)
+            table.setItem(r, 1, item_nom)
+            table.setItem(r, 2, item_email)
+            table.setItem(r, 3, item_est)
+
+    def _get_permiso(self, tipo: str) -> str:
+        return "destinatarios.administrar" if tipo == "informe" else "destinatarios_ordenamiento.administrar"
+
+    def _nuevo_destinatario(self, tipo: str) -> None:
+        perm = self._get_permiso(tipo)
+        if not self._can(perm):
+            QMessageBox.warning(self, "Permiso Denegado", f"No posee permiso para administrar destinatarios de {tipo}.")
+            return
+
+        titulo = "Nuevo Destinatario - Novedades (Informe)" if tipo == "informe" else "Nuevo Destinatario - Ordenamientos Operativos"
+        dlg = QDialog(self)
+        dlg.setWindowTitle(titulo)
+        dlg.setFixedSize(420, 180)
+        lay = QFormLayout(dlg)
+        lay.setSpacing(10)
+
+        txt_nom = QLineEdit()
+        txt_nom.setPlaceholderText("ej. Control de Trenes / Operaciones")
+        txt_email = QLineEdit()
+        txt_email.setPlaceholderText("ej. control@trenesargentinos.gob.ar")
+
+        lay.addRow("Nombre / Área:", txt_nom)
+        lay.addRow("Correo Electrónico:", txt_email)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.setObjectName("btnSecondary")
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_guardar = QPushButton("Guardar")
+        btn_guardar.clicked.connect(dlg.accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_guardar)
+        lay.addRow(btn_box)
+
+        if dlg.exec():
+            nom = txt_nom.text().strip()
+            email = txt_email.text().strip().lower()
+            if not nom:
+                QMessageBox.warning(self, "Validación", "El nombre o área del destinatario es obligatorio.")
+                return
+            if not email or "@" not in email or "." not in email:
+                QMessageBox.warning(self, "Validación", "Ingrese una dirección de correo electrónico válida.")
+                return
+
+            u_id, win_u = self._u_info()
+            try:
+                if tipo == "informe":
+                    self.records_service.crear_destinatario_informe(nom, email, user_id=u_id, windows_user=win_u)
+                    self.recargar_informe()
+                else:
+                    self.records_service.crear_destinatario_ordenamiento(nom, email, user_id=u_id, windows_user=win_u)
+                    self.recargar_ordenamiento()
+                QMessageBox.information(self, "Éxito", "Destinatario agregado correctamente.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"No se pudo registrar el destinatario:\n{e}")
+
+    def _modificar_destinatario(self, tipo: str) -> None:
+        perm = self._get_permiso(tipo)
+        if not self._can(perm):
+            QMessageBox.warning(self, "Permiso Denegado", f"No posee permiso para modificar destinatarios de {tipo}.")
+            return
+
+        table = self.table_inf if tipo == "informe" else self.table_ord
+        datos = self._datos_informe if tipo == "informe" else self._datos_ordenamiento
+
+        row = table.currentRow()
+        if row < 0 or row >= len(datos):
+            QMessageBox.information(self, "Selección", "Seleccione un destinatario de la tabla.")
+            return
+
+        item_id = table.item(row, 0)
+        if not item_id:
+            return
+        try:
+            d_id = int(item_id.text())
+        except ValueError:
+            return
+        dest = next((d for d in datos if d["id"] == d_id), None)
+        if not dest:
+            return
+
+        titulo = "Modificar Destinatario - Informe" if tipo == "informe" else "Modificar Destinatario - Ordenamientos"
+        dlg = QDialog(self)
+        dlg.setWindowTitle(titulo)
+        dlg.setFixedSize(420, 210)
+        lay = QFormLayout(dlg)
+        lay.setSpacing(10)
+
+        txt_nom = QLineEdit(str(dest["nombre"]))
+        txt_email = QLineEdit(str(dest["email"]))
+        chk_act = QCheckBox("Activo (recibe correos)")
+        chk_act.setChecked(bool(dest.get("activo")))
+
+        lay.addRow("Nombre / Área:", txt_nom)
+        lay.addRow("Correo Electrónico:", txt_email)
+        lay.addRow(chk_act)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.setObjectName("btnSecondary")
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_guardar = QPushButton("Guardar Cambios")
+        btn_guardar.clicked.connect(dlg.accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_guardar)
+        lay.addRow(btn_box)
+
+        if dlg.exec():
+            nom = txt_nom.text().strip()
+            email = txt_email.text().strip().lower()
+            if not nom:
+                QMessageBox.warning(self, "Validación", "El nombre o área del destinatario es obligatorio.")
+                return
+            if not email or "@" not in email or "." not in email:
+                QMessageBox.warning(self, "Validación", "Ingrese una dirección de correo electrónico válida.")
+                return
+
+            u_id, win_u = self._u_info()
+            try:
+                if tipo == "informe":
+                    self.records_service.actualizar_destinatario_informe(
+                        dest["id"],
+                        nombre=nom,
+                        email=email,
+                        activo=1 if chk_act.isChecked() else 0,
+                        user_id=u_id,
+                        windows_user=win_u,
+                    )
+                    self.recargar_informe()
+                else:
+                    self.records_service.actualizar_destinatario_ordenamiento(
+                        dest["id"],
+                        nombre=nom,
+                        email=email,
+                        activo=1 if chk_act.isChecked() else 0,
+                        user_id=u_id,
+                        windows_user=win_u,
+                    )
+                    self.recargar_ordenamiento()
+                QMessageBox.information(self, "Éxito", "Destinatario modificado correctamente.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"No se pudo modificar el destinatario:\n{e}")
+
+    def _toggle_destinatario(self, tipo: str) -> None:
+        perm = self._get_permiso(tipo)
+        if not self._can(perm):
+            QMessageBox.warning(self, "Permiso Denegado", f"No posee permiso para modificar destinatarios de {tipo}.")
+            return
+
+        table = self.table_inf if tipo == "informe" else self.table_ord
+        datos = self._datos_informe if tipo == "informe" else self._datos_ordenamiento
+
+        row = table.currentRow()
+        if row < 0 or row >= len(datos):
+            QMessageBox.information(self, "Selección", "Seleccione un destinatario de la tabla.")
+            return
+
+        item_id = table.item(row, 0)
+        if not item_id:
+            return
+        try:
+            d_id = int(item_id.text())
+        except ValueError:
+            return
+        dest = next((d for d in datos if d["id"] == d_id), None)
+        if not dest:
+            return
+
+        nuevo_act = 0 if dest.get("activo") else 1
+        u_id, win_u = self._u_info()
+        try:
+            if tipo == "informe":
+                self.records_service.actualizar_destinatario_informe(
+                    dest["id"],
+                    nombre=dest["nombre"],
+                    email=dest["email"],
+                    activo=nuevo_act,
+                    user_id=u_id,
+                    windows_user=win_u,
+                )
+                self.recargar_informe()
+            else:
+                self.records_service.actualizar_destinatario_ordenamiento(
+                    dest["id"],
+                    nombre=dest["nombre"],
+                    email=dest["email"],
+                    activo=nuevo_act,
+                    user_id=u_id,
+                    windows_user=win_u,
+                )
+                self.recargar_ordenamiento()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cambiar el estado del destinatario:\n{e}")
+
+
+class AdminDestinatariosDialog(BaseMaximizedDialog):
+    """Diálogo maximizado de administración de destinatarios de correo."""
+
+    def __init__(
+        self,
+        records_service: RecordsService,
+        usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Administración de Destinatarios de Correo")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        self.widget = AdminDestinatariosWidget(
+            records_service,
+            usuario_actual=usuario_actual,
+            tiene_permiso_fn=tiene_permiso_fn,
+            parent=self,
+        )
+        layout.addWidget(self.widget)
+
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setObjectName("btnSecondary")
+        btn_cerrar.clicked.connect(self.accept)
+        layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar(self) -> None:
+        self.widget.recargar()
+
+
+class AdminConfigWidget(QWidget):
+    """Panel de configuración de parámetros operativos, seguridad, sincronización Supabase y destinatarios."""
+
+    def __init__(
+        self,
+        db,
+        records_service: Optional[RecordsService] = None,
+        usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.db = db
+        if records_service is None:
+            self.records_service = RecordsService(db)
+        else:
+            self.records_service = records_service
+        self.usuario_actual = usuario_actual or {}
+        self.tiene_permiso_fn = tiene_permiso_fn
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Usar pestañas para separar parámetros generales de Supabase
-        tabs = QTabWidget()
+        # Usar pestañas para separar parámetros generales, Supabase y destinatarios
+        self.tabs = QTabWidget()
 
         # Pestaña 1: Parámetros Generales
         tab_gen = QWidget()
@@ -1344,7 +1751,7 @@ class AdminConfigWidget(QWidget):
 
         lay_gen_root.addWidget(card_gen)
         lay_gen_root.addStretch(1)
-        tabs.addTab(tab_gen, "⚙️ Parámetros Generales")
+        self.tabs.addTab(tab_gen, "⚙️ Parámetros Generales")
 
         # Pestaña 2: Sincronización Supabase (Nube)
         tab_sync = QWidget()
@@ -1482,9 +1889,18 @@ class AdminConfigWidget(QWidget):
         lay_scroll.addStretch(1)
         scroll_sync.setWidget(scroll_content)
         lay_sync_root.addWidget(scroll_sync)
-        tabs.addTab(tab_sync, "☁️ Sincronización Supabase")
+        self.tabs.addTab(tab_sync, "☁️ Sincronización Supabase")
 
-        layout.addWidget(tabs)
+        # Pestaña 3: Destinatarios de Correo
+        self.widget_destinatarios = AdminDestinatariosWidget(
+            self.records_service,
+            usuario_actual=self.usuario_actual,
+            tiene_permiso_fn=self.tiene_permiso_fn,
+            parent=self,
+        )
+        self.tabs.addTab(self.widget_destinatarios, "📧 Destinatarios de Correo")
+
+        layout.addWidget(self.tabs)
 
         # Botón Guardar
         btn_box = QHBoxLayout()
@@ -1494,10 +1910,14 @@ class AdminConfigWidget(QWidget):
         btn_box.addWidget(self.btn_save)
         layout.addLayout(btn_box)
 
+        self.tabs.currentChanged.connect(lambda idx: self.btn_save.setVisible(idx != 2))
+
         self._cargar()
 
     def recargar(self) -> None:
         self._cargar()
+        if hasattr(self, "widget_destinatarios"):
+            self.widget_destinatarios.recargar()
 
     def _actualizar_visibilidad_proxy(self) -> None:
         modo = self.cmb_proxy_mode.currentData() or MODO_DIRECTO
@@ -1641,20 +2061,36 @@ class AdminConfigWidget(QWidget):
 class AdminConfigDialog(BaseMaximizedDialog):
     """Diálogo maximizado de configuración del sistema."""
 
-    def __init__(self, db, parent=None):
+    def __init__(
+        self,
+        db,
+        records_service: Optional[RecordsService] = None,
+        usuario_actual: Optional[Dict[str, Any]] = None,
+        tiene_permiso_fn=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Configuración del Sistema")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
 
-        self.widget = AdminConfigWidget(db, parent=self)
+        self.widget = AdminConfigWidget(
+            db,
+            records_service=records_service,
+            usuario_actual=usuario_actual,
+            tiene_permiso_fn=tiene_permiso_fn,
+            parent=self,
+        )
         layout.addWidget(self.widget)
 
         btn_cerrar = QPushButton("Cerrar")
         btn_cerrar.setObjectName("btnSecondary")
         btn_cerrar.clicked.connect(self.accept)
         layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def recargar(self) -> None:
+        self.widget.recargar()
 
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,7 @@ class OutboxQueue:
             ("tipos_novedad", "id"),
             ("personal_estacion", "id"),
             ("destinatarios_informe", "id"),
+            ("destinatarios_ordenamiento", "id"),
             ("roles", "id"),
             ("usuarios", "id"),
             ("empleados", "legajo"),

@@ -125,6 +125,7 @@ class SupabaseSyncEngine:
                     "tipos_novedad": ("reno_tipos_novedad", "nombre"),
                     "personal_estacion": ("reno_personal_estacion", "nombre"),
                     "destinatarios_informe": ("reno_destinatarios_informe", "email"),
+                    "destinatarios_ordenamiento": ("reno_destinatarios_ordenamiento", "email"),
                     "roles": ("reno_roles", "nombre"),
                     "usuarios": ("reno_usuarios", "username"),
                     "empleados": ("reno_empleados", "legajo"),
@@ -140,6 +141,7 @@ class SupabaseSyncEngine:
 
                 orden_tablas = [
                     "dotaciones", "tipos_novedad", "personal_estacion", "destinatarios_informe",
+                    "destinatarios_ordenamiento",
                     "roles", "usuarios", "empleados", "novedades", "novedad_reemplazos",
                     "cambios_turno", "ciclo_jornadas", "tren_paradas", "ordenamientos",
                     "ordenamiento_tramos", "auditoria"
@@ -196,6 +198,7 @@ class SupabaseSyncEngine:
                 ("reno_tipos_novedad", "tipos_novedad", "nombre"),
                 ("reno_personal_estacion", "personal_estacion", "nombre"),
                 ("reno_destinatarios_informe", "destinatarios_informe", "email"),
+                ("reno_destinatarios_ordenamiento", "destinatarios_ordenamiento", "email"),
                 ("reno_empleados", "empleados", "legajo"),
                 ("reno_novedades", "novedades", "id"),
                 ("reno_novedad_reemplazos", "novedad_reemplazos", "id"),

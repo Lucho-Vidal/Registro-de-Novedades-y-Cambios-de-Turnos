@@ -387,7 +387,7 @@ class OrdenamientosView(QWidget):
                 completo, completo.get("tramos") or [], pdf_path
             )
 
-            dests = self.records_service.listar_destinatarios_informe(incluir_inactivos=False)
+            dests = self.records_service.listar_destinatarios_ordenamiento(incluir_inactivos=False)
             emails = [d["email"] for d in dests if d.get("email")]
             asunto = (
                 f"Orden de Servicio {completo.get('nro_orden')} - "

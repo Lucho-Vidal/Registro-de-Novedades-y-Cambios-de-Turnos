@@ -543,6 +543,7 @@ class RecordsService:
             item_id = cur.lastrowid
             payload = {"nombre": nombre, "email": email}
             self._audit(conn, user_id, windows_user, "crear", "destinatario_informe", item_id, None, payload)
+            self._enqueue_sync(conn, "destinatarios_informe", item_id, "INSERT", payload)
             return item_id
 
     def actualizar_destinatario_informe(
@@ -567,6 +568,64 @@ class RecordsService:
             )
             after = {"nombre": nombre, "email": email, "activo": int(activo)}
             self._audit(conn, user_id, windows_user, "modificar", "destinatario_informe", item_id, dict(before), after)
+            self._enqueue_sync(conn, "destinatarios_informe", item_id, "UPDATE", after)
+
+    # ---------------------------------------------------------
+    # Destinatarios de Ordenamiento CRUD
+    # ---------------------------------------------------------
+
+    def listar_destinatarios_ordenamiento(self, incluir_inactivos: bool = True) -> List[Dict[str, Any]]:
+        with self.db.read_connection() as conn:
+            query = "SELECT id, nombre, email, activo FROM destinatarios_ordenamiento"
+            if not incluir_inactivos:
+                query += " WHERE activo=1"
+            rows = conn.execute(query + " ORDER BY nombre").fetchall()
+            return [dict(r) for r in rows]
+
+    def crear_destinatario_ordenamiento(
+        self,
+        nombre: str,
+        email: str,
+        user_id: Optional[int] = None,
+        windows_user: Optional[str] = None,
+    ) -> int:
+        nombre, email = (nombre or "").strip(), (email or "").strip()
+        if not email or "@" not in email:
+            raise ValueError("Ingrese un correo electrónico válido.")
+        with self.db.write_transaction() as conn:
+            cur = conn.execute(
+                "INSERT INTO destinatarios_ordenamiento(nombre, email) VALUES (?, ?)",
+                (nombre, email),
+            )
+            item_id = cur.lastrowid
+            payload = {"nombre": nombre, "email": email}
+            self._audit(conn, user_id, windows_user, "crear", "destinatario_ordenamiento", item_id, None, payload)
+            self._enqueue_sync(conn, "destinatarios_ordenamiento", item_id, "INSERT", payload)
+            return item_id
+
+    def actualizar_destinatario_ordenamiento(
+        self,
+        item_id: int,
+        nombre: str,
+        email: str,
+        activo: int,
+        user_id: Optional[int] = None,
+        windows_user: Optional[str] = None,
+    ) -> None:
+        nombre, email = (nombre or "").strip(), (email or "").strip()
+        if not email or "@" not in email:
+            raise ValueError("Ingrese un correo electrónico válido.")
+        with self.db.write_transaction() as conn:
+            before = conn.execute("SELECT id, nombre, email, activo FROM destinatarios_ordenamiento WHERE id=?", (item_id,)).fetchone()
+            if not before:
+                raise ValueError("El destinatario no existe.")
+            conn.execute(
+                "UPDATE destinatarios_ordenamiento SET nombre=?, email=?, activo=? WHERE id=?",
+                (nombre, email, int(activo), item_id),
+            )
+            after = {"nombre": nombre, "email": email, "activo": int(activo)}
+            self._audit(conn, user_id, windows_user, "modificar", "destinatario_ordenamiento", item_id, dict(before), after)
+            self._enqueue_sync(conn, "destinatarios_ordenamiento", item_id, "UPDATE", after)
 
     # ---------------------------------------------------------
     # Novedades CRUD
