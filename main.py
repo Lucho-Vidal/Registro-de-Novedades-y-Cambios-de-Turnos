@@ -20,6 +20,7 @@ from src.core.config import (
     obtener_ruta_base_datos,
 )
 from src.core.logger import get_logger, inicializar_logging
+from src.core.proxy import aplicar_configuracion_proxy
 from src.data.database import DatabaseManager
 from src.data.migrations import init_database_schema
 from src.data.sync.supabase_sync import SupabaseSyncClient
@@ -49,8 +50,9 @@ def main() -> int:
 
     # 3. Cargar configuración y determinar ruta de base de datos
     config_data = cargar_configuracion_json()
+    aplicar_configuracion_proxy(config_data)
     journal_mode = config_data.get("sqlite_journal_mode", "WAL")
-    db_path = obtener_ruta_base_datos()
+    db_path, xlsx_path = obtener_ruta_base_datos()
     logger.info("Ruta de base de datos activa: %s (Modo: %s)", db_path, journal_mode)
 
     # 4. Inicializar capa de datos y migraciones SQLite
@@ -68,19 +70,44 @@ def main() -> int:
     # Inicializar catálogo de permisos del sistema
     auth_service.inicializar_permisos(PERMISOS_BASE)
 
+    # Auto-importar plantilla BASE si la tabla empleados está vacía y existe un XLSX asociado
+    if xlsx_path and xlsx_path.exists():
+        try:
+            if len(records_service.listar_empleados()) == 0:
+                importados = excel_service.import_base_empleados(str(xlsx_path))
+                logger.info("Se importaron %d empleados iniciales desde %s", importados, xlsx_path)
+        except Exception as e:
+            logger.warning("No se pudo auto-importar plantilla BASE desde %s: %s", xlsx_path, e)
+
     # 6. Inicializar cliente de sincronización Supabase si está configurado
     supabase_url = os.environ.get("SUPABASE_URL") or config_data.get("supabase_url")
-    supabase_key = os.environ.get("SUPABASE_KEY") or config_data.get("supabase_key")
+    supabase_key = (
+        os.environ.get("SUPABASE_KEY")
+        or config_data.get("supabase_anon_key")
+        or config_data.get("supabase_key")
+    )
     supabase_sync = None
 
     if supabase_url and supabase_key:
         try:
-            supabase_sync = SupabaseSyncClient(db, supabase_url, supabase_key)
+            supabase_sync = SupabaseSyncClient(
+                db,
+                outbox=None,
+                supabase_url=supabase_url,
+                supabase_key=supabase_key,
+            )
             logger.info("Cliente de sincronización Supabase conectado a %s", supabase_url)
         except Exception as e:
             logger.warning("No se pudo iniciar el cliente Supabase: %s", e)
 
     # 7. Diálogo de Login / Asistente de primer inicio
+    # Aplicar tema visual persistido antes de abrir el diálogo de login
+    try:
+        from src.core.theme import aplicar_tema_visual
+        aplicar_tema_visual(db=db)
+    except Exception as e:
+        logger.warning("No se pudo pre-aplicar el tema visual inicial: %s", e)
+
     login_dialog = LoginDialog(auth_service)
     if not login_dialog.exec():
         logger.info("Inicio de sesión cancelado por el usuario. Saliendo.")

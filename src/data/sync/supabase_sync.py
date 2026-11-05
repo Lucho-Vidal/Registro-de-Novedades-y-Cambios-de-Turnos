@@ -16,18 +16,15 @@ from datetime import datetime
 from typing import Any
 
 from ...core.config import cargar_configuracion_app
+from ...core.proxy import (
+    OfflineError,
+    ProxyAuthError,
+    ejecutar_request_supabase,
+)
 from ..database import DatabaseManager
 from .outbox_queue import OutboxQueue
 
 logger = logging.getLogger("reno.data.sync")
-
-
-class ProxyAuthError(ConnectionError):
-    pass
-
-
-class OfflineError(ConnectionError):
-    pass
 
 
 def sanitizar_supabase_url(url: str | None) -> str:
@@ -53,47 +50,36 @@ def ejecutar_request_http(
     headers: dict[str, str] | None = None,
     timeout_sec: int = 15,
 ) -> tuple[int, bytes, dict[str, str]]:
-    """Ejecuta una petición HTTP respetando la configuración de proxy corporativo."""
-    headers = headers or {}
-    modo_proxy = config.get("proxy_mode", "direct")
-
-    # Si hay proxy manual configurado
-    if modo_proxy == "manual" and config.get("proxy_host"):
-        host = config.get("proxy_host", "").strip()
-        port = int(config.get("proxy_port", 8080) or 8080)
-        user = config.get("proxy_user", "").strip()
-        pwd = config.get("proxy_pass", "")
-        if user:
-            proxy_url = f"http://{urllib.parse.quote(user)}:{urllib.parse.quote(pwd)}@{host}:{port}"
-        else:
-            proxy_url = f"http://{host}:{port}"
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
-    else:
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with opener.open(req, timeout=timeout_sec) as resp:
-            status = resp.status
-            body = resp.read()
-            resp_headers = {k.lower(): v for k, v in resp.headers.items()}
-            return status, body, resp_headers
-    except urllib.error.HTTPError as he:
-        body = he.read()
-        if he.code == 407:
-            raise ProxyAuthError("Proxy corporativo requiere autenticación (HTTP 407).")
-        return he.code, body, {k.lower(): v for k, v in he.headers.items()}
-    except Exception as e:
-        raise OfflineError(f"No hay conexión con el servidor Supabase: {e}") from e
+    """Ejecuta una petición HTTP respetando la configuración de proxy corporativo multi-tier."""
+    return ejecutar_request_supabase(
+        config=config,
+        url=url,
+        method=method,
+        data=data,
+        headers=headers,
+        timeout_sec=timeout_sec,
+    )
 
 
 class SupabaseSyncEngine:
     """Motor de push (lotes de outbox) y pull (resolución de colisiones)."""
 
-    def __init__(self, db: DatabaseManager, outbox: OutboxQueue) -> None:
+    def __init__(
+        self,
+        db: DatabaseManager,
+        outbox: OutboxQueue | None = None,
+        supabase_url: str | None = None,
+        supabase_key: str | None = None,
+    ) -> None:
         self.db = db
-        self.outbox = outbox
+        self.outbox = outbox if isinstance(outbox, OutboxQueue) else OutboxQueue(db)
+        self.supabase_url = supabase_url
+        self.supabase_key = supabase_key
         self._lock = threading.Lock()
+
+    def sincronizar_completo(self) -> tuple[int, int]:
+        """Ejecuta ciclo completo de sincronización (push + pull)."""
+        return self.sincronizar(solo_push=False, solo_pull=False)
 
     def sincronizar(self, solo_push: bool = False, solo_pull: bool = False) -> tuple[int, int]:
         if not self._lock.acquire(blocking=False):
@@ -105,8 +91,8 @@ class SupabaseSyncEngine:
 
     def _ejecutar_sync(self, solo_push: bool = False, solo_pull: bool = False) -> tuple[int, int]:
         cfg = cargar_configuracion_app()
-        url_base = sanitizar_supabase_url(cfg.get("supabase_url"))
-        anon_key = (cfg.get("supabase_anon_key") or "").strip()
+        url_base = sanitizar_supabase_url(self.supabase_url or cfg.get("supabase_url"))
+        anon_key = (self.supabase_key or cfg.get("supabase_anon_key") or "").strip()
         if not url_base or not anon_key:
             raise ValueError("Credenciales de Supabase no configuradas.")
 
@@ -146,13 +132,17 @@ class SupabaseSyncEngine:
                     "novedad_reemplazos": ("reno_novedad_reemplazos", "id"),
                     "cambios_turno": ("reno_cambios_turno", "id"),
                     "ciclo_jornadas": ("reno_ciclo_jornadas", "legajo,fecha"),
+                    "tren_paradas": ("reno_tren_paradas", "id"),
+                    "ordenamientos": ("reno_ordenamientos", "id"),
+                    "ordenamiento_tramos": ("reno_ordenamiento_tramos", "id"),
                     "auditoria": ("reno_auditoria", "id"),
                 }
 
                 orden_tablas = [
                     "dotaciones", "tipos_novedad", "personal_estacion", "destinatarios_informe",
                     "roles", "usuarios", "empleados", "novedades", "novedad_reemplazos",
-                    "cambios_turno", "ciclo_jornadas", "auditoria"
+                    "cambios_turno", "ciclo_jornadas", "tren_paradas", "ordenamientos",
+                    "ordenamiento_tramos", "auditoria"
                 ]
 
                 ids_a_eliminar = []
@@ -263,3 +253,7 @@ class SupabaseSyncEngine:
                         logger.debug("Error en pull de %s: %s", remota, pull_ex)
 
         return enviados, recibidos
+
+
+SupabaseSyncClient = SupabaseSyncEngine
+

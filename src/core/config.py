@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import sys
@@ -10,10 +11,21 @@ from typing import Any
 
 APP_NAME = "RENO"
 VERSION = "2.0.0"
+APP_VERSION = VERSION
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 DOTACIONES = ["Todas", "PC", "LLV", "TY", "LP", "OA", "K5", "RE", "CÑ", "AK"]
+
+
+def obtener_usuario_windows() -> str:
+    """Retorna el nombre de usuario activo de la sesión del sistema operativo (Windows/OS)."""
+    try:
+        user = os.environ.get("USERNAME") or os.environ.get("USER") or getpass.getuser()
+        return str(user).strip() if user else "Desconocido"
+    except Exception:
+        return "Desconocido"
+
 
 ESPECIALIDADES_EMPLEADO = (
     "Conductor Eléctrico",
@@ -72,10 +84,10 @@ def obtener_ruta_base_datos() -> tuple[Path, Path | None]:
 def cargar_configuracion_app() -> dict[str, Any]:
     """Carga reno_config.json con valores por defecto."""
     defaults: dict[str, Any] = {
-        "supabase_url": "https://uhgwivolgwwmzcaliepk.supabase.co",
-        "supabase_anon_key": "sb_publishable_5VFaiCRnSPjLbAypLYuOHQ_xXtr7Hqr",
+        "supabase_url": "",
+        "supabase_anon_key": "",
         "sqlite_journal_mode": "WAL",  # 'WAL' o 'DELETE'
-        "autosync_habilitado": True,
+        "autosync_habilitado": False,
         "autosync_intervalo_min": 5,
         "autorefresco_habilitado": True,
         "autorefresco_intervalo_seg": 30,
@@ -85,6 +97,7 @@ def cargar_configuracion_app() -> dict[str, Any]:
         "proxy_user": "",
         "proxy_pass": "",
         "proxy_sso_server": "",
+        "proxy_auth": "manual_fijo",  # 'manual_fijo', 'sesion_reno', 'windows_sspi'
         "tema_visual": "claro",
     }
     if CONFIG_JSON_PATH.exists():
@@ -105,3 +118,8 @@ def guardar_configuracion_app(config: dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
+
+
+cargar_configuracion_json = cargar_configuracion_app
+guardar_configuracion_json = guardar_configuracion_app
+

@@ -33,6 +33,32 @@ class AppSettings:
 
     def set_valor(self, clave: str, valor: Any) -> None:
         self._qs.setValue(clave, valor)
+        try:
+            self._qs.sync()
+        except Exception:
+            pass
+
+    def sync(self) -> None:
+        try:
+            self._qs.sync()
+        except Exception:
+            pass
 
     def get_valor(self, clave: str, default: Any = None) -> Any:
         return self._qs.value(clave, default)
+
+    def get_bool(self, clave: str, default: bool = False) -> bool:
+        val = self._qs.value(clave, default)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() in ("true", "1", "yes", "si", "sí")
+        return bool(val)
+
+    def set_window_geometry(self, nombre_clave: str, geometry: QByteArray) -> None:
+        self._qs.setValue(f"geom_{nombre_clave}", geometry)
+
+    def get_window_geometry(self, nombre_clave: str) -> QByteArray | None:
+        geom = self._qs.value(f"geom_{nombre_clave}")
+        return geom if isinstance(geom, QByteArray) else None
+
