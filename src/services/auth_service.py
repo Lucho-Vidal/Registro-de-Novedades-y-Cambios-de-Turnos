@@ -104,6 +104,18 @@ class AuthService:
 
     def tiene_permiso(self, user_id: int, permission_code: str) -> bool:
         with self.db.read_connection() as conn:
+            # 1. Rol Administrador posee acceso irrestricto a todas las funciones
+            es_admin = conn.execute(
+                """SELECT 1 FROM usuario_roles ur
+                   JOIN roles r ON r.id=ur.rol_id
+                   WHERE ur.usuario_id=? AND LOWER(r.nombre) IN ('administrador', 'admin')
+                   LIMIT 1""",
+                (user_id,),
+            ).fetchone()
+            if es_admin:
+                return True
+
+            # 2. Comprobación estricta por permiso granular
             row = conn.execute(
                 """SELECT 1 FROM usuario_roles ur
                    JOIN rol_permisos rp ON rp.rol_id=ur.rol_id
@@ -172,6 +184,10 @@ class AuthService:
         with self.db.read_connection() as conn:
             row = conn.execute("SELECT * FROM usuarios WHERE id=?", (user_id,)).fetchone()
             return dict(row) if row else None
+
+    def obtener_usuario_por_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Alias de compatibilidad para obtener_usuario."""
+        return self.obtener_usuario(user_id)
 
     def cambiar_mi_password(self, user_id: int, actual: str, nueva: str, username: Optional[str] = None) -> None:
         if not nueva:

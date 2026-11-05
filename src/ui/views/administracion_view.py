@@ -92,7 +92,6 @@ class AdministracionView(QWidget):
         if (
             self._can("tiposNovedad.administrar")
             or self._can("dotaciones.administrar")
-            or self._can("personalEstacion.ver")
         ):
             self.widget_catalogos = AdminCatalogosWidget(
                 self.records_service,

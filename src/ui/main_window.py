@@ -204,66 +204,97 @@ class MainWindow(QMainWindow):
         act_salir.triggered.connect(self.close)
 
         # Menú Administración
-        menu_admin = menubar.addMenu("Administración")
+        tiene_menu_admin = (
+            self._tiene_permiso("usuarios.administrar")
+            or self._tiene_permiso("roles.administrar")
+            or self._tiene_permiso("empleados.administrar")
+            or self._tiene_permiso("tiposNovedad.administrar")
+            or self._tiene_permiso("dotaciones.administrar")
+            or self._tiene_permiso("sesion.configurar")
+            or self._tiene_permiso("destinatarios_informe.administrar")
+            or self._tiene_permiso("destinatarios_ordenamiento.administrar")
+            or self._tiene_permiso("backup.gestionar")
+            or self._tiene_permiso("registros.recuperar")
+            or self._tiene_permiso("auditoria.ver")
+        )
 
-        if self._tiene_permiso("usuarios.administrar"):
-            act_usuarios = menu_admin.addAction("👤 Usuarios")
-            act_usuarios.triggered.connect(lambda: AdminUsuariosDialog(self.auth_service, parent=self).exec())
+        if tiene_menu_admin:
+            menu_admin = menubar.addMenu("Administración")
 
-        if self._tiene_permiso("roles.administrar"):
-            act_roles = menu_admin.addAction("🛡️ Roles y Permisos")
-            act_roles.triggered.connect(lambda: AdminRolesDialog(self.auth_service, parent=self).exec())
+            if self._tiene_permiso("usuarios.administrar"):
+                act_usuarios = menu_admin.addAction("👤 Usuarios")
+                act_usuarios.triggered.connect(lambda: AdminUsuariosDialog(self.auth_service, parent=self).exec())
 
-        if self._tiene_permiso("empleados.administrar"):
-            act_emp = menu_admin.addAction("👷 Empleados (BASE)")
-            act_emp.triggered.connect(self._mostrar_empleados)
+            if self._tiene_permiso("roles.administrar"):
+                act_roles = menu_admin.addAction("🛡️ Roles y Permisos")
+                act_roles.triggered.connect(lambda: AdminRolesDialog(self.auth_service, parent=self).exec())
 
-        if self._tiene_permiso("tiposNovedad.administrar") or self._tiene_permiso("dotaciones.administrar"):
-            act_cat = menu_admin.addAction("📋 Catálogos Operativos")
-            act_cat.triggered.connect(lambda: AdminCatalogosDialog(self.records_service, self.excel_service, parent=self).exec())
+            if self._tiene_permiso("empleados.administrar"):
+                act_emp = menu_admin.addAction("👷 Empleados (BASE)")
+                act_emp.triggered.connect(self._mostrar_empleados)
 
-        if self._tiene_permiso("sesion.configurar"):
-            act_cfg = menu_admin.addAction("⚙️ Configuración del Sistema")
-            act_cfg.triggered.connect(
-                lambda: AdminConfigDialog(
-                    self.db,
-                    records_service=self.records_service,
-                    usuario_actual=self.usuario_actual,
-                    tiene_permiso_fn=self._tiene_permiso,
-                    parent=self,
-                ).exec()
-            )
+            if self._tiene_permiso("tiposNovedad.administrar") or self._tiene_permiso("dotaciones.administrar"):
+                act_cat = menu_admin.addAction("📋 Catálogos Operativos")
+                act_cat.triggered.connect(lambda: AdminCatalogosDialog(self.records_service, self.excel_service, parent=self).exec())
 
-        if self._tiene_permiso("destinatarios.administrar") or self._tiene_permiso("destinatarios_ordenamiento.administrar"):
-            act_dest = menu_admin.addAction("📧 Destinatarios de Correo")
-            act_dest.triggered.connect(
-                lambda: AdminDestinatariosDialog(
-                    self.records_service,
-                    usuario_actual=self.usuario_actual,
-                    tiene_permiso_fn=self._tiene_permiso,
-                    parent=self,
-                ).exec()
-            )
+            if self._tiene_permiso("sesion.configurar"):
+                act_cfg = menu_admin.addAction("⚙️ Configuración del Sistema")
+                act_cfg.triggered.connect(
+                    lambda: AdminConfigDialog(
+                        self.db,
+                        records_service=self.records_service,
+                        usuario_actual=self.usuario_actual,
+                        tiene_permiso_fn=self._tiene_permiso,
+                        parent=self,
+                    ).exec()
+                )
 
-        if self._tiene_permiso("backup.gestionar"):
-            act_bak = menu_admin.addAction("💾 Copias de Seguridad")
-            act_bak.triggered.connect(lambda: AdminBackupsDialog(self.backup_service, parent=self).exec())
+            if self._tiene_permiso("destinatarios_informe.administrar") or self._tiene_permiso("destinatarios_ordenamiento.administrar"):
+                act_dest = menu_admin.addAction("📧 Destinatarios de Correo")
+                act_dest.triggered.connect(
+                    lambda: AdminDestinatariosDialog(
+                        self.records_service,
+                        usuario_actual=self.usuario_actual,
+                        tiene_permiso_fn=self._tiene_permiso,
+                        parent=self,
+                    ).exec()
+                )
 
-        if self._tiene_permiso("registros.recuperar"):
-            act_del = menu_admin.addAction("🗑️ Registros Eliminados")
-            act_del.triggered.connect(lambda: AdminEliminadosDialog(self.records_service, self.usuario_actual, parent=self).exec())
+            if self._tiene_permiso("backup.gestionar"):
+                act_bak = menu_admin.addAction("💾 Copias de Seguridad")
+                act_bak.triggered.connect(lambda: AdminBackupsDialog(self.backup_service, parent=self).exec())
 
-        if self._tiene_permiso("auditoria.ver"):
-            act_aud = menu_admin.addAction("📜 Trazabilidad y Auditoría")
-            act_aud.triggered.connect(lambda: AdminAuditoriaDialog(self.records_service, parent=self).exec())
+            if self._tiene_permiso("registros.recuperar"):
+                act_del = menu_admin.addAction("🗑️ Registros Eliminados")
+                act_del.triggered.connect(lambda: AdminEliminadosDialog(self.records_service, self.usuario_actual, parent=self).exec())
+
+            if self._tiene_permiso("auditoria.ver"):
+                act_aud = menu_admin.addAction("📜 Trazabilidad y Auditoría")
+                act_aud.triggered.connect(lambda: AdminAuditoriaDialog(self.records_service, parent=self).exec())
 
         # Menú de Nuevos Registros
         self.menu_nuevos = menubar.addMenu("🔔 Registros Nuevos (0)")
         self.menu_nuevos.aboutToShow.connect(self._on_abrir_menu_nuevos)
 
     def _init_tabs(self) -> None:
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
+        if hasattr(self, "tabs") and self.tabs is not None:
+            try:
+                self.tabs.currentChanged.disconnect(self._on_tab_changed)
+            except Exception:
+                pass
+            while self.tabs.count() > 0:
+                w = self.tabs.widget(0)
+                self.tabs.removeTab(0)
+                if w:
+                    w.deleteLater()
+            for attr in ("tab_dashboard", "tab_buscador_turnos", "tab_novedades_cambios",
+                         "tab_turnos_sin_cubrir", "tab_empleados", "tab_ciclo", "tab_administracion"):
+                if hasattr(self, attr):
+                    delattr(self, attr)
+        else:
+            self.tabs = QTabWidget()
+            self.tabs.setDocumentMode(True)
+            self.setCentralWidget(self.tabs)
 
         # Botón de versión y changelog en la esquina superior derecha (Estándar CRONO-PCT)
         self.btn_version = QPushButton(f"RENO v{APP_VERSION}")
@@ -344,11 +375,12 @@ class MainWindow(QMainWindow):
             or self._tiene_permiso("roles.administrar")
             or self._tiene_permiso("tiposNovedad.administrar")
             or self._tiene_permiso("dotaciones.administrar")
-            or self._tiene_permiso("personalEstacion.ver")
             or self._tiene_permiso("backup.gestionar")
             or self._tiene_permiso("auditoria.ver")
             or self._tiene_permiso("registros.recuperar")
             or self._tiene_permiso("sesion.configurar")
+            or self._tiene_permiso("destinatarios_informe.administrar")
+            or self._tiene_permiso("destinatarios_ordenamiento.administrar")
         )
         if tiene_admin:
             self.tab_administracion = AdministracionView(
@@ -364,7 +396,6 @@ class MainWindow(QMainWindow):
             self.tabs.addTab(self.tab_administracion, "⚙️ Administración")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        self.setCentralWidget(self.tabs)
 
     def _on_tab_changed(self, index: int) -> None:
         widget = self.tabs.widget(index)
@@ -400,6 +431,15 @@ class MainWindow(QMainWindow):
         btn_sync.setObjectName("btnSecondary")
         btn_sync.clicked.connect(self.sincronizar_ahora)
         self.status_bar.addPermanentWidget(btn_sync)
+
+    def _reconstruir_ui_sesion(self) -> None:
+        """Reconstruye menús, pestañas, status bar y estilos según el usuario logueado."""
+        self.menuBar().clear()
+        self._init_menu_bar()
+        self._init_tabs()
+        self._init_status_bar()
+        self._aplicar_estilos()
+        self.recargar_todo()
 
     def _init_timers(self) -> None:
         # Timer de auto-refresh cada 60s
@@ -458,11 +498,7 @@ class MainWindow(QMainWindow):
                 self.usuario_actual = nuevo_user
                 logger.info("Sesión restablecida con éxito tras inactividad para '%s'", nuevo_user.get("username"))
                 self._ultimo_movimiento = time.time()
-                self.menuBar().clear()
-                self._init_menu_bar()
-                self._init_status_bar()
-                self._aplicar_estilos()
-                self.recargar_todo()
+                self._reconstruir_ui_sesion()
                 self.timer_inactividad.start()
                 return
 
@@ -645,11 +681,7 @@ class MainWindow(QMainWindow):
                 self.usuario_actual = nuevo_user
                 logger.info("Nueva sesión iniciada para '%s'", nuevo_user.get("username"))
                 self._ultimo_movimiento = time.time()
-                self.menuBar().clear()
-                self._init_menu_bar()
-                self._init_status_bar()
-                self._aplicar_estilos()
-                self.recargar_todo()
+                self._reconstruir_ui_sesion()
                 self.timer_inactividad.start()
                 return
         self.close()
@@ -668,11 +700,8 @@ class MainWindow(QMainWindow):
             if nuevo_user:
                 self.usuario_actual = nuevo_user
                 logger.info("Cambio de usuario exitoso a '%s'", nuevo_user.get("username"))
-                self.menuBar().clear()
-                self._init_menu_bar()
-                self._init_status_bar()
-                self._aplicar_estilos()
-                self.recargar_todo()
+                self._ultimo_movimiento = time.time()
+                self._reconstruir_ui_sesion()
                 QMessageBox.information(
                     self,
                     "Sesión Iniciada",
