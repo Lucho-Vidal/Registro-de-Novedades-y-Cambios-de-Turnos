@@ -162,6 +162,7 @@ class NovedadDialog(QDialog):
         novedad_existente: Optional[Dict[str, Any]] = None,
         tramos_existentes: Optional[List[Dict[str, Any]]] = None,
         modo_restringido: bool = False,
+        solo_lectura: bool = False,
         usuario_actual: Optional[Dict[str, Any]] = None,
         parent=None,
     ):
@@ -170,6 +171,7 @@ class NovedadDialog(QDialog):
         self.novedad_existente = novedad_existente
         self.tramos: List[Dict[str, Any]] = list(tramos_existentes or [])
         self.modo_restringido = modo_restringido
+        self.solo_lectura = solo_lectura
         self.usuario_actual = usuario_actual or {}
 
         self.setWindowTitle("Modificar Novedad" if novedad_existente else "Nueva Novedad Operativa")
@@ -360,9 +362,31 @@ class NovedadDialog(QDialog):
 
         main_layout.addLayout(btn_layout)
 
-        # Modo restringido si la novedad está fuera de ventana y sin fecha de fin
-        if self.modo_restringido:
+        # Modo sólo lectura o restringido
+        if self.solo_lectura:
+            self._aplicar_solo_lectura()
+        elif self.modo_restringido:
             self._aplicar_modo_restringido()
+
+    def _aplicar_solo_lectura(self) -> None:
+        if self.novedad_existente:
+            self.setWindowTitle(f"Detalle de Novedad Operativa #{self.novedad_existente.get('id', '')}")
+        self.txt_legajo.setEnabled(False)
+        self.btn_buscar_legajo.setEnabled(False)
+        self.combo_tipo.setEnabled(False)
+        self.date_inicio.setEnabled(False)
+        self.chk_fecha_fin.setEnabled(False)
+        self.date_fin.setEnabled(False)
+        self.combo_estacion.setEnabled(False)
+        self.txt_supervisor.setEnabled(False)
+        self.txt_usuario_windows.setEnabled(False)
+        self.txt_observaciones.setReadOnly(True)
+        self.grp_cobertura.setEnabled(False)
+        self.btn_agregar_tramo.setEnabled(False)
+        self.btn_modificar_tramo.setEnabled(False)
+        self.btn_eliminar_tramo.setEnabled(False)
+        self.btn_guardar.setVisible(False)
+        self.btn_cancel.setText("Cerrar")
 
     def _aplicar_modo_restringido(self) -> None:
         self.txt_legajo.setEnabled(False)

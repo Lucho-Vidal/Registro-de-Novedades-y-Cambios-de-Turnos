@@ -266,6 +266,7 @@ class DashboardView(QWidget):
     navegar_novedades = Signal()
     navegar_cambios = Signal()
     navegar_ciclo = Signal()
+    clic_sin_revisar = Signal()
 
     def __init__(
         self,
@@ -335,6 +336,9 @@ class DashboardView(QWidget):
         self.card_cambios_hoy = self._crear_tarjeta_kpi("CAMBIOS HOY", "0", "#4682B4", "Hoy")
         self.card_total_mes = self._crear_tarjeta_kpi("TOTAL DEL MES", "0", "#2E7D32", "Mes actual")
         self.card_sin_revisar = self._crear_tarjeta_kpi("SIN REVISAR", "0", "#F57C00", "Pendientes")
+        self.card_sin_revisar.setCursor(Qt.PointingHandCursor)
+        self.card_sin_revisar.setToolTip("Haga clic para ver y abrir los registros nuevos pendientes")
+        self.card_sin_revisar.mousePressEvent = lambda e: self.clic_sin_revisar.emit() if e.button() == Qt.LeftButton else None
 
         cards_layout.addWidget(self.card_novedades_hoy)
         cards_layout.addWidget(self.card_cambios_hoy)

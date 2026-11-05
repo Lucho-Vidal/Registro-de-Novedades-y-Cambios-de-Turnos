@@ -36,12 +36,14 @@ class CambioTurnoDialog(QDialog):
         records_service: RecordsService,
         cambio_existente: Optional[Dict[str, Any]] = None,
         usuario_actual: Optional[Dict[str, Any]] = None,
+        solo_lectura: bool = False,
         parent=None,
     ):
         super().__init__(parent)
         self.records_service = records_service
         self.cambio_existente = cambio_existente
         self.usuario_actual = usuario_actual or {}
+        self.solo_lectura = solo_lectura
 
         self.setWindowTitle("Modificar Cambio de Turno" if cambio_existente else "Nuevo Cambio de Turno (Permuta)")
         self.resize(840, 580)
@@ -213,6 +215,23 @@ class CambioTurnoDialog(QDialog):
         btn_layout.addWidget(self.btn_guardar)
 
         main_layout.addLayout(btn_layout)
+
+        if self.solo_lectura:
+            self._aplicar_solo_lectura()
+
+    def _aplicar_solo_lectura(self) -> None:
+        if self.cambio_existente:
+            self.setWindowTitle(f"Detalle de Cambio de Turno #{self.cambio_existente.get('id', '')}")
+        self.txt_legajo_1.setEnabled(False)
+        self.btn_buscar_1.setEnabled(False)
+        self.txt_legajo_2.setEnabled(False)
+        self.btn_buscar_2.setEnabled(False)
+        self.date_cambio.setEnabled(False)
+        self.combo_estacion.setEnabled(False)
+        self.txt_usuario_windows.setEnabled(False)
+        self.txt_observaciones.setReadOnly(True)
+        self.btn_guardar.setVisible(False)
+        self.btn_cancel.setText("Cerrar")
 
     def _buscar_legajo_modal(self, interviniente: int) -> None:
         dlg = LegajoSearchDialog(self._empleados_cache, parent=self)

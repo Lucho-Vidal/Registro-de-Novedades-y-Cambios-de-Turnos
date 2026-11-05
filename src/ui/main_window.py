@@ -6,7 +6,7 @@ híbrido de sincronización Supabase, timers de actividad, notificaciones toast 
 
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer
@@ -311,6 +311,7 @@ class MainWindow(QMainWindow):
             self.pdf_service,
             parent=self,
         )
+        self.tab_dashboard.clic_sin_revisar.connect(self._on_clic_kpi_sin_revisar)
         self.tabs.addTab(self.tab_dashboard, "📈 Panel de Control")
 
         # 2. Buscador de Turnos e Itinerarios
@@ -556,32 +557,60 @@ class MainWindow(QMainWindow):
         with self.db.read_connection() as conn:
             # Novedades cargadas por otros usuarios desde el último ingreso
             novs = conn.execute(
-                """SELECT id, novedad, apellidos_nombres, registrado_en FROM novedades
+                """SELECT id, legajo, novedad, apellidos_nombres, registrado_en, usuario_windows, usuario_id FROM novedades
                    WHERE activo=1 AND registrado_en >= ?
                      AND (usuario_id != ? OR (usuario_id IS NULL AND usuario_windows != ?))
-                   ORDER BY id DESC LIMIT 10""",
+                   ORDER BY id DESC LIMIT 20""",
                 (ultimo_ingreso, u_id, win_u),
             ).fetchall()
 
             # Cambios cargados por otros
             cams = conn.execute(
-                """SELECT id, legajo_1, legajo_2, registrado_en FROM cambios_turno
+                """SELECT id, legajo_1, legajo_2, fecha_cambio, registrado_en, usuario_windows, usuario_id FROM cambios_turno
                    WHERE activo=1 AND registrado_en >= ?
                      AND (usuario_id != ? OR (usuario_id IS NULL AND usuario_windows != ?))
-                   ORDER BY id DESC LIMIT 10""",
+                   ORDER BY id DESC LIMIT 20""",
                 (ultimo_ingreso, u_id, win_u),
             ).fetchall()
 
-        total = len(novs) + len(cams)
+        novs_list = [dict(n) for n in novs]
+        cams_list = [dict(c) for c in cams]
+
+        total = len(novs_list) + len(cams_list)
         self._sin_revisar_count = total
         self.menu_nuevos.setTitle(f"🔔 Registros Nuevos ({total})")
 
+        ids_actuales = {("nov", n["id"]) for n in novs_list} | {("cam", c["id"]) for c in cams_list}
+
         # Toast si hay nuevos y las notificaciones están activadas
         if total > 0 and self.settings.get_bool("notificaciones_activo", True):
-            self.toast.show_message(
-                "Nuevos Registros Operativos",
-                f"Hay {total} novedades o cambios cargados desde su último acceso.",
-            )
+            if not hasattr(self, "_ultimos_ids_notificados") or ids_actuales != self._ultimos_ids_notificados:
+                self._ultimos_ids_notificados = ids_actuales
+
+                if total == 1:
+                    if novs_list:
+                        n = novs_list[0]
+                        nid = n["id"]
+                        nom = n.get("apellidos_nombres") or f"Leg. {n.get('legajo', '')}"
+                        msg = f"Novedad #{nid}: {n.get('novedad')} ({nom})"
+                        on_click = lambda: self._abrir_formulario_novedad_por_id(nid)
+                    else:
+                        c = cams_list[0]
+                        cid = c["id"]
+                        msg = f"Cambio de Turno #{cid}: Leg. {c.get('legajo_1')} ↔ {c.get('legajo_2')}"
+                        on_click = lambda: self._abrir_formulario_cambio_por_id(cid)
+                else:
+                    msg = f"Hay {len(novs_list)} novedades y {len(cams_list)} cambios cargados desde su último acceso."
+                    on_click = lambda: self._mostrar_nuevos_registros(novs_list, cams_list)
+
+                duracion = self.settings.get_int("toast_duracion", 6)
+                self.toast.show_message(
+                    "Nuevos Registros Operativos",
+                    msg,
+                    duration_sec=duracion,
+                    action_text="👉 Clic para abrir el formulario",
+                    on_click=on_click,
+                )
 
     def _on_abrir_menu_nuevos(self) -> None:
         self.menu_nuevos.clear()
@@ -591,20 +620,169 @@ class MainWindow(QMainWindow):
 
         with self.db.read_connection() as conn:
             novs = conn.execute(
-                """SELECT id, novedad, apellidos_nombres, registrado_en FROM novedades
+                """SELECT id, legajo, novedad, apellidos_nombres, registrado_en, usuario_windows, usuario_id FROM novedades
                    WHERE activo=1 AND registrado_en >= ?
                      AND (usuario_id != ? OR (usuario_id IS NULL AND usuario_windows != ?))
-                   ORDER BY id DESC LIMIT 15""",
+                   ORDER BY id DESC LIMIT 20""",
                 (ultimo_ingreso, u_id, win_u),
             ).fetchall()
 
-        if not novs:
+            cams = conn.execute(
+                """SELECT id, legajo_1, legajo_2, fecha_cambio, registrado_en, usuario_windows, usuario_id FROM cambios_turno
+                   WHERE activo=1 AND registrado_en >= ?
+                     AND (usuario_id != ? OR (usuario_id IS NULL AND usuario_windows != ?))
+                   ORDER BY id DESC LIMIT 20""",
+                (ultimo_ingreso, u_id, win_u),
+            ).fetchall()
+
+        novs_list = [dict(n) for n in novs]
+        cams_list = [dict(c) for c in cams]
+        total = len(novs_list) + len(cams_list)
+
+        if total == 0:
             act_vacia = self.menu_nuevos.addAction("Sin nuevos registros pendientes")
             act_vacia.setEnabled(False)
-        else:
-            for n in novs:
-                txt = f"#{n['id']} - {n['novedad']} ({n['apellidos_nombres']}) [{n['registrado_en']}]"
-                self.menu_nuevos.addAction(txt)
+            return
+
+        # Acción destacada para ver el listado modal
+        act_ver_todos = self.menu_nuevos.addAction(f"📋 Ver listado de registros nuevos ({total})...")
+        act_ver_todos.triggered.connect(lambda: self._mostrar_nuevos_registros(novs_list, cams_list))
+        self.menu_nuevos.addSeparator()
+
+        for n in novs_list:
+            nom = n.get("apellidos_nombres") or f"Leg. {n.get('legajo', '')}"
+            txt = f"📝 #{n['id']} - {n.get('novedad')} ({nom}) [{n.get('registrado_en', '')}]"
+            act = self.menu_nuevos.addAction(txt)
+            act.setToolTip("Haga clic para abrir el formulario de esta novedad")
+            act.triggered.connect(lambda _, nid=n["id"]: self._abrir_formulario_novedad_por_id(nid))
+
+        if cams_list:
+            if novs_list:
+                self.menu_nuevos.addSeparator()
+            for c in cams_list:
+                fc = f" ({c.get('fecha_cambio')})" if c.get("fecha_cambio") else ""
+                txt = f"🔄 #{c['id']} - Permuta Leg. {c.get('legajo_1')} ↔ {c.get('legajo_2')}{fc} [{c.get('registrado_en', '')}]"
+                act = self.menu_nuevos.addAction(txt)
+                act.setToolTip("Haga clic para abrir el formulario de este cambio de turno")
+                act.triggered.connect(lambda _, cid=c["id"]: self._abrir_formulario_cambio_por_id(cid))
+
+    def _abrir_formulario_novedad_por_id(self, novedad_id: int) -> None:
+        """Abre directamente el formulario modal de la novedad para visualización o edición."""
+        fila = self.records_service.obtener_novedad(novedad_id)
+        if not fila:
+            QMessageBox.warning(self, "Aviso", f"No se encontró la novedad #{novedad_id}.")
+            return
+
+        puede_modificar_libre = self._tiene_permiso("registros.modificar")
+        dentro_ventana = self.records_service.dentro_de_ventana(fila["registrado_en"], "editar_horas")
+        falta_fecha_fin = not fila.get("fecha_fin") or fila.get("fecha_fin") == "-"
+        puede_editar = self._tiene_permiso("novedades.editar") or puede_modificar_libre
+
+        solo_lectura = False
+        modo_restringido = False
+
+        if not puede_editar:
+            solo_lectura = True
+        elif not puede_modificar_libre and not dentro_ventana:
+            if falta_fecha_fin:
+                modo_restringido = True
+            else:
+                solo_lectura = True
+
+        tramos = self.records_service.listar_reemplazos_por_novedad(novedad_id)
+        from src.ui.views.dialogs.novedad_dialog import NovedadDialog
+        dlg = NovedadDialog(
+            self.records_service,
+            novedad_existente=fila,
+            tramos_existentes=tramos,
+            modo_restringido=modo_restringido,
+            solo_lectura=solo_lectura,
+            usuario_actual=self.usuario_actual,
+            parent=self,
+        )
+        if hasattr(self, "tab_novedades_cambios"):
+            self.tabs.setCurrentWidget(self.tab_novedades_cambios)
+            if hasattr(self.tab_novedades_cambios, "tabs"):
+                self.tab_novedades_cambios.tabs.setCurrentIndex(0)
+
+        if dlg.exec():
+            self.recargar_todo()
+
+    def _abrir_formulario_cambio_por_id(self, cambio_id: int) -> None:
+        """Abre directamente el formulario modal del cambio de turno para visualización o edición."""
+        fila = self.records_service.obtener_cambio(cambio_id)
+        if not fila:
+            QMessageBox.warning(self, "Aviso", f"No se encontró el cambio de turno #{cambio_id}.")
+            return
+
+        puede_modificar_libre = self._tiene_permiso("registros.modificar")
+        dentro_ventana = self.records_service.dentro_de_ventana(fila["registrado_en"], "editar_horas")
+        puede_editar = self._tiene_permiso("cambios_turno.editar") or puede_modificar_libre
+
+        solo_lectura = not (puede_editar and (puede_modificar_libre or dentro_ventana))
+
+        from src.ui.views.dialogs.cambio_turno_dialog import CambioTurnoDialog
+        dlg = CambioTurnoDialog(
+            self.records_service,
+            cambio_existente=fila,
+            usuario_actual=self.usuario_actual,
+            solo_lectura=solo_lectura,
+            parent=self,
+        )
+        if hasattr(self, "tab_novedades_cambios"):
+            self.tabs.setCurrentWidget(self.tab_novedades_cambios)
+            if hasattr(self.tab_novedades_cambios, "tabs"):
+                self.tab_novedades_cambios.tabs.setCurrentIndex(1)
+
+        if dlg.exec():
+            self.recargar_todo()
+
+    def _mostrar_nuevos_registros(
+        self,
+        novs: Optional[List[Dict[str, Any]]] = None,
+        cams: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Muestra el diálogo modal con todos los registros nuevos y selector de formulario."""
+        if novs is None or cams is None:
+            ultimo_ingreso = self.usuario_actual.get("ultimo_ingreso")
+            u_id = self.usuario_actual.get("id")
+            win_u = self.usuario_actual.get("username")
+            with self.db.read_connection() as conn:
+                novs_rows = conn.execute(
+                    """SELECT id, legajo, novedad, apellidos_nombres, registrado_en, usuario_windows, usuario_id FROM novedades
+                       WHERE activo=1 AND registrado_en >= ?
+                         AND (usuario_id != ? OR (usuario_id IS NULL AND usuario_windows != ?))
+                       ORDER BY id DESC LIMIT 50""",
+                    (ultimo_ingreso, u_id, win_u),
+                ).fetchall()
+                cams_rows = conn.execute(
+                    """SELECT id, legajo_1, legajo_2, fecha_cambio, registrado_en, usuario_windows, usuario_id FROM cambios_turno
+                       WHERE activo=1 AND registrado_en >= ?
+                         AND (usuario_id != ? OR (usuario_id IS NULL AND usuario_windows != ?))
+                       ORDER BY id DESC LIMIT 50""",
+                    (ultimo_ingreso, u_id, win_u),
+                ).fetchall()
+            novs = [dict(n) for n in novs_rows]
+            cams = [dict(c) for c in cams_rows]
+
+        def _ir_a_grilla():
+            if hasattr(self, "tab_novedades_cambios"):
+                self.tabs.setCurrentWidget(self.tab_novedades_cambios)
+
+        from src.ui.views.dialogs.nuevos_registros_dialog import NuevosRegistrosDialog
+        dlg = NuevosRegistrosDialog(
+            novedades=novs,
+            cambios=cams,
+            on_abrir_novedad=self._abrir_formulario_novedad_por_id,
+            on_abrir_cambio=self._abrir_formulario_cambio_por_id,
+            on_ir_a_grilla=_ir_a_grilla,
+            parent=self,
+        )
+        dlg.exec()
+
+    def _on_clic_kpi_sin_revisar(self) -> None:
+        """Manejador para el clic en la tarjeta KPI 'SIN REVISAR' del dashboard."""
+        self._mostrar_nuevos_registros()
 
     def sincronizar_ahora(self) -> None:
         if not self.supabase_sync:
