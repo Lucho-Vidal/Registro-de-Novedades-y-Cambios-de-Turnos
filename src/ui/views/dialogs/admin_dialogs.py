@@ -1801,6 +1801,21 @@ class AdminConfigWidget(QWidget):
         form.setLabelAlignment(Qt.AlignLeft)
         form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 
+        # Ubicación persistente de la Base de Datos SQLite
+        from src.core.config import obtener_ruta_base_datos, guardar_ruta_base_datos
+        sqlite_actual, _ = obtener_ruta_base_datos()
+
+        box_db = QHBoxLayout()
+        self.txt_db_path = QLineEdit(str(sqlite_actual))
+        self.txt_db_path.setReadOnly(True)
+        self.txt_db_path.setMinimumWidth(280)
+        self.btn_cambiar_db = QPushButton("📂 Examinar...")
+        self.btn_cambiar_db.setObjectName("btnSecondary")
+        self.btn_cambiar_db.clicked.connect(self._examinar_base_datos)
+        box_db.addWidget(self.txt_db_path, 1)
+        box_db.addWidget(self.btn_cambiar_db)
+        form.addRow("Ruta Base de Datos SQLite:", box_db)
+
         # Ventanas
         self.spin_edit = QSpinBox()
         self.spin_edit.setRange(1, 720)
@@ -2004,6 +2019,16 @@ class AdminConfigWidget(QWidget):
         if hasattr(self, "widget_destinatarios"):
             self.widget_destinatarios.recargar()
 
+    def _examinar_base_datos(self) -> None:
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Seleccionar o Definir Ubicación de Base de Datos SQLite",
+            self.txt_db_path.text(),
+            "Base de Datos SQLite (*.sqlite *.db)",
+        )
+        if file_path:
+            self.txt_db_path.setText(file_path)
+
     def _actualizar_visibilidad_proxy(self) -> None:
         modo = self.cmb_proxy_mode.currentData() or MODO_DIRECTO
         self.widget_sso.setVisible(modo == MODO_WINDOWS_SSO)
@@ -2031,6 +2056,10 @@ class AdminConfigWidget(QWidget):
         }
 
     def _cargar(self) -> None:
+        from src.core.config import obtener_ruta_base_datos
+        sqlite_actual, _ = obtener_ruta_base_datos()
+        self.txt_db_path.setText(str(sqlite_actual))
+
         with self.db.read_connection() as conn:
             rows = dict(conn.execute("SELECT clave, valor FROM configuracion").fetchall())
         self.spin_edit.setValue(int(rows.get("editar_horas", 24)))
@@ -2140,7 +2169,18 @@ class AdminConfigWidget(QWidget):
         guardar_configuracion_json(app_cfg)
         aplicar_configuracion_proxy(app_cfg)
 
-        QMessageBox.information(self, "Éxito", "Configuración guardada exitosamente.")
+        from src.core.config import guardar_ruta_base_datos, obtener_ruta_base_datos
+        sqlite_actual, _ = obtener_ruta_base_datos()
+        nuevo_path = self.txt_db_path.text().strip()
+        aviso_db = ""
+        if nuevo_path and Path(nuevo_path) != Path(sqlite_actual):
+            if guardar_ruta_base_datos(nuevo_path):
+                aviso_db = (
+                    f"\n\n⚠️ Ruta de Base de Datos Modificada:\n{nuevo_path}\n"
+                    f"Para que el cambio surta efecto y comenzar a operar con la nueva base, reinicie la aplicación."
+                )
+
+        QMessageBox.information(self, "Éxito", f"Configuración guardada exitosamente.{aviso_db}")
 
 
 class AdminConfigDialog(BaseMaximizedDialog):
@@ -2456,9 +2496,14 @@ class AdminEliminadosDialog(BaseMaximizedDialog):
 class AdminAuditoriaWidget(QWidget):
     """Panel visor de logs de auditoría de modificaciones y accesos."""
 
-    def __init__(self, records_service: RecordsService, parent=None):
+    def __init__(self, records_service: RecordsService, excel_service=None, parent=None):
         super().__init__(parent)
         self.records_service = records_service
+        if excel_service is None:
+            from src.services.excel_service import ExcelService
+            self.excel_service = ExcelService(records_service.db)
+        else:
+            self.excel_service = excel_service
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2469,6 +2514,12 @@ class AdminAuditoriaWidget(QWidget):
         self.txt_filter.setPlaceholderText("Usuario, acción, entidad...")
         self.txt_filter.textChanged.connect(self._on_search)
         bar.addWidget(self.txt_filter)
+
+        self.btn_exportar = QPushButton("📊 Exportar a Excel")
+        self.btn_exportar.setObjectName("btnSecondary")
+        self.btn_exportar.clicked.connect(self._exportar_excel)
+        bar.addWidget(self.btn_exportar)
+
         bar.addStretch()
         layout.addLayout(bar)
 
@@ -2500,18 +2551,43 @@ class AdminAuditoriaWidget(QWidget):
     def _on_search(self, text: str) -> None:
         self.recargar(text)
 
+    def _exportar_excel(self) -> None:
+        filas = self.model.get_all_data()
+        if not filas:
+            QMessageBox.information(self, "Exportar", "No hay registros de auditoría para exportar.")
+            return
+
+        from datetime import datetime
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"Auditoria_RENO_{now_str}.xlsx"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar Reporte de Auditoría",
+            default_name,
+            "Libro de Excel (*.xlsx)",
+        )
+        if not file_path:
+            return
+
+        try:
+            filtro = self.txt_filter.text().strip()
+            self.excel_service.export_auditoria(file_path, filas, filtro_aplicado=filtro)
+            QMessageBox.information(self, "Éxito", f"Reporte de auditoría exportado exitosamente a:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al exportar reporte de auditoría:\n{e}")
+
 
 class AdminAuditoriaDialog(BaseMaximizedDialog):
     """Diálogo visor de logs de auditoría de modificaciones y accesos."""
 
-    def __init__(self, records_service: RecordsService, parent=None):
+    def __init__(self, records_service: RecordsService, excel_service=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Trazabilidad y Auditoría del Sistema")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
 
-        self.widget = AdminAuditoriaWidget(records_service, parent=self)
+        self.widget = AdminAuditoriaWidget(records_service, excel_service=excel_service, parent=self)
         layout.addWidget(self.widget)
 
         btn_cerrar = QPushButton("Cerrar")

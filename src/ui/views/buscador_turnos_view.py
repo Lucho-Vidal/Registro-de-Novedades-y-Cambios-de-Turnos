@@ -209,26 +209,29 @@ class BuscadorTurnosView(QWidget):
 
         row1.addStretch(1)
 
-        self.btn_importar = QPushButton("📥 Importar Itinerario (Excel)")
-        self.btn_importar.setObjectName("btnSecondary")
-        self.btn_importar.clicked.connect(self._importar_itinerario_excel)
-        row1.addWidget(self.btn_importar)
+        if self._can("turnos.administrar") or self._can("turnos.crear"):
+            self.btn_importar = QPushButton("📥 Importar Itinerario (Excel)")
+            self.btn_importar.setObjectName("btnSecondary")
+            self.btn_importar.clicked.connect(self._importar_itinerario_excel)
+            row1.addWidget(self.btn_importar)
 
-        if self._can("turnos.ver") or self._can("turnos.administrar") or self._can("turnos.editar"):
+        if self._can("turnos.administrar") or self._can("turnos.editar"):
             self.btn_admin_turnos = QPushButton("⚙️ Administrar Turnos")
             self.btn_admin_turnos.setObjectName("btnSecondary")
             self.btn_admin_turnos.clicked.connect(self._abrir_admin_turnos)
             row1.addWidget(self.btn_admin_turnos)
 
+        if self._can("turnos.ver") or self._can("turnos.administrar"):
             self.btn_paradas_tren = QPushButton("🚉 Paradas por Tren")
             self.btn_paradas_tren.setObjectName("btnSecondary")
             self.btn_paradas_tren.clicked.connect(self._abrir_paradas_tren)
             row1.addWidget(self.btn_paradas_tren)
 
-        self.btn_exportar = QPushButton("📊 Exportar a Excel")
-        self.btn_exportar.setObjectName("btnSecondary")
-        self.btn_exportar.clicked.connect(self._exportar_grilla_excel)
-        row1.addWidget(self.btn_exportar)
+        if self._can("turnos.exportar") or self._can("turnos.ver"):
+            self.btn_exportar = QPushButton("📊 Exportar a Excel")
+            self.btn_exportar.setObjectName("btnSecondary")
+            self.btn_exportar.clicked.connect(self._exportar_grilla_excel)
+            row1.addWidget(self.btn_exportar)
 
         filter_layout.addLayout(row1)
 

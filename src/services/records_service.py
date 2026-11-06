@@ -1453,6 +1453,7 @@ class RecordsService:
         self,
         fecha_consulta: str,
         dotacion: Optional[str] = None,
+        especialidad: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         f_sol = parsear_fecha(fecha_consulta, "Fecha a consultar", obligatorio=True)
         with self.db.read_connection() as conn:
@@ -1468,6 +1469,9 @@ class RecordsService:
             if dotacion and dotacion != "Todas":
                 query += " AND n.dotacion = ?"
                 params.append(dotacion)
+            if especialidad and especialidad != "Todas":
+                query += " AND n.especialidad = ?"
+                params.append(especialidad)
             query += " ORDER BY n.dotacion, n.turnos, n.apellidos_nombres"
             filas = conn.execute(query, params).fetchall()
 
@@ -1521,8 +1525,6 @@ class RecordsService:
                     franco_a_resolver = franco_titular
 
                     if es_turno_ciclo(turno_base_titular):
-                        item["cubierto"] = "N/A (Ciclo)"
-                        item["reemplazo"] = ""
                         # Verificar si este personal de ciclo estaba reemplazando una novedad en esta fecha
                         tit_cubierto = None
                         for r in reemplazos_rows:
@@ -1535,12 +1537,16 @@ class RecordsService:
                             with self.db.read_connection() as c_nov:
                                 row_tit = c_nov.execute("SELECT legajo, apellidos_nombres, turnos, franco FROM novedades WHERE id=?", (tit_cubierto["novedad_id"],)).fetchone()
                                 if row_tit:
-                                    turno_reemplazado = f"{row_tit['turnos']} (Titular: {row_tit['apellidos_nombres']})"
                                     turno_a_resolver = row_tit["turnos"]
                                     franco_a_resolver = row_tit["franco"] or "Domingo"
+                                    turno_reemplazado = f"{row_tit['turnos']} (Titular: {row_tit['apellidos_nombres']})"
                                 else:
                                     turno_reemplazado = f"Novedad #{tit_cubierto['novedad_id']}"
+                            item["cubierto"] = "No"
+                            item["reemplazo"] = ""
                         else:
+                            item["cubierto"] = "N/A (Ciclo)"
+                            item["reemplazo"] = ""
                             turno_reemplazado = "Sin asignación"
                     elif reemplazo_hoy:
                         item["cubierto"] = "Sí"
@@ -1550,8 +1556,6 @@ class RecordsService:
                         item["cubierto"] = "No"
                         item["reemplazo"] = ""
                         turno_reemplazado = "-"
-
-                    item["turno_reemplazado"] = turno_reemplazado
 
                     # Resolver turno del día, hora toma y hora deja
                     try:
@@ -1574,12 +1578,25 @@ class RecordsService:
                         item["hora_toma"] = "-"
                         item["hora_deja"] = "-"
 
+                    if es_turno_ciclo(turno_base_titular) and tit_cubierto and "row_tit" in locals() and row_tit:
+                        item["turno_reemplazado"] = f"{row_tit['turnos']} (Día {item['turno_dia']}) - {row_tit['apellidos_nombres']}"
+                    else:
+                        item["turno_reemplazado"] = turno_reemplazado
+
                     info_cob = self.calcular_estado_cobertura(fila, tramos)
                     if isinstance(info_cob, dict):
                         item["cobertura_resumen"] = info_cob["resumen"]
                         item["reemplazos_detalle"] = info_cob["detalle"]
                     descubiertos.append(item)
 
+        # Ordenar por hora_toma cronológicamente ascendente (francos o sin hora al final)
+        def _hora_toma_sort_key(it: Dict[str, Any]):
+            ht = str(it.get("hora_toma") or "").strip()
+            if not ht or ht == "-":
+                return (1, "99:99", str(it.get("dotacion") or ""), str(it.get("turnos") or ""))
+            return (0, ht, str(it.get("dotacion") or ""), str(it.get("turnos") or ""))
+
+        descubiertos.sort(key=_hora_toma_sort_key)
         return descubiertos
 
     def obtener_estado_personal_ciclo(
@@ -1753,12 +1770,25 @@ class RecordsService:
                    ORDER BY nr.id ASC""",
                 (int(legajo_ciclo),),
             ).fetchall()
+            nov_propias_rows = conn.execute(
+                """SELECT id, novedad, fecha_inicio, fecha_fin, observaciones
+                   FROM novedades
+                   WHERE legajo = ? AND activo = 1
+                   ORDER BY id ASC""",
+                (int(legajo_ciclo),),
+            ).fetchall()
 
         tramos_parsed = []
         for r in reemplazos:
             r_ini, r_fin_opt = self._rango_fechas_reemplazo(r["fecha_inicio"], r["fecha_fin"], r["fecha_fin_novedad"])
             if r_ini:
                 tramos_parsed.append((r_ini, r_fin_opt, dict(r)))
+
+        nov_propias_parsed = []
+        for np in nov_propias_rows:
+            np_ini, np_fin_opt = self._rango_fechas_reemplazo(np["fecha_inicio"], np["fecha_fin"], None)
+            if np_ini:
+                nov_propias_parsed.append((np_ini, np_fin_opt, dict(np)))
 
         emp_jh = 6
         if emp:
@@ -1828,9 +1858,30 @@ class RecordsService:
                     relevo_dia = r_data
                     break
 
+            nov_propia_dia = None
+            for np_ini, np_fin_opt, np_data in nov_propias_parsed:
+                if np_ini <= d_step and (np_fin_opt is None or d_step <= np_fin_opt):
+                    nov_propia_dia = np_data
+                    break
+
             jornada_db = jornadas_map.get(f_iso)
 
-            if relevo_dia:
+            if nov_propia_dia:
+                estado = f"Novedad ({nov_propia_dia['novedad']})"
+                es_franco = False
+                novedad_id = nov_propia_dia["id"]
+                reemplaza_a = "-"
+                turno_cubierto = "-"
+                motivo = f"Novedad propia #{nov_propia_dia['id']} ({nov_propia_dia['novedad']})"
+                periodo = f"{nov_propia_dia['fecha_inicio']} a {nov_propia_dia['fecha_fin'] or 'abierto'}"
+                reemplazando_legajo = None
+                reemplazando_nombre = None
+                novedad_titular = None
+                tramo_inicio = nov_propia_dia["fecha_inicio"]
+                tramo_fin = nov_propia_dia["fecha_fin"]
+                toma = ""
+                deja = ""
+            elif relevo_dia:
                 estado = "Reemplazando"
                 es_franco = False
                 novedad_id = relevo_dia["novedad_id"]
@@ -1896,14 +1947,14 @@ class RecordsService:
             hs_trab = _calc_hs_trabajadas(toma, deja) if (toma and deja) else 0.0
             deja_dt = _calc_deja_dt(d_step, toma, deja) if deja else None
 
-            if es_franco:
+            if es_franco or nov_propia_dia:
                 acum_semana = 0.0
                 hs_semana_str = "-"
             else:
                 acum_semana += hs_trab
                 hs_semana_str = f"{acum_semana:.1f} hs" if acum_semana > 0 else "-"
 
-            if es_franco:
+            if es_franco or nov_propia_dia:
                 hora_disp_str = "-"
             else:
                 d_prev = d_step - timedelta(days=1)
@@ -1930,6 +1981,12 @@ class RecordsService:
                 else:
                     hora_disp_str = "-"
 
+            obs_calculada = ""
+            if nov_propia_dia:
+                obs_calculada = str(nov_propia_dia.get("observaciones") or "").strip()
+            elif jornada_db:
+                obs_calculada = str(jornada_db.get("observaciones") or "").strip()
+
             dias_historia[d_step] = {
                 "d": d_step,
                 "es_franco": es_franco,
@@ -1942,7 +1999,7 @@ class RecordsService:
                 "hs_semana_str": hs_semana_str,
                 "hora_disponible": hora_disp_str,
                 "franco_anticipado": bool(jornada_db and jornada_db.get("franco_anticipado")),
-                "observaciones": jornada_db.get("observaciones") or "" if jornada_db else "",
+                "observaciones": obs_calculada,
                 "novedad_id": novedad_id,
                 "reemplaza_a": reemplaza_a,
                 "turno_cubierto": turno_cubierto,
@@ -3097,90 +3154,135 @@ class RecordsService:
     ) -> int:
         """Importa estaciones intermedias y horarios de paso por tren desde un archivo Excel.
 
-        Soporta tanto:
-        1) Planillas dedicadas con columnas (TREN/NRO_TREN, ESTACION/PARADA, HORA/HORA_PASO, ORDEN, ITINERARIO, REGIMEN).
-        2) Planillas de itinerarios estándar (con ORIGEN, HORA_SALIDA, DESTINO, HORA_LLEGADA por vuelta).
+        Soporta:
+        1) Libros con múltiples hojas (recorre todas las hojas del libro).
+        2) Planillas dedicadas con columnas estándar (TREN, ESTACION, HORA, ORDEN, ITINERARIO, REGIMEN).
+        3) Planillas de itinerarios estándar (con ORIGEN, HORA_SALIDA, DESTINO, HORA_LLEGADA por vuelta/fila).
+        4) Cuadros horarios matriciales (cabecera con múltiples columnas de trenes y fila/columna 1 con estaciones).
+        5) Importación simultánea de decenas o cientos de trenes en una sola operación.
         """
         import openpyxl
+        from datetime import time as dt_time, datetime as dt_datetime
 
-        wb = openpyxl.load_workbook(file_path, data_only=True)
-        ws = wb.active
-
-        headers_raw = [str(ws.cell(1, c).value or "").strip().upper() for c in range(1, ws.max_column + 1)]
-        col_map: Dict[str, int] = {h: idx + 1 for idx, h in enumerate(headers_raw) if h}
-
-        def _find_col(*candidates: str) -> Optional[int]:
-            for cand in candidates:
-                for h_name, c_idx in col_map.items():
-                    if cand in h_name:
-                        return c_idx
+        def _parse_hr(val: Any) -> Optional[str]:
+            if val is None:
+                return None
+            if isinstance(val, (dt_time, dt_datetime)):
+                return val.strftime("%H:%M")
+            val_s = str(val).strip()
+            if not val_s or val_s in ("None", "-", ".", "..", "--", "---"):
+                return None
+            if ":" in val_s:
+                parts = val_s.split(":")
+                try:
+                    h = int(parts[0])
+                    m = int(parts[1][:2])
+                    return f"{h:02d}:{m:02d}"
+                except Exception:
+                    return None
             return None
 
-        c_tren = _find_col("NRO_TREN", "TREN", "N° TREN")
-        c_est = _find_col("ESTACION", "ESTACIÓN", "PARADA")
-        c_hora = _find_col("HORA_PASO", "HORA", "PASO", "HORARIO")
-        c_orden = _find_col("ORDEN", "SECUENCIA")
-        c_itin = _find_col("ITINERARIO", "CIRC", "VIGENCIA")
-        c_reg = _find_col("REGIMEN", "RÉGIMEN", "DIA", "TIPO")
-
-        c_origen = _find_col("ORIGEN", "DESDE", "SALE DE")
-        c_h_sal = _find_col("SALIDA", "H_SALIDA", "HORA_SALIDA")
-        c_destino = _find_col("DESTINO", "HASTA", "LLEGA A")
-        c_h_lleg = _find_col("LLEGADA", "H_LLEGADA", "HORA_LLEGADA")
-
+        wb = openpyxl.load_workbook(file_path, data_only=True)
         registros_a_insertar: List[Tuple[str, str, str, int, str, str]] = []
         orden_tracker: Dict[Tuple[str, str], int] = {}
 
-        for r_idx in range(2, ws.max_row + 1):
-            if c_tren and c_est and c_hora:
-                nt = str(ws.cell(r_idx, c_tren).value or "").strip()
-                est = str(ws.cell(r_idx, c_est).value or "").strip()
-                hr_val = ws.cell(r_idx, c_hora).value
-                hr = hr_val.strftime("%H:%M") if hasattr(hr_val, "strftime") else str(hr_val or "").strip()
-                if not nt or not est or not hr or nt in ("None", "-"):
-                    continue
-                itin = str(ws.cell(r_idx, c_itin).value or itinerario_default or "").strip() if c_itin else (itinerario_default or "")
-                reg = str(ws.cell(r_idx, c_reg).value or "LV").strip() if c_reg else "LV"
-                ord_key = (nt, itin)
-                if c_orden and ws.cell(r_idx, c_orden).value is not None:
-                    try:
-                        ord_num = int(ws.cell(r_idx, c_orden).value)
-                    except (ValueError, TypeError):
+        for ws in wb.worksheets:
+            if ws.max_row < 2:
+                continue
+
+            headers_raw = [str(ws.cell(1, c).value or "").strip().upper() for c in range(1, ws.max_column + 1)]
+            col_map: Dict[str, int] = {h: idx + 1 for idx, h in enumerate(headers_raw) if h}
+
+            def _find_col(*candidates: str) -> Optional[int]:
+                for cand in candidates:
+                    for h_name, c_idx in col_map.items():
+                        if cand in h_name:
+                            return c_idx
+                return None
+
+            c_tren = _find_col("NRO_TREN", "TREN", "N° TREN")
+            c_est = _find_col("ESTACION", "ESTACIÓN", "PARADA")
+            c_hora = _find_col("HORA_PASO", "HORA", "PASO", "HORARIO")
+            c_orden = _find_col("ORDEN", "SECUENCIA")
+            c_itin = _find_col("ITINERARIO", "CIRC", "VIGENCIA")
+            c_reg = _find_col("REGIMEN", "RÉGIMEN", "DIA", "TIPO")
+
+            c_origen = _find_col("ORIGEN", "DESDE", "SALE DE")
+            c_h_sal = _find_col("SALIDA", "H_SALIDA", "HORA_SALIDA")
+            c_destino = _find_col("DESTINO", "HASTA", "LLEGA A")
+            c_h_lleg = _find_col("LLEGADA", "H_LLEGADA", "HORA_LLEGADA")
+
+            # Detectar formato matricial de cuadro horario (Cabecera con múltiples columnas numéricas de tren)
+            matrix_tren_cols: List[Tuple[int, str]] = []
+            if not c_tren or (not c_hora and not c_h_sal):
+                for c in range(2, ws.max_column + 1):
+                    val_h = str(ws.cell(1, c).value or "").strip()
+                    val_clean = val_h.upper().replace("TREN", "").replace("N°", "").replace("#", "").strip()
+                    if val_clean.isdigit():
+                        matrix_tren_cols.append((c, val_clean))
+
+            if len(matrix_tren_cols) >= 2:
+                # Es un cuadro horario matricial: Columna 1 = Estación, Columnas 2..N = Trenes
+                for r_idx in range(2, ws.max_row + 1):
+                    est_val = str(ws.cell(r_idx, 1).value or "").strip()
+                    if not est_val or est_val.upper() in ("ESTACION", "ESTACIÓN", "TREN", "OBSERVACIONES", "TOTAL"):
+                        continue
+                    for c_idx, nt in matrix_tren_cols:
+                        hr = _parse_hr(ws.cell(r_idx, c_idx).value)
+                        if hr:
+                            itin = str(itinerario_default or ws.title or "").strip()
+                            ord_key = (nt, itin)
+                            orden_tracker[ord_key] = orden_tracker.get(ord_key, 0) + 1
+                            registros_a_insertar.append((nt, itin, "LV", orden_tracker[ord_key], est_val, hr))
+                continue
+
+            # Formatos columnares estándar por fila
+            for r_idx in range(2, ws.max_row + 1):
+                if c_tren and c_est and c_hora:
+                    nt = str(ws.cell(r_idx, c_tren).value or "").strip()
+                    est = str(ws.cell(r_idx, c_est).value or "").strip()
+                    hr = _parse_hr(ws.cell(r_idx, c_hora).value)
+                    if not nt or not est or not hr or nt in ("None", "-"):
+                        continue
+                    itin = str(ws.cell(r_idx, c_itin).value or itinerario_default or ws.title or "").strip() if c_itin else (itinerario_default or ws.title or "")
+                    reg = str(ws.cell(r_idx, c_reg).value or "LV").strip() if c_reg else "LV"
+                    ord_key = (nt, itin)
+                    if c_orden and ws.cell(r_idx, c_orden).value is not None:
+                        try:
+                            ord_num = int(ws.cell(r_idx, c_orden).value)
+                        except (ValueError, TypeError):
+                            orden_tracker[ord_key] = orden_tracker.get(ord_key, 0) + 1
+                            ord_num = orden_tracker[ord_key]
+                    else:
                         orden_tracker[ord_key] = orden_tracker.get(ord_key, 0) + 1
                         ord_num = orden_tracker[ord_key]
+                    registros_a_insertar.append((nt, itin, reg, ord_num, est, hr))
+                elif c_tren and c_origen and c_h_sal and c_destino and c_h_lleg:
+                    nt = str(ws.cell(r_idx, c_tren).value or "").strip()
+                    if not nt or nt in ("None", "-"):
+                        continue
+                    itin = str(ws.cell(r_idx, c_itin).value or itinerario_default or ws.title or "").strip() if c_itin else (itinerario_default or ws.title or "")
+                    reg = str(ws.cell(r_idx, c_reg).value or "LV").strip() if c_reg else "LV"
+                    orig = str(ws.cell(r_idx, c_origen).value or "").strip()
+                    hs = _parse_hr(ws.cell(r_idx, c_h_sal).value)
+                    dest = str(ws.cell(r_idx, c_destino).value or "").strip()
+                    hl = _parse_hr(ws.cell(r_idx, c_h_lleg).value)
+                    ord_key = (nt, itin)
+                    for est, hr in ((orig, hs), (dest, hl)):
+                        if est and hr:
+                            orden_tracker[ord_key] = orden_tracker.get(ord_key, 0) + 1
+                            registros_a_insertar.append((nt, itin, reg, orden_tracker[ord_key], est, hr))
                 else:
+                    # Fallback posicional: col 1=Tren, col 2=Estacion, col 3=Hora, col 4=Orden, col 5=Itinerario
+                    nt = str(ws.cell(r_idx, 1).value or "").strip()
+                    est = str(ws.cell(r_idx, 2).value or "").strip()
+                    hr = _parse_hr(ws.cell(r_idx, 3).value)
+                    if not nt or not est or not hr or nt in ("None", "-"):
+                        continue
+                    itin = str(ws.cell(r_idx, 5).value or itinerario_default or ws.title or "").strip()
+                    ord_key = (nt, itin)
                     orden_tracker[ord_key] = orden_tracker.get(ord_key, 0) + 1
-                    ord_num = orden_tracker[ord_key]
-                registros_a_insertar.append((nt, itin, reg, ord_num, est, hr))
-            elif c_tren and c_origen and c_h_sal and c_destino and c_h_lleg:
-                nt = str(ws.cell(r_idx, c_tren).value or "").strip()
-                if not nt or nt in ("None", "-"):
-                    continue
-                itin = str(ws.cell(r_idx, c_itin).value or itinerario_default or "").strip() if c_itin else (itinerario_default or "")
-                reg = str(ws.cell(r_idx, c_reg).value or "LV").strip() if c_reg else "LV"
-                orig = str(ws.cell(r_idx, c_origen).value or "").strip()
-                hs_val = ws.cell(r_idx, c_h_sal).value
-                hs = hs_val.strftime("%H:%M") if hasattr(hs_val, "strftime") else str(hs_val or "").strip()
-                dest = str(ws.cell(r_idx, c_destino).value or "").strip()
-                hl_val = ws.cell(r_idx, c_h_lleg).value
-                hl = hl_val.strftime("%H:%M") if hasattr(hl_val, "strftime") else str(hl_val or "").strip()
-                ord_key = (nt, itin)
-                for est, hr in ((orig, hs), (dest, hl)):
-                    if est and hr:
-                        orden_tracker[ord_key] = orden_tracker.get(ord_key, 0) + 1
-                        registros_a_insertar.append((nt, itin, reg, orden_tracker[ord_key], est, hr))
-            else:
-                # Fallback posicional: col 1=Tren, col 2=Estacion, col 3=Hora, col 4=Orden, col 5=Itinerario
-                nt = str(ws.cell(r_idx, 1).value or "").strip()
-                est = str(ws.cell(r_idx, 2).value or "").strip()
-                hr_val = ws.cell(r_idx, 3).value
-                hr = hr_val.strftime("%H:%M") if hasattr(hr_val, "strftime") else str(hr_val or "").strip()
-                if not nt or not est or not hr or nt in ("None", "-"):
-                    continue
-                itin = str(ws.cell(r_idx, 5).value or itinerario_default or "").strip()
-                ord_key = (nt, itin)
-                orden_tracker[ord_key] = orden_tracker.get(ord_key, 0) + 1
-                registros_a_insertar.append((nt, itin, "LV", orden_tracker[ord_key], est, hr))
+                    registros_a_insertar.append((nt, itin, "LV", orden_tracker[ord_key], est, hr))
 
         insertados = 0
         with self.db.write_transaction() as conn:

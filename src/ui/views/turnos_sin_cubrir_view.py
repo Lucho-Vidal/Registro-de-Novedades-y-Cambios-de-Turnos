@@ -84,6 +84,15 @@ class TurnosSinCubrirView(QWidget):
         self.combo_dot.currentIndexChanged.connect(self.consultar)
         bar.addWidget(self.combo_dot)
 
+        bar.addWidget(QLabel("Especialidad:"))
+        self.combo_esp = QComboBox()
+        self.combo_esp.addItem("Todas")
+        from src.core.config import ESPECIALIDADES_EMPLEADO
+        for esp in ESPECIALIDADES_EMPLEADO:
+            self.combo_esp.addItem(esp)
+        self.combo_esp.currentIndexChanged.connect(self.consultar)
+        bar.addWidget(self.combo_esp)
+
         self.btn_consultar = QPushButton("🔍 Actualizar")
         self.btn_consultar.clicked.connect(self.consultar)
         bar.addWidget(self.btn_consultar)
@@ -175,8 +184,9 @@ class TurnosSinCubrirView(QWidget):
     def consultar(self) -> None:
         f_str = self.date_picker.date().toString("dd/MM/yyyy")
         dot = self.combo_dot.currentText()
+        esp = self.combo_esp.currentText() if hasattr(self, "combo_esp") else "Todas"
         try:
-            descubiertos = self.records_service.obtener_turnos_sin_cubrir(f_str, dotacion=dot)
+            descubiertos = self.records_service.obtener_turnos_sin_cubrir(f_str, dotacion=dot, especialidad=esp)
             self.model.set_data(descubiertos)
             self._actualizar_conteo()
         except Exception as e:

@@ -38,6 +38,11 @@ class NovedadesCambiosView(QWidget):
 
         self._init_ui()
 
+    def _can(self, perm: str) -> bool:
+        if self.tiene_permiso_fn:
+            return bool(self.tiene_permiso_fn(perm))
+        return True
+
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -47,49 +52,52 @@ class NovedadesCambiosView(QWidget):
         self.subtabs.setDocumentMode(True)
 
         # 1. Novedades Operativas
-        self.tab_novedades = NovedadesView(
-            self.records_service,
-            self.excel_service,
-            self.pdf_service,
-            usuario_actual=self.usuario_actual,
-            tiene_permiso_fn=self.tiene_permiso_fn,
-            parent=self,
-        )
-        self.tab_novedades.registro_modificado.connect(self.registro_modificado.emit)
-        self.subtabs.addTab(self.tab_novedades, "📋 Novedades Operativas")
+        if self._can("novedades.ver"):
+            self.tab_novedades = NovedadesView(
+                self.records_service,
+                self.excel_service,
+                self.pdf_service,
+                usuario_actual=self.usuario_actual,
+                tiene_permiso_fn=self.tiene_permiso_fn,
+                parent=self,
+            )
+            self.tab_novedades.registro_modificado.connect(self.registro_modificado.emit)
+            self.subtabs.addTab(self.tab_novedades, "📋 Novedades Operativas")
 
         # 2. Cambios de Turno
-        self.tab_cambios = CambiosTurnoView(
-            self.records_service,
-            self.excel_service,
-            self.pdf_service,
-            self.word_service,
-            usuario_actual=self.usuario_actual,
-            tiene_permiso_fn=self.tiene_permiso_fn,
-            parent=self,
-        )
-        self.tab_cambios.registro_modificado.connect(self.registro_modificado.emit)
-        self.subtabs.addTab(self.tab_cambios, "🔄 Cambios de Turno")
+        if self._can("cambios_turno.ver"):
+            self.tab_cambios = CambiosTurnoView(
+                self.records_service,
+                self.excel_service,
+                self.pdf_service,
+                self.word_service,
+                usuario_actual=self.usuario_actual,
+                tiene_permiso_fn=self.tiene_permiso_fn,
+                parent=self,
+            )
+            self.tab_cambios.registro_modificado.connect(self.registro_modificado.emit)
+            self.subtabs.addTab(self.tab_cambios, "🔄 Cambios de Turno")
 
         # 3. Ordenamientos Operativos
-        self.tab_ordenamientos = OrdenamientosView(
-            self.records_service,
-            self.excel_service,
-            self.pdf_service,
-            usuario_actual=self.usuario_actual,
-            tiene_permiso_fn=self.tiene_permiso_fn,
-            parent=self,
-        )
-        self.tab_ordenamientos.registro_modificado.connect(self.registro_modificado.emit)
-        self.subtabs.addTab(self.tab_ordenamientos, "📄 Ordenamientos")
+        if self._can("ordenamientos.ver"):
+            self.tab_ordenamientos = OrdenamientosView(
+                self.records_service,
+                self.excel_service,
+                self.pdf_service,
+                usuario_actual=self.usuario_actual,
+                tiene_permiso_fn=self.tiene_permiso_fn,
+                parent=self,
+            )
+            self.tab_ordenamientos.registro_modificado.connect(self.registro_modificado.emit)
+            self.subtabs.addTab(self.tab_ordenamientos, "📄 Ordenamientos")
 
         layout.addWidget(self.subtabs)
 
     def recargar_datos(self) -> None:
         """Refresca los datos en todas las sub-pestañas."""
-        if hasattr(self, "tab_novedades"):
+        if hasattr(self, "tab_novedades") and self.tab_novedades:
             self.tab_novedades.recargar_datos()
-        if hasattr(self, "tab_cambios"):
+        if hasattr(self, "tab_cambios") and self.tab_cambios:
             self.tab_cambios.recargar_datos()
-        if hasattr(self, "tab_ordenamientos"):
+        if hasattr(self, "tab_ordenamientos") and self.tab_ordenamientos:
             self.tab_ordenamientos.recargar_datos()

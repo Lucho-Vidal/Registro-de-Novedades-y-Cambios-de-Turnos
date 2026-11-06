@@ -932,3 +932,110 @@ class ExcelService:
 
         wb.save(out_file)
         return str(out_file)
+
+
+    def export_auditoria(
+        self,
+        file_path: str | Path,
+        logs: List[Dict[str, Any]],
+        filtro_aplicado: str = "",
+    ) -> str:
+        """Exporta los logs de trazabilidad y auditoría a una planilla Excel (.xlsx)."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Auditoría del Sistema"
+        ws.views.sheetView[0].showGridLines = True
+
+        # Título
+        ws.merge_cells("A1:H1")
+        title_cell = ws["A1"]
+        title_cell.value = "REGISTRO DE TRAZABILIDAD Y AUDITORÍA DEL SISTEMA - RENO"
+        title_cell.font = Font(name="Segoe UI", size=14, bold=True, color="FFFFFF")
+        title_cell.fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 36
+
+        # Subtítulo con metadata
+        now_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        sub_text = f"Generado el: {now_str} | Total registros: {len(logs)}"
+        if filtro_aplicado:
+            sub_text += f" | Filtro: '{filtro_aplicado}'"
+        ws.merge_cells("A2:H2")
+        sub_cell = ws["A2"]
+        sub_cell.value = sub_text
+        sub_cell.font = Font(name="Segoe UI", size=9, italic=True, color="475569")
+        sub_cell.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        sub_cell.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[2].height = 20
+
+        headers = [
+            "ID", "FECHA Y HORA", "USUARIO", "ACCIÓN",
+            "ENTIDAD", "ID REGISTRO", "DATOS ANTERIORES", "DATOS NUEVOS",
+        ]
+        keys = [
+            "id", "creado_en", "usuario", "accion",
+            "entidad", "entidad_id", "datos_anteriores", "datos_nuevos",
+        ]
+
+        # Encabezados
+        for col_idx, h in enumerate(headers, 1):
+            c = ws.cell(row=3, column=col_idx, value=h)
+            c.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+            c.fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c.border = Border(
+                top=Side(style="thin", color="1E3A8A"),
+                bottom=Side(style="medium", color="1E3A8A"),
+                left=Side(style="thin", color="CBD5E1"),
+                right=Side(style="thin", color="CBD5E1"),
+            )
+        ws.row_dimensions[3].height = 24
+
+        thin_border = Border(
+            top=Side(style="thin", color="E2E8F0"),
+            bottom=Side(style="thin", color="E2E8F0"),
+            left=Side(style="thin", color="E2E8F0"),
+            right=Side(style="thin", color="E2E8F0"),
+        )
+        zebra_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+
+        for r_idx, log in enumerate(logs, start=4):
+            fill = zebra_fill if r_idx % 2 == 0 else PatternFill(fill_type=None)
+            for c_idx, k in enumerate(keys, start=1):
+                val = log.get(k)
+                if val is None:
+                    val = ""
+                cell = ws.cell(row=r_idx, column=c_idx, value=str(val))
+                cell.font = Font(name="Segoe UI", size=9)
+                cell.border = thin_border
+                cell.fill = fill
+                if k in ("id", "entidad_id"):
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                elif k in ("creado_en", "usuario", "accion", "entidad"):
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                if cell.row in (1, 2):
+                    continue
+                v_str = str(cell.value or "")
+                if "\n" in v_str:
+                    lines = v_str.split("\n")
+                    max_len = max(max_len, max(len(l) for l in lines))
+                else:
+                    max_len = max(max_len, len(v_str))
+            ws.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 60)
+
+        ws.column_dimensions["A"].width = 8
+        ws.column_dimensions["B"].width = 19
+        ws.column_dimensions["C"].width = 16
+        ws.column_dimensions["D"].width = 14
+        ws.column_dimensions["E"].width = 18
+        ws.column_dimensions["F"].width = 12
+
+        wb.save(file_path)
+        return str(file_path)

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTableView,
@@ -107,7 +108,12 @@ class AsignarJornadaDialog(QDialog):
         form.addWidget(self.time_deja, 5, 1)
 
         form.addWidget(QLabel("Observaciones:"), 6, 0)
-        self.txt_obs = QLineEdit()
+        self.txt_obs = QPlainTextEdit()
+        self.txt_obs.setMaximumHeight(75)
+        self.txt_obs.setPlaceholderText("Observaciones o notas sobre la jornada...")
+        # Aliases de compatibilidad
+        self.txt_obs.setText = self.txt_obs.setPlainText  # type: ignore
+        self.txt_obs.text = self.txt_obs.toPlainText  # type: ignore
         form.addWidget(self.txt_obs, 6, 1)
 
         self.chk_fa.toggled.connect(self._on_fa_toggled)
@@ -125,7 +131,7 @@ class AsignarJornadaDialog(QDialog):
                 if d.isValid():
                     self.time_deja.setTime(d)
             if jornada_existente.get("observaciones"):
-                self.txt_obs.setText(str(jornada_existente["observaciones"]))
+                self.txt_obs.setPlainText(str(jornada_existente["observaciones"]))
 
         # Botones
         btn_layout = QHBoxLayout()
@@ -168,7 +174,7 @@ class AsignarJornadaDialog(QDialog):
 
             if res.get("es_franco"):
                 self.chk_fa.setChecked(True)
-                self.txt_obs.setText(f"Turno {base} - FRANCO")
+                self.txt_obs.setPlainText(f"Turno {base} - FRANCO")
                 QMessageBox.information(
                     self,
                     "Franco Detectado",
@@ -188,7 +194,7 @@ class AsignarJornadaDialog(QDialog):
                 detalles = f"Turno {res.get('codigo_turno')}"
                 if res.get("deposito"):
                     detalles += f" ({res['deposito']})"
-                self.txt_obs.setText(detalles)
+                self.txt_obs.setPlainText(detalles)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Fallo al resolver turno itinerario:\n{e}")
 
@@ -200,7 +206,7 @@ class AsignarJornadaDialog(QDialog):
         fa = 1 if self.chk_fa.isChecked() else 0
         toma = self.time_toma.time().toString("HH:mm") if not fa else ""
         deja = self.time_deja.time().toString("HH:mm") if not fa else ""
-        obs = self.txt_obs.text().strip()
+        obs = self.txt_obs.toPlainText().strip()
 
         self.datos_resultado = {
             "toma": toma,
@@ -352,7 +358,9 @@ class CalendarioCicloDialog(QDialog):
             estado = str(row_item.get("estado", ""))
             from src.core.theme import obtener_tema_visual
             es_oscuro = obtener_tema_visual() == "oscuro"
-            if "Franco" in estado:
+            if "Novedad" in estado:
+                return (QColor("#3D1B1B"), QColor("#FCA5A5")) if es_oscuro else (QColor("#FFEBEE"), QColor("#B71C1C"))
+            elif "Franco" in estado:
                 return (QColor("#3D3214"), QColor("#FCD34D")) if es_oscuro else (QColor("#FFF9C4"), QColor("#B78103"))
             elif "Reemplazando" in estado or "Relevo" in estado:
                 return (QColor("#132E1F"), QColor("#6EE7B7")) if es_oscuro else (QColor("#E8F5E9"), QColor("#2E7D32"))

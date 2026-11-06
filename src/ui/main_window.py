@@ -270,7 +270,7 @@ class MainWindow(QMainWindow):
 
             if self._tiene_permiso("auditoria.ver"):
                 act_aud = menu_admin.addAction("📜 Trazabilidad y Auditoría")
-                act_aud.triggered.connect(lambda: AdminAuditoriaDialog(self.records_service, parent=self).exec())
+                act_aud.triggered.connect(lambda: AdminAuditoriaDialog(self.records_service, excel_service=self.excel_service, parent=self).exec())
 
         # Menú de Nuevos Registros
         self.menu_nuevos = menubar.addMenu("🔔 Registros Nuevos (0)")
@@ -315,17 +315,22 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tab_dashboard, "📈 Panel de Control")
 
         # 2. Buscador de Turnos e Itinerarios
-        self.tab_buscador_turnos = BuscadorTurnosView(
-            self.records_service,
-            self.excel_service,
-            usuario_actual=self.usuario_actual,
-            tiene_permiso_fn=self._tiene_permiso,
-            parent=self,
-        )
-        self.tabs.addTab(self.tab_buscador_turnos, "🔍 Buscador de Turnos")
+        if self._tiene_permiso("turnos.ver"):
+            self.tab_buscador_turnos = BuscadorTurnosView(
+                self.records_service,
+                self.excel_service,
+                usuario_actual=self.usuario_actual,
+                tiene_permiso_fn=self._tiene_permiso,
+                parent=self,
+            )
+            self.tabs.addTab(self.tab_buscador_turnos, "🔍 Buscador de Turnos")
 
         # 3. Novedades y Cambios de Turno (Sub-pestañas unificadas)
-        if self._tiene_permiso("novedades.ver") or self._tiene_permiso("cambios_turno.ver"):
+        if (
+            self._tiene_permiso("novedades.ver")
+            or self._tiene_permiso("cambios_turno.ver")
+            or self._tiene_permiso("ordenamientos.ver")
+        ):
             self.tab_novedades_cambios = NovedadesCambiosView(
                 self.records_service,
                 self.excel_service,
