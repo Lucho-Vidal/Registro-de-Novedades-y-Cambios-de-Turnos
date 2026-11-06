@@ -7,6 +7,9 @@ from .enums import (
     ModoEdicionNovedad,
     PERMISOS_BASE,
     PERMISOS_GRUPOS,
+    PERMISOS_METADATA,
+    ESTRUCTURA_PERMISOS_PESTANAS,
+    DEFINICIONES_ACCIONES,
     ACCIONES_PERMISO,
 )
 from .models import (

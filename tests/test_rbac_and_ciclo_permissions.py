@@ -181,3 +181,106 @@ def test_personal_ciclo_view_proteccion_drag_drop(qapp, tmp_path: Path):
 
     assert view._can("reemplazos.asignar") is False
     assert view._can("reemplazos.ver") is True
+
+
+def test_permisos_metadata_and_structure_completeness():
+    """Valida que todos los permisos de PERMISOS_BASE estén presentes en metadatos y estructura jerárquica."""
+    from src.domain.enums import (
+        PERMISOS_BASE,
+        PERMISOS_METADATA,
+        ESTRUCTURA_PERMISOS_PESTANAS,
+        DEFINICIONES_ACCIONES,
+    )
+
+    # 1. Todos los permisos base deben tener metadatos descriptivos completos
+    for code in PERMISOS_BASE:
+        assert code in PERMISOS_METADATA, f"El permiso {code} no tiene metadatos en PERMISOS_METADATA"
+        meta = PERMISOS_METADATA[code]
+        assert meta["codigo"] == code
+        assert len(meta["accion"]) > 0
+        assert len(meta["titulo"]) > 0
+        assert len(meta["pestana"]) > 0
+        assert len(meta["subpestana"]) > 0
+        assert len(meta["descripcion"]) > 10
+
+    # 2. Las definiciones pedagógicas de acciones deben cubrir las acciones clave
+    acciones_clave = ["Ver (Lectura)", "Crear", "Editar", "Eliminar", "Exportar", "Importar", "Administrar", "Supervisión Irrestricta"]
+    for acc in acciones_clave:
+        assert acc in DEFINICIONES_ACCIONES, f"Falta la definición para la acción {acc}"
+
+    # 3. La estructura de pestañas y subpestañas debe contener todos los permisos base
+    permisos_en_estructura = set()
+    for tab_info in ESTRUCTURA_PERMISOS_PESTANAS:
+        assert "pestana" in tab_info
+        for subgrupo in tab_info["subgrupos"]:
+            assert "subpestana" in subgrupo
+            assert "descripcion" in subgrupo
+            for code in subgrupo["permisos"]:
+                permisos_en_estructura.add(code)
+
+    for code in PERMISOS_BASE:
+        assert code in permisos_en_estructura, f"El permiso {code} no está mapeado en ESTRUCTURA_PERMISOS_PESTANAS"
+
+
+def test_admin_roles_widget_pestanas_subpestanas_y_acciones(qapp, tmp_path: Path):
+    """Verifica que el panel de administración de roles agrupe permisos por pestaña/subpestaña y brinde acciones rápidas."""
+    from src.domain.enums import PERMISOS_BASE
+    from src.ui.views.dialogs.admin_dialogs import AdminRolesWidget
+
+    db = DatabaseManager(tmp_path / "test_roles_widget.sqlite")
+    init_database_schema(db)
+    auth_srv = AuthService(db)
+    auth_srv.inicializar_permisos(PERMISOS_BASE)
+
+    # Crear rol operador
+    op_rol_id = auth_srv.crear_rol("Operador")
+    auth_srv.establecer_permisos_rol(op_rol_id, ["novedades.ver", "turnos.ver"])
+
+    widget = AdminRolesWidget(auth_srv)
+
+    # 1. Verificar que se hayan creado checkboxes para TODOS los permisos base
+    assert len(widget._checkboxes_permisos) == len(PERMISOS_BASE)
+    for code in PERMISOS_BASE:
+        assert code in widget._checkboxes_permisos
+        chk = widget._checkboxes_permisos[code]
+        tooltip = chk.toolTip()
+        assert code in tooltip
+        assert "Nivel de Acción:" in tooltip
+        assert "Pestaña:" in tooltip
+
+    # 2. Seleccionar el rol Operador y verificar checkboxes activos
+    widget.rol_seleccionado_id = op_rol_id
+    permisos_op = set(auth_srv.permisos_de_rol(op_rol_id))
+    for code, chk in widget._checkboxes_permisos.items():
+        chk.setChecked(code in permisos_op)
+
+    assert widget._checkboxes_permisos["novedades.ver"].isChecked() is True
+    assert widget._checkboxes_permisos["turnos.ver"].isChecked() is True
+    assert widget._checkboxes_permisos["usuarios.administrar"].isChecked() is False
+
+    # 3. Probar botón "Marcar Todos"
+    widget._marcar_todos(True)
+    assert all(chk.isChecked() for chk in widget._checkboxes_permisos.values())
+
+    # 4. Probar botón "Desmarcar Todos"
+    widget._marcar_todos(False)
+    assert not any(chk.isChecked() for chk in widget._checkboxes_permisos.values())
+
+    # 5. Probar botón "Solo Lectura (Ver y Exportar)"
+    widget._marcar_solo_lectura()
+    for code, chk in widget._checkboxes_permisos.items():
+        if code.endswith(".ver") or code.endswith(".exportar"):
+            assert chk.isChecked() is True, f"Se esperaba checked para {code}"
+        else:
+            assert chk.isChecked() is False, f"Se esperaba uncheck para {code}"
+
+    # 6. Probar marcar/desmarcar subgrupo
+    codigos_novedades = ["novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar"]
+    widget._set_grupo_checked(codigos_novedades, True)
+    for code in codigos_novedades:
+        assert widget._checkboxes_permisos[code].isChecked() is True
+
+    widget._set_grupo_checked(codigos_novedades, False)
+    for code in codigos_novedades:
+        assert widget._checkboxes_permisos[code].isChecked() is False
+

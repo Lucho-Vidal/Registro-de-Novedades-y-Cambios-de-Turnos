@@ -53,7 +53,12 @@ from src.core.proxy import (
     detectar_proxy_sistema,
     probar_conexion_supabase,
 )
-from src.domain.enums import PERMISOS_BASE
+from src.domain.enums import (
+    PERMISOS_BASE,
+    PERMISOS_METADATA,
+    ESTRUCTURA_PERMISOS_PESTANAS,
+    DEFINICIONES_ACCIONES,
+)
 from src.services.auth_service import AuthService
 from src.services.backup_service import BackupService
 from src.services.excel_service import ExcelService
@@ -468,16 +473,69 @@ class AdminRolesWidget(QWidget):
         # Panel derecho: Matriz de permisos
         right_widget = QWidget()
         lay_right = QVBoxLayout(right_widget)
-        lay_right.setContentsMargins(0, 0, 0, 0)
+        lay_right.setContentsMargins(4, 0, 0, 0)
+        lay_right.setSpacing(6)
 
         self.lbl_rol_activo = QLabel("<b>Seleccione un rol para editar sus permisos</b>")
         self.lbl_rol_activo.setStyleSheet("color: #1F497D; font-size: 11pt;")
         lay_right.addWidget(self.lbl_rol_activo)
 
+        # Banner explicativo de acciones RBAC
+        card_guia = QFrame()
+        card_guia.setStyleSheet(
+            "QFrame { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 6px; }"
+        )
+        lay_guia = QVBoxLayout(card_guia)
+        lay_guia.setContentsMargins(8, 6, 8, 6)
+        lay_guia.setSpacing(3)
+        lbl_guia_title = QLabel("<b>💡 Guía de Acciones y Niveles de Acceso (RBAC):</b>")
+        lbl_guia_title.setStyleSheet("color: #0F172A; font-size: 9.5pt;")
+        lay_guia.addWidget(lbl_guia_title)
+
+        txt_explicativo = (
+            "<div style='font-size: 8.5pt; line-height: 1.35; color: #334155;'>"
+            "• <b>👁️ Ver / Leer:</b> Acceso de solo lectura para consultar datos, diagramas y filtros sin modificar.<br>"
+            "• <b>➕ Crear:</b> Habilita los botones de alta ('+ Nuevo') y formularios para ingresar nuevos registros.<br>"
+            "• <b>✏️ Editar:</b> Permite modificar datos existentes dentro de las ventanas temporales autorizadas (24h/72h).<br>"
+            "• <b>🗑️ Eliminar:</b> Permite anular o enviar registros a la papelera dentro del límite temporal permitido.<br>"
+            "• <b>📊 Exportar / 📥 Importar:</b> Generación y descarga de archivos (Excel, PDF, Word) o carga masiva.<br>"
+            "• <b>⚙️ Administrar:</b> <u>Control integral y estructural del módulo</u>. A diferencia de Ver/Crear/Editar, quien "
+            "administra gestiona configuraciones maestras, catálogos (dotaciones, tipos), asigna roles o reactiva registros.<br>"
+            "• <b>⚡ Supervisión Irrestricta (<code>registros.modificar</code>):</b> Permiso exclusivo que ignora los límites "
+            "de 24h / 72h para editar o anular registros históricos."
+            "</div>"
+        )
+        lbl_guia_desc = QLabel(txt_explicativo)
+        lbl_guia_desc.setWordWrap(True)
+        lay_guia.addWidget(lbl_guia_desc)
+        lay_right.addWidget(card_guia)
+
+        # Barra de selección rápida de permisos
+        bar_quick = QHBoxLayout()
+        self.btn_marcar_todos = QPushButton("☑️ Marcar Todos")
+        self.btn_marcar_todos.setEnabled(False)
+        self.btn_marcar_todos.clicked.connect(lambda: self._marcar_todos(True))
+        bar_quick.addWidget(self.btn_marcar_todos)
+
+        self.btn_desmarcar_todos = QPushButton("⬜ Desmarcar Todos")
+        self.btn_desmarcar_todos.setEnabled(False)
+        self.btn_desmarcar_todos.clicked.connect(lambda: self._marcar_todos(False))
+        bar_quick.addWidget(self.btn_desmarcar_todos)
+
+        self.btn_solo_lectura = QPushButton("👁️ Solo Lectura (Ver y Exportar)")
+        self.btn_solo_lectura.setEnabled(False)
+        self.btn_solo_lectura.clicked.connect(self._marcar_solo_lectura)
+        bar_quick.addWidget(self.btn_solo_lectura)
+
+        bar_quick.addStretch()
+        lay_right.addLayout(bar_quick)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         self.permisos_container = QWidget()
         self.permisos_layout = QVBoxLayout(self.permisos_container)
+        self.permisos_layout.setContentsMargins(4, 4, 4, 4)
+        self.permisos_layout.setSpacing(10)
         scroll.setWidget(self.permisos_container)
         lay_right.addWidget(scroll)
 
@@ -501,47 +559,93 @@ class AdminRolesWidget(QWidget):
         self.recargar_roles()
 
     def _cargar_permisos_ui(self) -> None:
-        grupos: Dict[str, List[str]] = {
-            "Novedades Operativas": [
-                "novedades.ver", "novedades.crear", "novedades.editar", "novedades.eliminar",
-                "novedades.importar", "novedades.exportar",
-            ],
-            "Cambios de Turno (Permutas)": [
-                "cambios_turno.ver", "cambios_turno.crear", "cambios_turno.editar", "cambios_turno.eliminar",
-                "cambios_turno.importar", "cambios_turno.exportar",
-            ],
-            "Personal de Ciclo y Reemplazos": [
-                "reemplazos.ver", "reemplazos.asignar",
-            ],
-            "Turnos e Itinerarios": [
-                "turnos.ver", "turnos.crear", "turnos.editar", "turnos.eliminar", "turnos.administrar",
-            ],
-            "Catálogos y Empleados": [
-                "empleados.administrar", "empleados.importar", "dotaciones.administrar",
-                "tiposNovedad.administrar", "personalEstacion.ver", "personalEstacion.crear",
-                "personalEstacion.editar", "personalEstacion.importar", "personalEstacion.exportar",
-            ],
-            "Administración General y Seguridad": [
-                "usuarios.administrar", "roles.administrar", "auditoria.ver", "sesion.configurar",
-                "registros.recuperar", "registros.modificar", "backup.gestionar",
-                "destinatarios_informe.administrar", "destinatarios_ordenamiento.administrar",
-            ],
-        }
+        for tab_info in ESTRUCTURA_PERMISOS_PESTANAS:
+            grp_pestana = QGroupBox(tab_info["pestana"])
+            grp_pestana.setStyleSheet(
+                "QGroupBox { font-weight: bold; font-size: 10pt; color: #1E3A8A; "
+                "border: 1px solid #CBD5E1; border-radius: 6px; margin-top: 10px; padding-top: 10px; }"
+                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
+            )
+            lay_tab = QVBoxLayout(grp_pestana)
+            lay_tab.setContentsMargins(10, 10, 10, 10)
+            lay_tab.setSpacing(10)
 
-        for grupo_nombre, perm_list in grupos.items():
-            grp = QGroupBox(grupo_nombre)
-            grid = QGridLayout(grp)
-            col = 0
-            row = 0
-            for code in perm_list:
-                chk = QCheckBox(code)
-                self._checkboxes_permisos[code] = chk
-                grid.addWidget(chk, row, col)
-                col += 1
-                if col > 1:
-                    col = 0
-                    row += 1
-            self.permisos_layout.addWidget(grp)
+            for subgrupo in tab_info["subgrupos"]:
+                sub_widget = QWidget()
+                lay_sub = QVBoxLayout(sub_widget)
+                lay_sub.setContentsMargins(0, 0, 0, 0)
+                lay_sub.setSpacing(4)
+
+                # Encabezado del subgrupo con descripción
+                header_box = QHBoxLayout()
+                lbl_sub = QLabel(
+                    f"<span style='color: #0F172A; font-weight: bold; font-size: 9.5pt;'>{subgrupo['subpestana']}</span>"
+                    f" &nbsp;<span style='color: #64748B; font-size: 8pt;'>({subgrupo['descripcion']})</span>"
+                )
+                header_box.addWidget(lbl_sub, 1)
+
+                # Acciones rápidas del subgrupo
+                perm_codes = list(subgrupo["permisos"])
+                btn_grp_on = QPushButton("Marcar grupo")
+                btn_grp_on.setObjectName("btnLink")
+                btn_grp_on.setStyleSheet("font-size: 8pt; padding: 1px 4px; color: #2563EB;")
+                btn_grp_on.clicked.connect(lambda _, codes=perm_codes: self._set_grupo_checked(codes, True))
+                header_box.addWidget(btn_grp_on)
+
+                btn_grp_off = QPushButton("Desmarcar")
+                btn_grp_off.setObjectName("btnLink")
+                btn_grp_off.setStyleSheet("font-size: 8pt; padding: 1px 4px; color: #64748B;")
+                btn_grp_off.clicked.connect(lambda _, codes=perm_codes: self._set_grupo_checked(codes, False))
+                header_box.addWidget(btn_grp_off)
+
+                lay_sub.addLayout(header_box)
+
+                # Grilla de checkboxes para este subgrupo
+                grid = QGridLayout()
+                grid.setContentsMargins(4, 2, 4, 6)
+                grid.setHorizontalSpacing(14)
+                grid.setVerticalSpacing(4)
+
+                col = 0
+                row = 0
+                for code in perm_codes:
+                    meta = PERMISOS_METADATA.get(code, {})
+                    accion = meta.get("accion", "Acción")
+                    titulo = meta.get("titulo", code)
+                    chk_text = f"[{accion}] {titulo}  ({code})"
+                    chk = QCheckBox(chk_text)
+
+                    # Distinción visual según tipo de permiso
+                    if code == "registros.modificar":
+                        chk.setStyleSheet("QCheckBox { font-weight: bold; color: #B91C1C; }")
+                    elif "administrar" in code:
+                        chk.setStyleSheet("QCheckBox { font-weight: bold; color: #047857; }")
+                    elif "exportar" in code or "ver" in code:
+                        chk.setStyleSheet("QCheckBox { color: #1E293B; }")
+
+                    # Tooltip informativo y pedagógico
+                    tooltip = (
+                        f"<b>Permiso:</b> <code>{code}</code><br>"
+                        f"<b>Nivel de Acción:</b> {accion}<br>"
+                        f"<b>Pestaña:</b> {meta.get('pestana', '')}<br>"
+                        f"<b>Subpestaña:</b> {meta.get('subpestana', '')}<br><br>"
+                        f"<b>Descripción funcional:</b><br>{meta.get('descripcion', '')}"
+                    )
+                    chk.setToolTip(tooltip)
+
+                    self._checkboxes_permisos[code] = chk
+                    grid.addWidget(chk, row, col)
+                    col += 1
+                    if col > 1:
+                        col = 0
+                        row += 1
+
+                lay_sub.addLayout(grid)
+                lay_tab.addWidget(sub_widget)
+
+            self.permisos_layout.addWidget(grp_pestana)
+
+        self.permisos_layout.addStretch()
 
     def recargar_roles(self) -> None:
         roles = self.auth_service.listar_roles()
@@ -554,6 +658,9 @@ class AdminRolesWidget(QWidget):
         sel = self.tabla_roles.selectedItems()
         if not sel:
             self.btn_guardar_permisos.setEnabled(False)
+            self.btn_marcar_todos.setEnabled(False)
+            self.btn_desmarcar_todos.setEnabled(False)
+            self.btn_solo_lectura.setEnabled(False)
             return
 
         row = sel[0].row()
@@ -563,10 +670,28 @@ class AdminRolesWidget(QWidget):
         self.rol_seleccionado_id = r_id
         self.lbl_rol_activo.setText(f"<b>Permisos asignados al rol: {r_nom}</b>")
         self.btn_guardar_permisos.setEnabled(True)
+        self.btn_marcar_todos.setEnabled(True)
+        self.btn_desmarcar_todos.setEnabled(True)
+        self.btn_solo_lectura.setEnabled(True)
 
         permisos_actuales = set(self.auth_service.permisos_de_rol(r_id))
         for code, chk in self._checkboxes_permisos.items():
             chk.setChecked(code in permisos_actuales)
+
+    def _marcar_todos(self, checked: bool) -> None:
+        for chk in self._checkboxes_permisos.values():
+            chk.setChecked(checked)
+
+    def _marcar_solo_lectura(self) -> None:
+        for code, chk in self._checkboxes_permisos.items():
+            es_lectura = code.endswith(".ver") or code.endswith(".exportar")
+            chk.setChecked(es_lectura)
+
+    def _set_grupo_checked(self, codes: List[str], checked: bool) -> None:
+        for code in codes:
+            chk = self._checkboxes_permisos.get(code)
+            if chk:
+                chk.setChecked(checked)
 
     def _crear_rol(self) -> None:
         nom = self.txt_nuevo_rol.text().strip()
