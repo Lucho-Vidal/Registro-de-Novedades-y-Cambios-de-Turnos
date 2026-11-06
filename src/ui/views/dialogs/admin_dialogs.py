@@ -1792,29 +1792,41 @@ class AdminConfigWidget(QWidget):
 
         card_gen = QFrame()
         card_gen.setObjectName("cardFrame")
-        card_gen.setMaximumWidth(580)
+        card_gen.setMaximumWidth(620)
         lay_card_gen = QVBoxLayout(card_gen)
         lay_card_gen.setContentsMargins(15, 15, 15, 15)
-        lay_card_gen.setSpacing(12)
+        lay_card_gen.setSpacing(14)
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignLeft)
-        form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
-
-        # Ubicación persistente de la Base de Datos SQLite
+        # 1. Grupo Ubicación persistente de la Base de Datos SQLite
         from src.core.config import obtener_ruta_base_datos, guardar_ruta_base_datos
         sqlite_actual, _ = obtener_ruta_base_datos()
 
-        box_db = QHBoxLayout()
+        grp_db = QGroupBox("Base de Datos SQLite (Ubicación Persistente)")
+        lay_db = QVBoxLayout(grp_db)
+        lay_db.setSpacing(6)
+
+        lbl_info_db = QLabel("Ruta del archivo de base de datos (.sqlite):")
+        lbl_info_db.setStyleSheet("color: #64748B; font-size: 8.5pt;")
+        lay_db.addWidget(lbl_info_db)
+
+        bar_db = QHBoxLayout()
         self.txt_db_path = QLineEdit(str(sqlite_actual))
         self.txt_db_path.setReadOnly(True)
-        self.txt_db_path.setMinimumWidth(280)
+        self.txt_db_path.setPlaceholderText("Ruta del archivo RENO.sqlite...")
         self.btn_cambiar_db = QPushButton("📂 Examinar...")
         self.btn_cambiar_db.setObjectName("btnSecondary")
+        self.btn_cambiar_db.setFixedWidth(110)
         self.btn_cambiar_db.clicked.connect(self._examinar_base_datos)
-        box_db.addWidget(self.txt_db_path, 1)
-        box_db.addWidget(self.btn_cambiar_db)
-        form.addRow("Ruta Base de Datos SQLite:", box_db)
+        bar_db.addWidget(self.txt_db_path, 1)
+        bar_db.addWidget(self.btn_cambiar_db)
+        lay_db.addLayout(bar_db)
+
+        lay_card_gen.addWidget(grp_db)
+
+        # 2. Parámetros Operativos
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 
         # Ventanas
         self.spin_edit = QSpinBox()
