@@ -280,7 +280,7 @@ QGroupBox::title {
     background-color: #1E1E2E;
 }
 
-QFrame#cardFrame, QFrame#filterBar, QFrame#filterFrame, QFrame#headerFrame {
+QFrame#cardFrame, QFrame#filterBar, QFrame#filterFrame, QFrame#headerFrame, QFrame#cardGuia {
     background-color: #242436;
     border: 1px solid #3E3E55;
     border-radius: 6px;

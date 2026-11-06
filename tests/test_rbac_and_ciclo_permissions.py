@@ -284,3 +284,61 @@ def test_admin_roles_widget_pestanas_subpestanas_y_acciones(qapp, tmp_path: Path
     for code in codigos_novedades:
         assert widget._checkboxes_permisos[code].isChecked() is False
 
+
+def test_admin_roles_widget_contraste_y_cambio_tema(qapp, tmp_path: Path):
+    """Verifica que AdminRolesWidget alterne perfectamente entre tema claro y tema oscuro con alto contraste."""
+    from src.domain.enums import PERMISOS_BASE
+    from src.ui.views.dialogs.admin_dialogs import AdminRolesWidget
+    from src.ui.views.administracion_view import AdministracionView
+    from src.services.backup_service import BackupService
+
+    db = DatabaseManager(tmp_path / "test_roles_theme.sqlite")
+    init_database_schema(db)
+    auth_srv = AuthService(db)
+    auth_srv.inicializar_permisos(PERMISOS_BASE)
+
+    widget = AdminRolesWidget(auth_srv)
+
+    # 1. Probar aplicación explícita de tema oscuro
+    widget.actualizar_tema("oscuro")
+    assert "#242436" in widget.card_guia.styleSheet()
+    assert "#3E3E55" in widget.card_guia.styleSheet()
+    assert "#60A5FA" in widget.lbl_guia_title.styleSheet()
+    assert "#E2E8F0" in widget.lbl_guia_desc.text()
+    assert "#2A2A3C" in widget.btn_marcar_todos.styleSheet()
+    assert "#F1F5F9" in widget.btn_marcar_todos.styleSheet()
+
+    # Verificar alto contraste en checkboxes en modo oscuro
+    assert "#F87171" in widget._checkboxes_permisos["registros.modificar"].styleSheet()
+    assert "#34D399" in widget._checkboxes_permisos["usuarios.administrar"].styleSheet()
+    assert "#F1F5F9" in widget._checkboxes_permisos["turnos.ver"].styleSheet()
+
+    # 2. Probar aplicación de tema claro
+    widget.actualizar_tema("claro")
+    assert "#F8FAFC" in widget.card_guia.styleSheet()
+    assert "#CBD5E1" in widget.card_guia.styleSheet()
+    assert "#1E3A8A" in widget.lbl_guia_title.styleSheet()
+    assert "#334155" in widget.lbl_guia_desc.text()
+    assert "#FFFFFF" in widget.btn_marcar_todos.styleSheet()
+    assert "#0F172A" in widget.btn_marcar_todos.styleSheet()
+
+    # Verificar colores de modo claro
+    assert "#B91C1C" in widget._checkboxes_permisos["registros.modificar"].styleSheet()
+    assert "#047857" in widget._checkboxes_permisos["usuarios.administrar"].styleSheet()
+    assert "#1E293B" in widget._checkboxes_permisos["turnos.ver"].styleSheet()
+
+    # 3. Probar propagación a través de AdministracionView
+    rec_srv = RecordsService(db)
+    bak_srv = BackupService(db)
+    excel_srv = ExcelService(db)
+    admin_view = AdministracionView(
+        auth_service=auth_srv,
+        records_service=rec_srv,
+        backup_service=bak_srv,
+        excel_service=excel_srv,
+        db=db,
+    )
+    admin_view.actualizar_tema("oscuro")
+    assert "#242436" in admin_view.widget_roles.card_guia.styleSheet()
+
+

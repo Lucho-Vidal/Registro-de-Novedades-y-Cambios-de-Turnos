@@ -53,6 +53,7 @@ from src.core.proxy import (
     detectar_proxy_sistema,
     probar_conexion_supabase,
 )
+from src.core.theme import TEMA_CLARO, TEMA_OSCURO, obtener_tema_visual
 from src.domain.enums import (
     PERMISOS_BASE,
     PERMISOS_METADATA,
@@ -437,6 +438,10 @@ class AdminRolesWidget(QWidget):
     def __init__(self, auth_service: AuthService, parent=None):
         super().__init__(parent)
         self.auth_service = auth_service
+        self._checkboxes_permisos: Dict[str, QCheckBox] = {}
+        self._group_boxes: List[QGroupBox] = []
+        self._subgrupo_items: List[Tuple[QLabel, str, str, QPushButton, QPushButton]] = []
+        self.rol_seleccionado_id: Optional[int] = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -477,52 +482,41 @@ class AdminRolesWidget(QWidget):
         lay_right.setSpacing(6)
 
         self.lbl_rol_activo = QLabel("<b>Seleccione un rol para editar sus permisos</b>")
-        self.lbl_rol_activo.setStyleSheet("color: #1F497D; font-size: 11pt;")
+        self.lbl_rol_activo.setObjectName("lblRolActivo")
         lay_right.addWidget(self.lbl_rol_activo)
 
         # Banner explicativo de acciones RBAC
-        card_guia = QFrame()
-        card_guia.setStyleSheet(
-            "QFrame { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 6px; }"
-        )
-        lay_guia = QVBoxLayout(card_guia)
-        lay_guia.setContentsMargins(8, 6, 8, 6)
-        lay_guia.setSpacing(3)
-        lbl_guia_title = QLabel("<b>💡 Guía de Acciones y Niveles de Acceso (RBAC):</b>")
-        lbl_guia_title.setStyleSheet("color: #0F172A; font-size: 9.5pt;")
-        lay_guia.addWidget(lbl_guia_title)
+        self.card_guia = QFrame()
+        self.card_guia.setObjectName("cardGuia")
+        lay_guia = QVBoxLayout(self.card_guia)
+        lay_guia.setContentsMargins(10, 8, 10, 8)
+        lay_guia.setSpacing(4)
+        self.lbl_guia_title = QLabel("<b>💡 Guía de Acciones y Niveles de Acceso (RBAC):</b>")
+        self.lbl_guia_title.setObjectName("lblGuiaTitle")
+        lay_guia.addWidget(self.lbl_guia_title)
 
-        txt_explicativo = (
-            "<div style='font-size: 8.5pt; line-height: 1.35; color: #334155;'>"
-            "• <b>👁️ Ver / Leer:</b> Acceso de solo lectura para consultar datos, diagramas y filtros sin modificar.<br>"
-            "• <b>➕ Crear:</b> Habilita los botones de alta ('+ Nuevo') y formularios para ingresar nuevos registros.<br>"
-            "• <b>✏️ Editar:</b> Permite modificar datos existentes dentro de las ventanas temporales autorizadas (24h/72h).<br>"
-            "• <b>🗑️ Eliminar:</b> Permite anular o enviar registros a la papelera dentro del límite temporal permitido.<br>"
-            "• <b>📊 Exportar / 📥 Importar:</b> Generación y descarga de archivos (Excel, PDF, Word) o carga masiva.<br>"
-            "• <b>⚙️ Administrar:</b> <u>Control integral y estructural del módulo</u>. A diferencia de Ver/Crear/Editar, quien "
-            "administra gestiona configuraciones maestras, catálogos (dotaciones, tipos), asigna roles o reactiva registros.<br>"
-            "• <b>⚡ Supervisión Irrestricta (<code>registros.modificar</code>):</b> Permiso exclusivo que ignora los límites "
-            "de 24h / 72h para editar o anular registros históricos."
-            "</div>"
-        )
-        lbl_guia_desc = QLabel(txt_explicativo)
-        lbl_guia_desc.setWordWrap(True)
-        lay_guia.addWidget(lbl_guia_desc)
-        lay_right.addWidget(card_guia)
+        self.lbl_guia_desc = QLabel()
+        self.lbl_guia_desc.setObjectName("lblGuiaDesc")
+        self.lbl_guia_desc.setWordWrap(True)
+        lay_guia.addWidget(self.lbl_guia_desc)
+        lay_right.addWidget(self.card_guia)
 
         # Barra de selección rápida de permisos
         bar_quick = QHBoxLayout()
         self.btn_marcar_todos = QPushButton("☑️ Marcar Todos")
+        self.btn_marcar_todos.setObjectName("btnSecondary")
         self.btn_marcar_todos.setEnabled(False)
         self.btn_marcar_todos.clicked.connect(lambda: self._marcar_todos(True))
         bar_quick.addWidget(self.btn_marcar_todos)
 
         self.btn_desmarcar_todos = QPushButton("⬜ Desmarcar Todos")
+        self.btn_desmarcar_todos.setObjectName("btnSecondary")
         self.btn_desmarcar_todos.setEnabled(False)
         self.btn_desmarcar_todos.clicked.connect(lambda: self._marcar_todos(False))
         bar_quick.addWidget(self.btn_desmarcar_todos)
 
         self.btn_solo_lectura = QPushButton("👁️ Solo Lectura (Ver y Exportar)")
+        self.btn_solo_lectura.setObjectName("btnSecondary")
         self.btn_solo_lectura.setEnabled(False)
         self.btn_solo_lectura.clicked.connect(self._marcar_solo_lectura)
         bar_quick.addWidget(self.btn_solo_lectura)
@@ -540,6 +534,7 @@ class AdminRolesWidget(QWidget):
         lay_right.addWidget(scroll)
 
         self.btn_guardar_permisos = QPushButton("💾 Guardar Permisos del Rol")
+        self.btn_guardar_permisos.setObjectName("btnSuccess")
         self.btn_guardar_permisos.setEnabled(False)
         self.btn_guardar_permisos.clicked.connect(self._guardar_permisos)
         lay_right.addWidget(self.btn_guardar_permisos)
@@ -549,23 +544,133 @@ class AdminRolesWidget(QWidget):
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter)
 
-        self._checkboxes_permisos: Dict[str, QCheckBox] = {}
-        self.rol_seleccionado_id: Optional[int] = None
-
         self._cargar_permisos_ui()
+        self.actualizar_tema()
         self.recargar_roles()
 
     def recargar(self) -> None:
+        self.actualizar_tema()
         self.recargar_roles()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.actualizar_tema()
+
+    def actualizar_tema(self, tema: str | None = None) -> None:
+        """Adapta colores, contrastes y estilos de la guía, botones y casillas según el tema visual activo."""
+        tema_activo = tema or obtener_tema_visual()
+        es_oscuro = (tema_activo == TEMA_OSCURO)
+
+        # 1. Tarjeta Guía RBAC
+        if hasattr(self, "card_guia"):
+            if es_oscuro:
+                self.card_guia.setStyleSheet(
+                    "QFrame#cardGuia { background-color: #242436; border: 1px solid #3E3E55; border-radius: 6px; }"
+                )
+            else:
+                self.card_guia.setStyleSheet(
+                    "QFrame#cardGuia { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 6px; }"
+                )
+
+        if hasattr(self, "lbl_guia_title"):
+            color_titulo = "#60A5FA" if es_oscuro else "#1E3A8A"
+            self.lbl_guia_title.setStyleSheet(f"color: {color_titulo}; font-size: 9.5pt; font-weight: bold;")
+
+        if hasattr(self, "lbl_guia_desc"):
+            color_txt = "#E2E8F0" if es_oscuro else "#334155"
+            color_bold = "#FFFFFF" if es_oscuro else "#0F172A"
+            color_code = "#38BDF8" if es_oscuro else "#1E3A8A"
+            color_admin = "#34D399" if es_oscuro else "#047857"
+            color_super = "#F87171" if es_oscuro else "#B91C1C"
+
+            txt = (
+                f"<div style='font-size: 8.5pt; line-height: 1.45; color: {color_txt};'>"
+                f"• <b style='color: {color_bold};'>👁️ Ver / Leer:</b> Acceso de solo lectura para consultar datos, diagramas y filtros sin modificar.<br>"
+                f"• <b style='color: {color_bold};'>➕ Crear:</b> Habilita los botones de alta ('+ Nuevo') y formularios para ingresar nuevos registros.<br>"
+                f"• <b style='color: {color_bold};'>✏️ Editar:</b> Permite modificar datos existentes dentro de las ventanas temporales autorizadas (24h/72h).<br>"
+                f"• <b style='color: {color_bold};'>🗑️ Eliminar:</b> Permite anular o enviar registros a la papelera dentro del límite temporal permitido.<br>"
+                f"• <b style='color: {color_bold};'>📊 Exportar / 📥 Importar:</b> Generación y descarga de archivos (Excel, PDF, Word) o carga masiva.<br>"
+                f"• <b style='color: {color_admin};'>⚙️ Administrar:</b> <u>Control integral y estructural del módulo</u>. A diferencia de Ver/Crear/Editar, quien "
+                f"administra gestiona configuraciones maestras, catálogos (dotaciones, tipos), asigna roles o reactiva registros.<br>"
+                f"• <b style='color: {color_super};'>⚡ Supervisión Irrestricta (<code style='color: {color_code};'>registros.modificar</code>):</b> Permiso exclusivo que ignora los límites "
+                f"de 24h / 72h para editar o anular registros históricos."
+                f"</div>"
+            )
+            self.lbl_guia_desc.setText(txt)
+
+        # 2. Etiqueta de Rol Activo
+        if hasattr(self, "lbl_rol_activo"):
+            color_rol = "#60A5FA" if es_oscuro else "#1F497D"
+            self.lbl_rol_activo.setStyleSheet(f"color: {color_rol}; font-size: 11pt; font-weight: bold;")
+
+        # 3. Botones de acción rápida con alto contraste
+        style_quick = (
+            "QPushButton { background-color: #2A2A3C; color: #F1F5F9; border: 1px solid #4B5563; border-radius: 4px; padding: 5px 12px; font-weight: 600; font-size: 8.5pt; }"
+            "QPushButton:hover { background-color: #374151; border-color: #60A5FA; color: #60A5FA; }"
+            "QPushButton:disabled { background-color: #1E1E2E; color: #64748B; border-color: #2E2E3E; }"
+            if es_oscuro else
+            "QPushButton { background-color: #FFFFFF; color: #0F172A; border: 1px solid #94A3B8; border-radius: 4px; padding: 5px 12px; font-weight: 600; font-size: 8.5pt; }"
+            "QPushButton:hover { background-color: #F1F5F9; border-color: #1E3A8A; color: #1E3A8A; }"
+            "QPushButton:disabled { background-color: #F8FAFC; color: #94A3B8; border-color: #E2E8F0; }"
+        )
+        for btn in (getattr(self, "btn_marcar_todos", None), getattr(self, "btn_desmarcar_todos", None), getattr(self, "btn_solo_lectura", None)):
+            if btn:
+                btn.setStyleSheet(style_quick)
+
+        # 4. Agrupadores de pestañas
+        style_grp = (
+            "QGroupBox { font-weight: bold; font-size: 10pt; color: #60A5FA; border: 1px solid #3E3E55; border-radius: 6px; margin-top: 10px; padding-top: 12px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; background-color: #1E1E2E; }"
+            if es_oscuro else
+            "QGroupBox { font-weight: bold; font-size: 10pt; color: #1E3A8A; border: 1px solid #CBD5E1; border-radius: 6px; margin-top: 10px; padding-top: 12px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; background-color: #FFFFFF; }"
+        )
+        for grp in getattr(self, "_group_boxes", []):
+            grp.setStyleSheet(style_grp)
+
+        # 5. Subgrupos (título, descripción y botones de enlace)
+        color_sub_title = "#F1F5F9" if es_oscuro else "#0F172A"
+        color_sub_desc = "#94A3B8" if es_oscuro else "#64748B"
+        style_link_on = (
+            "font-size: 8pt; font-weight: bold; padding: 1px 6px; color: #60A5FA; background: transparent; border: 1px solid #3B82F6; border-radius: 3px;"
+            if es_oscuro else
+            "font-size: 8pt; font-weight: bold; padding: 1px 6px; color: #1D4ED8; background: transparent; border: 1px solid #93C5FD; border-radius: 3px;"
+        )
+        style_link_off = (
+            "font-size: 8pt; padding: 1px 6px; color: #94A3B8; background: transparent; border: 1px solid #4B5563; border-radius: 3px;"
+            if es_oscuro else
+            "font-size: 8pt; padding: 1px 6px; color: #64748B; background: transparent; border: 1px solid #CBD5E1; border-radius: 3px;"
+        )
+
+        for item in getattr(self, "_subgrupo_items", []):
+            lbl, subpestana, desc, b_on, b_off = item
+            lbl.setText(
+                f"<span style='color: {color_sub_title}; font-weight: bold; font-size: 9.5pt;'>{subpestana}</span>"
+                f" &nbsp;<span style='color: {color_sub_desc}; font-size: 8pt;'>({desc})</span>"
+            )
+            b_on.setStyleSheet(style_link_on)
+            b_off.setStyleSheet(style_link_off)
+
+        # 6. Casillas de permisos
+        for code, chk in getattr(self, "_checkboxes_permisos", {}).items():
+            if code == "registros.modificar":
+                color_chk = "#F87171" if es_oscuro else "#B91C1C"
+                chk.setStyleSheet(f"QCheckBox {{ font-weight: bold; color: {color_chk}; font-size: 9pt; }}")
+            elif "administrar" in code:
+                color_chk = "#34D399" if es_oscuro else "#047857"
+                chk.setStyleSheet(f"QCheckBox {{ font-weight: bold; color: {color_chk}; font-size: 9pt; }}")
+            else:
+                color_chk = "#F1F5F9" if es_oscuro else "#1E293B"
+                chk.setStyleSheet(f"QCheckBox {{ color: {color_chk}; font-size: 9pt; }}")
+
     def _cargar_permisos_ui(self) -> None:
+        self._group_boxes.clear()
+        self._subgrupo_items.clear()
+
         for tab_info in ESTRUCTURA_PERMISOS_PESTANAS:
             grp_pestana = QGroupBox(tab_info["pestana"])
-            grp_pestana.setStyleSheet(
-                "QGroupBox { font-weight: bold; font-size: 10pt; color: #1E3A8A; "
-                "border: 1px solid #CBD5E1; border-radius: 6px; margin-top: 10px; padding-top: 10px; }"
-                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
-            )
+            self._group_boxes.append(grp_pestana)
+
             lay_tab = QVBoxLayout(grp_pestana)
             lay_tab.setContentsMargins(10, 10, 10, 10)
             lay_tab.setSpacing(10)
@@ -578,26 +683,22 @@ class AdminRolesWidget(QWidget):
 
                 # Encabezado del subgrupo con descripción
                 header_box = QHBoxLayout()
-                lbl_sub = QLabel(
-                    f"<span style='color: #0F172A; font-weight: bold; font-size: 9.5pt;'>{subgrupo['subpestana']}</span>"
-                    f" &nbsp;<span style='color: #64748B; font-size: 8pt;'>({subgrupo['descripcion']})</span>"
-                )
+                lbl_sub = QLabel()
                 header_box.addWidget(lbl_sub, 1)
 
                 # Acciones rápidas del subgrupo
                 perm_codes = list(subgrupo["permisos"])
                 btn_grp_on = QPushButton("Marcar grupo")
                 btn_grp_on.setObjectName("btnLink")
-                btn_grp_on.setStyleSheet("font-size: 8pt; padding: 1px 4px; color: #2563EB;")
                 btn_grp_on.clicked.connect(lambda _, codes=perm_codes: self._set_grupo_checked(codes, True))
                 header_box.addWidget(btn_grp_on)
 
                 btn_grp_off = QPushButton("Desmarcar")
                 btn_grp_off.setObjectName("btnLink")
-                btn_grp_off.setStyleSheet("font-size: 8pt; padding: 1px 4px; color: #64748B;")
                 btn_grp_off.clicked.connect(lambda _, codes=perm_codes: self._set_grupo_checked(codes, False))
                 header_box.addWidget(btn_grp_off)
 
+                self._subgrupo_items.append((lbl_sub, subgrupo["subpestana"], subgrupo["descripcion"], btn_grp_on, btn_grp_off))
                 lay_sub.addLayout(header_box)
 
                 # Grilla de checkboxes para este subgrupo
@@ -614,14 +715,6 @@ class AdminRolesWidget(QWidget):
                     titulo = meta.get("titulo", code)
                     chk_text = f"[{accion}] {titulo}  ({code})"
                     chk = QCheckBox(chk_text)
-
-                    # Distinción visual según tipo de permiso
-                    if code == "registros.modificar":
-                        chk.setStyleSheet("QCheckBox { font-weight: bold; color: #B91C1C; }")
-                    elif "administrar" in code:
-                        chk.setStyleSheet("QCheckBox { font-weight: bold; color: #047857; }")
-                    elif "exportar" in code or "ver" in code:
-                        chk.setStyleSheet("QCheckBox { color: #1E293B; }")
 
                     # Tooltip informativo y pedagógico
                     tooltip = (
@@ -732,6 +825,11 @@ class AdminRolesDialog(BaseMaximizedDialog):
         btn_cerrar.setObjectName("btnSecondary")
         btn_cerrar.clicked.connect(self.accept)
         layout.addWidget(btn_cerrar, alignment=Qt.AlignRight)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if hasattr(self, "widget") and hasattr(self.widget, "actualizar_tema"):
+            self.widget.actualizar_tema()
 
     def recargar_roles(self) -> None:
         self.widget.recargar_roles()

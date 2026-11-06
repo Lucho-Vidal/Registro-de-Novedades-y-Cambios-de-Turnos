@@ -151,6 +151,8 @@ class MainWindow(QMainWindow):
                 self.tab_buscador_turnos.actualizar_tema()
             if hasattr(self, "tab_turnos_sin_cubrir") and hasattr(self.tab_turnos_sin_cubrir, "table"):
                 self.tab_turnos_sin_cubrir.table.viewport().update()
+            if hasattr(self, "tab_administracion") and hasattr(self.tab_administracion, "actualizar_tema"):
+                self.tab_administracion.actualizar_tema(tema_activo)
         except Exception as e:
             logger.warning(f"No se pudo cargar la hoja de estilos QSS: {e}")
 
@@ -409,6 +411,8 @@ class MainWindow(QMainWindow):
             self.tab_dashboard.actualizar_tema()
         elif widget is getattr(self, "tab_buscador_turnos", None) and hasattr(self.tab_buscador_turnos, "actualizar_tema"):
             self.tab_buscador_turnos.actualizar_tema()
+        elif widget is getattr(self, "tab_administracion", None) and hasattr(self.tab_administracion, "actualizar_tema"):
+            self.tab_administracion.actualizar_tema()
 
     def _init_status_bar(self) -> None:
         self.status_bar = QStatusBar()

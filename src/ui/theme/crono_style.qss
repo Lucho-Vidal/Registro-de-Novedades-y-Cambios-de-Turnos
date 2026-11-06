@@ -406,7 +406,7 @@ QFrame#kpiCard:hover {
 }
 
 /* Paneles de Filtro, Cabeceras y Tarjetas */
-QFrame#cardFrame, QFrame#filterBar, QFrame#filterFrame, QFrame#headerFrame {
+QFrame#cardFrame, QFrame#filterBar, QFrame#filterFrame, QFrame#headerFrame, QFrame#cardGuia {
     background-color: #FFFFFF;
     border: 1px solid #D1D5DB;
     border-radius: 6px;

@@ -162,3 +162,8 @@ class AdministracionView(QWidget):
             self.widget_eliminados.recargar()
         if hasattr(self, "widget_config"):
             self.widget_config.recargar()
+
+    def actualizar_tema(self, tema: str | None = None) -> None:
+        """Propaga el cambio de tema a los submódulos de administración."""
+        if hasattr(self, "widget_roles") and hasattr(self.widget_roles, "actualizar_tema"):
+            self.widget_roles.actualizar_tema(tema)
