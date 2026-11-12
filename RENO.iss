@@ -48,7 +48,7 @@ WizardStyle=modern
 [Code]
 
 const
-  FECHA_VENCIMIENTO = '20261031';
+  FECHA_VENCIMIENTO = '20261231';
 
 function FormatearFecha(const Fecha: String): String;
 begin
