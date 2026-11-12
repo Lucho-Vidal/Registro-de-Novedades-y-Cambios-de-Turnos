@@ -14,7 +14,7 @@ Siempre y cuando:
 2. No sugieras de ninguna manera que el autor original respalda tus modificaciones o el uso del software.
 
 Puedes encontrar el código fuente del proyecto y más información en el siguiente repositorio:  
-[GitHub - Registro-de-Novedades-y-Cambios-de-Turnos](https://github.com/Lucho-Vidal/Registro-de-Novedades-y-Cambios-de-Turnos)
+[GitHub - RENO](https://github.com/Lucho-Vidal/RENO)
 
 **Texto de atribución sugerido**:
 Este software fue desarrollado por Vidal Luciano. Licencia CC BY 4.0: https://creativecommons.org/licenses/by/4.0/.
