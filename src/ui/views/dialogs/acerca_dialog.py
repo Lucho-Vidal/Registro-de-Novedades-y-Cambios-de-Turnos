@@ -125,12 +125,21 @@ class AcercaDialog(QDialog):
 
         main_layout.addWidget(tabs)
 
-        # Botón Cerrar
+        # Botones inferiores
         btn_layout = QHBoxLayout()
+
+        self.btn_buscar_updates = QPushButton("🔍 Buscar Actualizaciones...")
+        self.btn_buscar_updates.setObjectName("btnSecondary")
+        self.btn_buscar_updates.setCursor(Qt.PointingHandCursor)
+        self.btn_buscar_updates.setToolTip("Comprobar si existe una nueva versión de RENO disponible en el servidor")
+        btn_layout.addWidget(self.btn_buscar_updates)
+
         btn_layout.addStretch()
+
         btn_cerrar = QPushButton("Cerrar")
         btn_cerrar.setObjectName("btnPrimary")
         btn_cerrar.clicked.connect(self.accept)
         btn_layout.addWidget(btn_cerrar)
 
         main_layout.addLayout(btn_layout)
+

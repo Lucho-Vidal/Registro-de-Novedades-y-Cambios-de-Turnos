@@ -57,6 +57,11 @@ from src.ui.views.novedades_view import NovedadesView
 from src.ui.views.personal_ciclo_view import PersonalCicloView
 from src.ui.views.turnos_sin_cubrir_view import TurnosSinCubrirView
 from src.ui.views.dialogs.acerca_dialog import AcercaDialog
+from src.ui.views.dialogs.actualizacion_dialog import ActualizacionDialog
+from src.services.updater_service import (
+    InfoActualizacion,
+    VerificarActualizacionWorker,
+)
 from src.ui.views.dialogs.admin_dialogs import (
     AdminAuditoriaDialog,
     AdminBackupsDialog,
@@ -197,6 +202,9 @@ class MainWindow(QMainWindow):
         act_pass = menu_archivo.addAction("🔑 Cambiar mi Contraseña...")
         act_pass.triggered.connect(self._cambiar_mi_password)
 
+        act_actualizaciones = menu_archivo.addAction("🚀 Buscar Actualizaciones...")
+        act_actualizaciones.triggered.connect(lambda: self.buscar_actualizaciones_manual())
+
         menu_archivo.addSeparator()
         act_cambiar_usuario = menu_archivo.addAction("👥 Cambiar Usuario...")
         act_cambiar_usuario.triggered.connect(self._cambiar_usuario)
@@ -298,13 +306,27 @@ class MainWindow(QMainWindow):
             self.tabs.setDocumentMode(True)
             self.setCentralWidget(self.tabs)
 
-        # Botón de versión y changelog en la esquina superior derecha (Estándar CRONO-PCT)
+        # Botones de versión y auto-updater en la esquina superior derecha (Estándar CRONO-PCT)
+        corner_widget = QWidget()
+        corner_lay = QHBoxLayout(corner_widget)
+        corner_lay.setContentsMargins(0, 0, 0, 0)
+        corner_lay.setSpacing(6)
+
+        self.btn_actualizar = QPushButton("")
+        self.btn_actualizar.setObjectName("btnActualizarHeader")
+        self.btn_actualizar.setCursor(Qt.PointingHandCursor)
+        self.btn_actualizar.setVisible(False)
+        self.btn_actualizar.clicked.connect(self._on_clic_btn_actualizar)
+        corner_lay.addWidget(self.btn_actualizar)
+
         self.btn_version = QPushButton(f"RENO v{APP_VERSION}")
         self.btn_version.setObjectName("btnVersion")
         self.btn_version.setCursor(Qt.PointingHandCursor)
         self.btn_version.setToolTip("Ver arquitectura, información del sistema y changelog")
         self.btn_version.clicked.connect(self._acerca_de)
-        self.tabs.setCornerWidget(self.btn_version, Qt.TopRightCorner)
+        corner_lay.addWidget(self.btn_version)
+
+        self.tabs.setCornerWidget(corner_widget, Qt.TopRightCorner)
 
         # 1. Panel de Control
         self.tab_dashboard = DashboardView(
@@ -469,6 +491,9 @@ class MainWindow(QMainWindow):
         self.timer_inactividad.setInterval(30 * 1000)
         self.timer_inactividad.timeout.connect(self._verificar_inactividad)
         self.timer_inactividad.start()
+
+        # Verificación no bloqueante de actualizaciones a los 5 segundos del inicio (Estándar CRONO-PCT)
+        QTimer.singleShot(5000, self.verificar_actualizaciones_silenciosa)
 
     def eventFilter(self, watched, event) -> bool:
         if event is not None and event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress):
@@ -875,7 +900,93 @@ class MainWindow(QMainWindow):
 
     def _acerca_de(self) -> None:
         dlg = AcercaDialog(self)
+        dlg.btn_buscar_updates.clicked.connect(lambda: self.buscar_actualizaciones_manual(parent_dialog=dlg))
         dlg.exec()
+
+    def _on_clic_btn_actualizar(self) -> None:
+        """Acción al hacer clic en el botón de actualización en la cabecera."""
+        if hasattr(self, "_ultima_info_actualizacion") and self._ultima_info_actualizacion:
+            es_obligatoria = getattr(self, "_ultima_actualizacion_obligatoria", False)
+            dlg = ActualizacionDialog(self._ultima_info_actualizacion, es_obligatoria=es_obligatoria, parent=self)
+            dlg.exec()
+        else:
+            self.buscar_actualizaciones_manual()
+
+    def verificar_actualizaciones_silenciosa(self) -> None:
+        """Verificación asíncrona no bloqueante de actualizaciones al iniciar la aplicación (Estándar CRONO-PCT)."""
+        self._worker_updater = VerificarActualizacionWorker(parent=self)
+        self._worker_updater.actualizacion_disponible.connect(self._on_actualizacion_disponible_silenciosa)
+        self._worker_updater.start()
+
+    def _on_actualizacion_disponible_silenciosa(self, info: InfoActualizacion, es_obligatoria: bool) -> None:
+        """Callback cuando el chequeo en segundo plano detecta una versión remota superior."""
+        self._ultima_info_actualizacion = info
+        self._ultima_actualizacion_obligatoria = es_obligatoria
+
+        self.btn_actualizar.setText(f"🚀 ¡Actualizar a v{info.version}!")
+        if es_obligatoria:
+            self.btn_actualizar.setStyleSheet(
+                "background-color: #D97706; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 4px 10px; border: none;"
+            )
+            self.btn_actualizar.setToolTip(f"Actualización obligatoria a v{info.version} requerida")
+        else:
+            self.btn_actualizar.setStyleSheet(
+                "background-color: #0284C7; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 4px 10px; border: none;"
+            )
+            self.btn_actualizar.setToolTip(f"Nueva versión v{info.version} disponible. Clic para ver novedades.")
+
+        self.btn_actualizar.setVisible(True)
+
+        if es_obligatoria:
+            # Si es obligatoria, abre el diálogo de actualización sin posponer
+            QTimer.singleShot(600, lambda: ActualizacionDialog(info, es_obligatoria=True, parent=self).exec())
+        else:
+            # Aviso no invasivo toast
+            try:
+                toast = ToastWidget(
+                    self,
+                    f"🚀 Nueva versión v{info.version} disponible. Clic en el botón superior para actualizar.",
+                    duracion_seg=8,
+                )
+                toast.mostrar()
+            except Exception:
+                pass
+
+    def buscar_actualizaciones_manual(self, parent_dialog=None) -> None:
+        """Verificación manual de actualizaciones invocada por el usuario con retroalimentación explícita."""
+        self._worker_manual_updater = VerificarActualizacionWorker(parent=self)
+
+        def _on_disponible(info: InfoActualizacion, es_obligatoria: bool):
+            self._ultima_info_actualizacion = info
+            self._ultima_actualizacion_obligatoria = es_obligatoria
+            self.btn_actualizar.setText(f"🚀 ¡Actualizar a v{info.version}!")
+            self.btn_actualizar.setVisible(True)
+
+            if parent_dialog and hasattr(parent_dialog, "accept"):
+                parent_dialog.accept()
+
+            dlg = ActualizacionDialog(info, es_obligatoria=es_obligatoria, parent=self)
+            dlg.exec()
+
+        def _on_al_dia():
+            QMessageBox.information(
+                parent_dialog or self,
+                "Sistema al Día",
+                f"¡Tenés instalada la última versión disponible de RENO (v{APP_VERSION})!\n\nNo se requieren actualizaciones en este momento.",
+            )
+
+        def _on_error(err: str):
+            QMessageBox.warning(
+                parent_dialog or self,
+                "Buscar Actualizaciones",
+                f"No se pudo consultar el servidor de actualizaciones:\n\n{err}\n\nVerifique la conexión de red o la configuración de proxy.",
+            )
+
+        self._worker_manual_updater.actualizacion_disponible.connect(_on_disponible)
+        self._worker_manual_updater.sistema_actualizado.connect(_on_al_dia)
+        self._worker_manual_updater.error_verificacion.connect(_on_error)
+        self._worker_manual_updater.start()
+
 
     def _cambiar_usuario(self) -> None:
         """Permite iniciar sesión con otro usuario sin reiniciar la aplicación."""
