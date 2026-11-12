@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
-from PySide6.QtCore import QByteArray, QSettings
-from PySide6.QtWidgets import QHeaderView, QWidget
+try:
+    from PySide6.QtCore import QByteArray, QSettings
+    from PySide6.QtWidgets import QHeaderView, QWidget
+except ImportError:
+    QByteArray = None
+    QSettings = None
+    QHeaderView = None
+    QWidget = None
 
 
 class AppSettings:

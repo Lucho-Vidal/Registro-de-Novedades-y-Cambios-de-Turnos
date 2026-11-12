@@ -9,9 +9,11 @@ import tempfile
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
-
-from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+try:
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+except ImportError:
+    QtMsgType = None
+    qInstallMessageHandler = None
 
 logger = logging.getLogger("reno")
 
@@ -202,7 +204,8 @@ def inicializar_logging(nivel: int = logging.INFO) -> Path:
     sys.excepthook = _manejador_excepciones_no_controladas
 
     try:
-        qInstallMessageHandler(_manejador_mensajes_qt)
+        if qInstallMessageHandler is not None:
+            qInstallMessageHandler(_manejador_mensajes_qt)
     except Exception as e:
         logger.debug("No se pudo instalar manejador Qt: %s", e)
 
