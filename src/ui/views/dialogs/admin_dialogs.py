@@ -2123,9 +2123,9 @@ class AdminConfigWidget(QWidget):
 
         self.txt_supa_key = QLineEdit()
         self.txt_supa_key.setEchoMode(QLineEdit.Password)
-        self.txt_supa_key.setPlaceholderText("sb_publishable_... o API Anon Key")
+        self.txt_supa_key.setPlaceholderText("sb_publishable_...")
         self.txt_supa_key.setMaximumWidth(380)
-        form_sync.addRow("Supabase Anon Key:", self.txt_supa_key)
+        form_sync.addRow("Supabase Publishable Key:", self.txt_supa_key)
 
         self.spin_sync_interval = QSpinBox()
         self.spin_sync_interval.setRange(1, 60)

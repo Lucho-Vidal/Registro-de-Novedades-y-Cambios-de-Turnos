@@ -96,12 +96,15 @@ class SupabaseSyncEngine:
         if not url_base or not anon_key:
             raise ValueError("Credenciales de Supabase no configuradas.")
 
-        headers_base = {
-            "apikey": anon_key,
-            "Authorization": f"Bearer {anon_key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal",
-        }
+        from ...core.proxy import construir_headers_supabase
+
+        headers_base = construir_headers_supabase(
+            anon_key,
+            {
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+        )
 
         enviados = 0
         recibidos = 0

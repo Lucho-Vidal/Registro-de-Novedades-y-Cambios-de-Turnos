@@ -489,6 +489,19 @@ def ejecutar_request_supabase(
     raise ValueError(f"Modo de proxy desconocido: {modo}")
 
 
+def construir_headers_supabase(api_key: str, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Construye cabeceras HTTP compatibles con Publishable keys (sb_publishable_*) y JWT legacy."""
+    key = (api_key or "").strip()
+    headers: dict[str, str] = {"apikey": key}
+    # Las Publishable keys de Supabase no deben enviarse como Authorization: Bearer
+    # porque el API Gateway las rechaza con HTTP 401 ('Secret API key required').
+    if key and not key.startswith("sb_publishable_"):
+        headers["Authorization"] = f"Bearer {key}"
+    if extra:
+        headers.update(extra)
+    return headers
+
+
 def probar_conexion_supabase(config: dict) -> dict[str, Any]:
     """Prueba en vivo la conexión contra el endpoint de Supabase usando la configuración suministrada."""
     supabase_url = (config.get("supabase_url") or "").strip().rstrip("/")
@@ -508,17 +521,13 @@ def probar_conexion_supabase(config: dict) -> dict[str, Any]:
             "modo_usado": modo_nombre,
             "proxy_detectado": proxy_det,
             "status_code": 0,
-            "detalle": "Falta configurar la URL de Supabase y/o la Anon API Key.",
+            "detalle": "Falta configurar la URL de Supabase y/o la Publishable Key.",
         }
 
     from ..data.sync.supabase_sync import sanitizar_supabase_url
     clean_url = sanitizar_supabase_url(supabase_url)
     test_url = f"{clean_url}/rest/v1/"
-    headers = {
-        "apikey": api_key,
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "application/json",
-    }
+    headers = construir_headers_supabase(api_key, {"Accept": "application/json"})
 
     try:
         status, body, _ = ejecutar_request_supabase(
