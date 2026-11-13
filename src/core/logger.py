@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 import tempfile
+import threading
 import traceback
+import zipfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 try:
     from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 except ImportError:
@@ -155,6 +159,49 @@ def _manejador_excepciones_no_controladas(exc_type: type, exc_value: BaseExcepti
     )
 
 
+def _manejador_excepciones_hilos(args: threading.ExceptHookArgs) -> None:
+    if args.exc_type is SystemExit:
+        return
+    hilo = getattr(args.thread, "name", "desconocido")
+    logger.critical(
+        "CRITICAL ERROR - Excepción no controlada en hilo '%s':\n%s",
+        hilo,
+        "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)),
+    )
+
+
+def exportar_logs_diagnostico(destino: str | Path) -> Path:
+    """Exporta los archivos de log activos a un archivo .zip o .log para diagnóstico."""
+    for h in logging.getLogger().handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+
+    destino_path = Path(destino)
+    destino_path.parent.mkdir(parents=True, exist_ok=True)
+    dir_logs = obtener_directorio_logs()
+    archivos_log = sorted(dir_logs.glob("reno.log*"))
+
+    if destino_path.suffix.lower() == ".zip":
+        with zipfile.ZipFile(destino_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            if archivos_log:
+                for arch in archivos_log:
+                    if arch.is_file():
+                        zf.write(arch, arcname=arch.name)
+            else:
+                zf.writestr("reno.log", "No se encontraron registros previos.\n")
+    else:
+        log_actual = obtener_ruta_log()
+        if log_actual.exists():
+            shutil.copy2(log_actual, destino_path)
+        else:
+            destino_path.write_text("No se encontraron registros previos.\n", encoding="utf-8")
+
+    logger.info("Logs de diagnóstico exportados a: %s", destino_path)
+    return destino_path
+
+
 def inicializar_logging(nivel: int = logging.INFO) -> Path:
     """Configura el sistema de logging rotativo y captura global de excepciones."""
     global _LOGGING_INICIALIZADO
@@ -202,6 +249,8 @@ def inicializar_logging(nivel: int = logging.INFO) -> Path:
     sys.stderr = StreamToLogger(stderr_logger, logging.ERROR, sys.__stderr__ if sys.stderr is not None else None)
 
     sys.excepthook = _manejador_excepciones_no_controladas
+    if hasattr(threading, "excepthook"):
+        threading.excepthook = _manejador_excepciones_hilos
 
     try:
         if qInstallMessageHandler is not None:

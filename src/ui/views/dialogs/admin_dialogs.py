@@ -11,8 +11,9 @@ Incluye:
 - AdminAuditoriaDialog: Registro histórico de trazabilidad de acciones.
 """
 
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (

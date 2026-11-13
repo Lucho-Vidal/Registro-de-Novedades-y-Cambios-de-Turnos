@@ -1,12 +1,16 @@
 """Diálogo modal de información del sistema y changelog (CRONO-PCT Standard)."""
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -14,6 +18,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from src.core.logger import exportar_logs_diagnostico, obtener_ruta_log
 
 
 class AcercaDialog(QDialog):
@@ -77,6 +83,9 @@ class AcercaDialog(QDialog):
         form.addRow("<b>Motor de Reportes:</b>", QLabel("ReportLab 4.x (PDF Ejecutivo) + OpenPyXL 3.1+ (Excel)"))
         form.addRow("<b>Seguridad & RBAC:</b>", QLabel("Bcrypt Hashing + Permisos Granulares por Módulo"))
         form.addRow("<b>Reglas CCT:</b>", QLabel("Convenio Colectivo Ferroviario (Descansos 42hs/41hs y 18hs/17hs)"))
+        lbl_log_path = QLabel(str(obtener_ruta_log()))
+        lbl_log_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addRow("<b>Registro de Logs:</b>", lbl_log_path)
 
         lay_info.addLayout(form)
         lay_info.addStretch()
@@ -134,6 +143,13 @@ class AcercaDialog(QDialog):
         self.btn_buscar_updates.setToolTip("Comprobar si existe una nueva versión de RENO disponible en el servidor")
         btn_layout.addWidget(self.btn_buscar_updates)
 
+        self.btn_guardar_logs = QPushButton("📋 Guardar Logs...")
+        self.btn_guardar_logs.setObjectName("btnSecondary")
+        self.btn_guardar_logs.setCursor(Qt.PointingHandCursor)
+        self.btn_guardar_logs.setToolTip("Exportar los archivos de registro (reno.log) para diagnóstico")
+        self.btn_guardar_logs.clicked.connect(self._guardar_logs)
+        btn_layout.addWidget(self.btn_guardar_logs)
+
         btn_layout.addStretch()
 
         btn_cerrar = QPushButton("Cerrar")
@@ -142,4 +158,24 @@ class AcercaDialog(QDialog):
         btn_layout.addWidget(btn_cerrar)
 
         main_layout.addLayout(btn_layout)
+
+    def _guardar_logs(self) -> None:
+        default_name = f"RENO_Logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar Logs de Diagnóstico",
+            default_name,
+            "Archivo ZIP (*.zip);;Archivo de Log (*.log);;Todos los archivos (*)",
+        )
+        if not file_path:
+            return
+        try:
+            ruta_guardada = exportar_logs_diagnostico(file_path)
+            QMessageBox.information(
+                self,
+                "Logs Guardados",
+                f"Los registros de diagnóstico se guardaron exitosamente en:\n{ruta_guardada}",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudieron exportar los logs:\n{e}")
 

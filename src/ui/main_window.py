@@ -205,6 +205,9 @@ class MainWindow(QMainWindow):
         act_actualizaciones = menu_archivo.addAction("🚀 Buscar Actualizaciones...")
         act_actualizaciones.triggered.connect(lambda: self.buscar_actualizaciones_manual())
 
+        act_guardar_logs = menu_archivo.addAction("📋 Guardar Logs de Diagnóstico...")
+        act_guardar_logs.triggered.connect(self._guardar_logs_diagnostico)
+
         menu_archivo.addSeparator()
         act_cambiar_usuario = menu_archivo.addAction("👥 Cambiar Usuario...")
         act_cambiar_usuario.triggered.connect(self._cambiar_usuario)
@@ -872,6 +875,28 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Backup", f"Copia de seguridad consistente creada en:\n{ruta}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo crear el backup:\n{e}")
+
+    def _guardar_logs_diagnostico(self) -> None:
+        from src.core.logger import exportar_logs_diagnostico
+
+        default_name = f"RENO_Logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar Logs de Diagnóstico",
+            default_name,
+            "Archivo ZIP (*.zip);;Archivo de Log (*.log);;Todos los archivos (*)",
+        )
+        if not file_path:
+            return
+        try:
+            ruta_guardada = exportar_logs_diagnostico(file_path)
+            QMessageBox.information(
+                self,
+                "Logs Guardados",
+                f"Los registros de diagnóstico se guardaron exitosamente en:\n{ruta_guardada}",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudieron exportar los logs:\n{e}")
 
     def _verificar_backup_diario(self) -> None:
         try:
