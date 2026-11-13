@@ -526,7 +526,9 @@ def probar_conexion_supabase(config: dict) -> dict[str, Any]:
 
     from ..data.sync.supabase_sync import sanitizar_supabase_url
     clean_url = sanitizar_supabase_url(supabase_url)
-    test_url = f"{clean_url}/rest/v1/"
+    # Consultar una tabla real en lugar de /rest/v1/ (el esquema raíz OpenAPI requiere secret key
+    # cuando se usa sb_publishable_*, mientras que las tablas funcionan con Publishable Key).
+    test_url = f"{clean_url}/rest/v1/reno_dotaciones?select=id&limit=1"
     headers = construir_headers_supabase(api_key, {"Accept": "application/json"})
 
     try:
@@ -545,6 +547,17 @@ def probar_conexion_supabase(config: dict) -> dict[str, Any]:
                 "proxy_detectado": proxy_det,
                 "status_code": status,
                 "detalle": f"HTTP {status} OK — Conexión exitosa con Supabase.",
+            }
+        elif status == 404 or b"PGRST205" in body:
+            return {
+                "ok": True,
+                "modo_usado": modo_nombre,
+                "proxy_detectado": proxy_det,
+                "status_code": status,
+                "detalle": (
+                    f"Conexión autenticada con Supabase (HTTP {status}), pero falta ejecutar "
+                    "el script 'supabase_reno_schema.sql' en el SQL Editor para crear las tablas reno_*."
+                ),
             }
         elif status == 407:
             return {

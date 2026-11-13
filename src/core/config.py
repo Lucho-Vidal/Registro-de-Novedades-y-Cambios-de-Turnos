@@ -166,6 +166,8 @@ def cargar_configuracion_app() -> dict[str, Any]:
         "supabase_anon_key": sb_anon_env,
         "supabase_service_role_key": sb_serv_env,
         "supabase_storage_bucket": sb_bucket_env,
+        "updater_url": "",
+        "updater_auto_check": True,
         "sqlite_journal_mode": "WAL",  # 'WAL' o 'DELETE'
         "autosync_habilitado": False,
         "autosync_intervalo_min": 5,

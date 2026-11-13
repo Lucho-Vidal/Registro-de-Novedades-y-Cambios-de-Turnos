@@ -2236,6 +2236,14 @@ class AdminConfigWidget(QWidget):
         )
         self.tabs.addTab(self.widget_destinatarios, "📧 Destinatarios de Correo")
 
+        # Tab 4: Actualizaciones Automáticas (OTA)
+        self.tab_updater = self._crear_tab_updater()
+        self.tabs.addTab(self.tab_updater, "🚀 Actualizaciones (OTA)")
+
+        # Tab 5: Diagnóstico y Logs TXT (Réplica Horos)
+        self.tab_logs = self._crear_tab_logs()
+        self.tabs.addTab(self.tab_logs, "📄 Diagnóstico y Logs TXT")
+
         layout.addWidget(self.tabs)
 
         # Botón Guardar
@@ -2246,7 +2254,7 @@ class AdminConfigWidget(QWidget):
         btn_box.addWidget(self.btn_save)
         layout.addLayout(btn_box)
 
-        self.tabs.currentChanged.connect(lambda idx: self.btn_save.setVisible(idx != 2))
+        self.tabs.currentChanged.connect(self._al_cambiar_pestana)
 
         self._cargar()
 
@@ -2254,6 +2262,179 @@ class AdminConfigWidget(QWidget):
         self._cargar()
         if hasattr(self, "widget_destinatarios"):
             self.widget_destinatarios.recargar()
+
+    def _al_cambiar_pestana(self, idx: int) -> None:
+        self.btn_save.setVisible(idx not in (2, 4))
+        if idx == 4:
+            self._actualizar_visor_logs()
+
+    def _crear_tab_updater(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
+
+        from src.core.config import APP_NAME, APP_VERSION
+
+        box_info = QGroupBox("Estado de Versión del Sistema")
+        b_info = QFormLayout(box_info)
+        lbl_app = QLabel(f"<b>{APP_NAME}</b> — Registro de Novedades y Cambios de Turnos")
+        lbl_ver = QLabel(f"<b style='color: #0284C7; font-size: 13pt;'>v{APP_VERSION}</b>")
+        b_info.addRow("Aplicación:", lbl_app)
+        b_info.addRow("Versión Instalada:", lbl_ver)
+        layout.addWidget(box_info)
+
+        box_feed = QGroupBox("Configuración de URL y Canal de Actualización (version.json)")
+        b_feed = QVBoxLayout(box_feed)
+        b_feed.setSpacing(10)
+
+        self.chk_updater_auto = QCheckBox("Comprobar actualizaciones automáticamente al iniciar la aplicación (a los 5 segundos)")
+        self.chk_updater_auto.setStyleSheet("font-weight: bold;")
+        b_feed.addWidget(self.chk_updater_auto)
+
+        f_feed = QFormLayout()
+        feed_row = QHBoxLayout()
+        self.txt_updater_url = QLineEdit()
+        self.txt_updater_url.setPlaceholderText("https://tu-proyecto.supabase.co/storage/v1/object/public/updates/version.json")
+        btn_sugerir = QPushButton("↺ Desde Supabase")
+        btn_sugerir.setToolTip("Construir URL automáticamente usando la URL de Supabase configurada")
+        btn_sugerir.clicked.connect(self._sugerir_url_updates)
+        feed_row.addWidget(self.txt_updater_url, 1)
+        feed_row.addWidget(btn_sugerir)
+        f_feed.addRow("URL del Feed de Updates:", feed_row)
+        b_feed.addLayout(f_feed)
+
+        lbl_hint = QLabel(
+            "Si se deja vacío, RENO intentará resolver automáticamente desde "
+            "<i>&lt;Supabase URL&gt;/storage/v1/object/public/updates/version.json</i>."
+        )
+        lbl_hint.setWordWrap(True)
+        lbl_hint.setStyleSheet("color: #64748B; font-size: 11px;")
+        b_feed.addWidget(lbl_hint)
+
+        layout.addWidget(box_feed)
+
+        box_actions = QGroupBox("Comprobación Manual de Actualizaciones")
+        b_act = QHBoxLayout(box_actions)
+        self.btn_buscar_updates_cfg = QPushButton("🔍 Buscar Actualizaciones Ahora")
+        self.btn_buscar_updates_cfg.setObjectName("btnPrimary")
+        self.btn_buscar_updates_cfg.clicked.connect(self._comprobar_actualizaciones_manual)
+        b_act.addWidget(self.btn_buscar_updates_cfg)
+        self.lbl_updater_status = QLabel("Listo para comprobar.")
+        self.lbl_updater_status.setStyleSheet("color: #64748B; font-size: 11px; margin-left: 10px;")
+        b_act.addWidget(self.lbl_updater_status, 1)
+        layout.addWidget(box_actions)
+
+        layout.addStretch()
+        return widget
+
+    def _sugerir_url_updates(self) -> None:
+        sb_url = self.txt_supa_url.text().strip().rstrip("/")
+        if not sb_url:
+            QMessageBox.information(
+                self,
+                "URL de Updates",
+                "Ingrese primero la 'Supabase URL' en la pestaña Sincronización y Red.",
+            )
+            return
+        self.txt_updater_url.setText(f"{sb_url}/storage/v1/object/public/updates/version.json")
+
+    def _comprobar_actualizaciones_manual(self) -> None:
+        from src.services.updater_service import verificar_actualizacion_disponible
+
+        self.lbl_updater_status.setText("Conectando con el servidor de actualizaciones...")
+        QApplication.processEvents()
+
+        cfg_temp = self._recopilar_config_pantalla()
+        hay_nueva, info, err = verificar_actualizacion_disponible(config=cfg_temp)
+        if err:
+            self.lbl_updater_status.setText(f"❌ Error: {err}")
+            QMessageBox.warning(self, "Actualizaciones", f"No se pudo comprobar actualizaciones:\n{err}")
+        elif hay_nueva and info:
+            self.lbl_updater_status.setText(f"🚀 Nueva versión disponible: v{info.version}")
+            from src.ui.views.dialogs.actualizacion_dialog import ActualizacionDialog
+
+            dlg = ActualizacionDialog(info, config=cfg_temp, parent=self)
+            dlg.exec()
+        else:
+            self.lbl_updater_status.setText("✅ Ya tienes la última versión instalada.")
+            QMessageBox.information(self, "Actualizaciones", "La aplicación está actualizada a la última versión.")
+
+    def _crear_tab_logs(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        box = QGroupBox("Registro de Depuración y Logs de Consola Persistidos")
+        b_layout = QVBoxLayout(box)
+        b_layout.setSpacing(10)
+
+        desc = QLabel(
+            "La salida de consola (prints, logs y excepciones) se registra automáticamente en un archivo de texto .txt. "
+            "Esto permite diagnosticar fallos y tracebacks en terminales de usuario empaquetadas sin ventana de consola."
+        )
+        desc.setStyleSheet("color: #64748B; font-size: 11px;")
+        desc.setWordWrap(True)
+        b_layout.addWidget(desc)
+
+        btn_bar = QHBoxLayout()
+        btn_notepad = QPushButton("📄 Abrir Archivo de Log (TXT en Bloc de Notas)")
+        btn_notepad.setObjectName("btnPrimary")
+        btn_notepad.clicked.connect(self._abrir_log_notepad)
+        btn_bar.addWidget(btn_notepad)
+
+        btn_folder = QPushButton("📂 Abrir Carpeta de Logs")
+        btn_folder.clicked.connect(self._abrir_carpeta_logs)
+        btn_bar.addWidget(btn_folder)
+
+        btn_bar.addStretch()
+
+        btn_refresh_logs = QPushButton("🔄 Actualizar Visor")
+        btn_refresh_logs.clicked.connect(self._actualizar_visor_logs)
+        btn_bar.addWidget(btn_refresh_logs)
+
+        btn_copy = QPushButton("📋 Copiar Registro")
+        btn_copy.clicked.connect(self._copiar_logs)
+        btn_bar.addWidget(btn_copy)
+
+        b_layout.addLayout(btn_bar)
+
+        self.txt_logs_viewer = QPlainTextEdit()
+        self.txt_logs_viewer.setReadOnly(True)
+        self.txt_logs_viewer.setStyleSheet(
+            "background-color: #0F172A; color: #E2E8F0; font-family: monospace; font-size: 11px; "
+            "border: 1px solid #334155; border-radius: 4px;"
+        )
+        b_layout.addWidget(self.txt_logs_viewer, 1)
+
+        layout.addWidget(box, 1)
+        return widget
+
+    def _abrir_log_notepad(self) -> None:
+        if not abrir_en_bloc_de_notas():
+            QMessageBox.warning(
+                self,
+                "Logs",
+                f"No se pudo invocar el editor automático. Archivo en:\n{obtener_ruta_archivo_log()}",
+            )
+
+    def _abrir_carpeta_logs(self) -> None:
+        if not abrir_carpeta_en_explorador():
+            QMessageBox.warning(self, "Logs", "No se pudo abrir el explorador de archivos.")
+
+    def _actualizar_visor_logs(self) -> None:
+        texto = leer_ultimas_lineas_log(max_lineas=300)
+        self.txt_logs_viewer.setPlainText(texto)
+        sb = self.txt_logs_viewer.verticalScrollBar()
+        if sb:
+            sb.setValue(sb.maximum())
+
+    def _copiar_logs(self) -> None:
+        texto = self.txt_logs_viewer.toPlainText()
+        if texto:
+            QApplication.clipboard().setText(texto)
+            QMessageBox.information(self, "Logs", "Registro copiado al portapapeles.")
 
     def _examinar_base_datos(self) -> None:
         file_path, _ = QFileDialog.getSaveFileName(
@@ -2282,6 +2463,8 @@ class AdminConfigWidget(QWidget):
         return {
             "supabase_url": self.txt_supa_url.text().strip(),
             "supabase_anon_key": self.txt_supa_key.text().strip(),
+            "updater_url": self.txt_updater_url.text().strip(),
+            "updater_auto_check": self.chk_updater_auto.isChecked(),
             "proxy_mode": self.cmb_proxy_mode.currentData() or MODO_DIRECTO,
             "proxy_sso_server": self.txt_proxy_sso.text().strip(),
             "proxy_auth": self.cmb_proxy_auth.currentData() or AUTH_MANUAL_FIJO,
@@ -2330,7 +2513,11 @@ class AdminConfigWidget(QWidget):
         self.txt_proxy_user.setText(str(app_cfg.get("proxy_user", "")))
         self.txt_proxy_pass.setText(str(app_cfg.get("proxy_pass", "")))
 
+        self.txt_updater_url.setText(str(app_cfg.get("updater_url", "")))
+        self.chk_updater_auto.setChecked(bool(app_cfg.get("updater_auto_check", True)))
+
         self._actualizar_visibilidad_proxy()
+        self._actualizar_visor_logs()
 
     def _probar_conexion_supa(self) -> None:
         cfg_test = self._recopilar_config_pantalla()
@@ -2401,6 +2588,9 @@ class AdminConfigWidget(QWidget):
         app_cfg["proxy_port"] = self.spin_proxy_port.value()
         app_cfg["proxy_user"] = self.txt_proxy_user.text().strip()
         app_cfg["proxy_pass"] = self.txt_proxy_pass.text()
+
+        app_cfg["updater_url"] = self.txt_updater_url.text().strip()
+        app_cfg["updater_auto_check"] = self.chk_updater_auto.isChecked()
 
         guardar_configuracion_json(app_cfg)
         aplicar_configuracion_proxy(app_cfg)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -260,4 +261,89 @@ def inicializar_logging(nivel: int = logging.INFO) -> Path:
 
     _LOGGING_INICIALIZADO = True
     logger.info("=== INICIO DE SESIÓN RENO v2.0.0 - Logs en %s ===", log_file)
+    _sincronizar_alias_txt()
     return log_file
+
+
+def _sincronizar_alias_txt() -> None:
+    """Garantiza que exista una vista .txt (reno_debug.txt) fácil de abrir con el Bloc de Notas."""
+    try:
+        log_path = obtener_ruta_log()
+        txt_path = obtener_directorio_logs() / "reno_debug.txt"
+        if log_path.exists():
+            txt_path.write_text(log_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def obtener_ruta_archivo_log() -> Path:
+    """Devuelve la ruta al archivo de texto de log (.txt)."""
+    _sincronizar_alias_txt()
+    txt_path = obtener_directorio_logs() / "reno_debug.txt"
+    log_path = obtener_ruta_log()
+    return txt_path if txt_path.exists() else log_path
+
+
+def obtener_carpeta_logs() -> Path:
+    """Devuelve la carpeta donde se almacenan los archivos de logs."""
+    return obtener_directorio_logs()
+
+
+def leer_ultimas_lineas_log(max_lineas: int = 300) -> str:
+    """Lee las últimas N líneas del archivo de log para el visor en vivo."""
+    for h in logging.getLogger().handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+    log_path = obtener_ruta_log()
+    txt_path = obtener_directorio_logs() / "reno_debug.txt"
+    path = log_path if log_path.exists() else txt_path
+    if not path.exists():
+        return "(No hay registros de log generados aún)"
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lineas = f.readlines()
+            return "".join(lineas[-max_lineas:])
+    except Exception as e:
+        return f"Error al leer el archivo de log: {e}"
+
+
+def abrir_en_bloc_de_notas() -> bool:
+    """Abre el archivo de log en el Bloc de Notas de Windows o editor predeterminado."""
+    path = obtener_ruta_archivo_log()
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))
+            return True
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+            return True
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+            return True
+    except Exception:
+        if sys.platform == "win32":
+            try:
+                subprocess.Popen(["notepad.exe", str(path)])
+                return True
+            except Exception:
+                pass
+        return False
+
+
+def abrir_carpeta_en_explorador() -> bool:
+    """Abre el Explorador de archivos en la carpeta de logs."""
+    folder = obtener_carpeta_logs()
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(folder))
+            return True
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+            return True
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+            return True
+    except Exception:
+        return False
