@@ -53,7 +53,7 @@ ESPECIALIDADES_EMPLEADO = (
 DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 
 CONFIG_JSON_PATH = APP_DATA_DIR / "reno_config.json"
-PATH_BASE_FILE = APP_DATA_DIR / "path_base"
+PATH_BASE_FILE = APP_DATA_DIR / "config.json"
 
 
 def resource_path(rel_path: str | Path) -> Path:
@@ -68,15 +68,18 @@ def resource_path(rel_path: str | Path) -> Path:
 def obtener_ruta_base_datos() -> tuple[Path, Path | None]:
     """Obtiene la ruta a la base de datos SQLite y opcionalmente el XLSX asociado.
     
-    Lee desde 'path_base' o 'database_path' en reno_config.json.
+    Lee desde 'config.json' ('database_path') o 'reno_config.json'.
     Si no existe o es relativa, se resuelve contra APP_DATA_DIR.
     """
     ruta_txt = ""
     if PATH_BASE_FILE.exists():
         try:
-            with open(PATH_BASE_FILE, "r", encoding="utf-8") as f:
-                contenido = f.read().strip()
-                if contenido:
+            contenido = PATH_BASE_FILE.read_text(encoding="utf-8").strip()
+            if contenido:
+                if contenido.startswith("{"):
+                    data = json.loads(contenido)
+                    ruta_txt = str(data.get("database_path") or data.get("path_base") or "").strip()
+                else:
                     ruta_txt = contenido
         except Exception:
             pass
@@ -108,12 +111,21 @@ def obtener_ruta_base_datos() -> tuple[Path, Path | None]:
 
 
 def guardar_ruta_base_datos(nueva_ruta: str | Path) -> bool:
-    """Guarda la ruta de la base de datos tanto en path_base como en reno_config.json."""
+    """Guarda la ruta de la base de datos en config.json y en reno_config.json."""
     ruta_str = str(nueva_ruta).strip()
     exito = True
     try:
+        data: dict[str, Any] = {}
+        if PATH_BASE_FILE.exists():
+            try:
+                contenido = PATH_BASE_FILE.read_text(encoding="utf-8").strip()
+                if contenido.startswith("{"):
+                    data = json.loads(contenido)
+            except Exception:
+                data = {}
+        data["database_path"] = ruta_str
         with open(PATH_BASE_FILE, "w", encoding="utf-8") as f:
-            f.write(ruta_str)
+            json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception:
         exito = False
 

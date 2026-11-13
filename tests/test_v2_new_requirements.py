@@ -46,7 +46,8 @@ def test_persistencia_ruta_base_datos(tmp_path, monkeypatch):
     custom_db = tmp_path / "custom" / "produccion.sqlite"
     custom_db.parent.mkdir(parents=True, exist_ok=True)
 
-    test_path_base = tmp_path / "path_base"
+    import json
+    test_path_base = tmp_path / "config.json"
     test_config_json = tmp_path / "reno_config.json"
 
     import src.core.config as cfg_mod
@@ -56,7 +57,8 @@ def test_persistencia_ruta_base_datos(tmp_path, monkeypatch):
     exito = guardar_ruta_base_datos(str(custom_db))
     assert exito is True
     assert test_path_base.exists()
-    assert test_path_base.read_text(encoding="utf-8").strip() == str(custom_db)
+    data = json.loads(test_path_base.read_text(encoding="utf-8"))
+    assert data["database_path"] == str(custom_db)
 
     sqlite_path, _ = obtener_ruta_base_datos()
     assert sqlite_path == custom_db

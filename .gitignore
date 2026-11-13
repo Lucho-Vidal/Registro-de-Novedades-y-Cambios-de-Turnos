@@ -11,7 +11,7 @@ venv/
 .opencodeignore
 recomendacion.md
 /theme
-/path_base
+/config.json
 reno_config.json
 backups/
 logs/
