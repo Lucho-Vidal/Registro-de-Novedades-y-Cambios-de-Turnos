@@ -60,35 +60,48 @@ class OutboxQueue:
     def forzar_resincronizacion_total(self) -> int:
         """Marca todas las filas de las tablas principales como pendientes en sync_outbox."""
         tablas = [
-            ("dotaciones", "id"),
-            ("tipos_novedad", "id"),
-            ("personal_estacion", "id"),
-            ("destinatarios_informe", "id"),
-            ("destinatarios_ordenamiento", "id"),
-            ("roles", "id"),
-            ("usuarios", "id"),
+            ("dotaciones", "nombre"),
+            ("tipos_novedad", "nombre"),
+            ("personal_estacion", "nombre"),
+            ("destinatarios_informe", "email"),
+            ("destinatarios_ordenamiento", "email"),
+            ("roles", "nombre"),
+            ("usuarios", "username"),
             ("empleados", "legajo"),
             ("novedades", "id"),
             ("novedad_reemplazos", "id"),
             ("cambios_turno", "id"),
             ("ciclo_jornadas", "id"),
+            ("tren_paradas", "id"),
+            ("ordenamientos", "id"),
+            ("ordenamiento_tramos", "id"),
             ("auditoria", "id"),
         ]
         total = 0
         with self.db.write_transaction() as conn:
             for t, pk in tablas:
-                filas = conn.execute(f"SELECT * FROM {t};").fetchall()
+                try:
+                    filas = conn.execute(f"SELECT * FROM {t};").fetchall()
+                except Exception:
+                    continue
                 for f in filas:
                     d = dict(f)
                     val_pk = str(d.get(pk, d.get("id", "")))
+                    if not val_pk or val_pk == "None":
+                        continue
                     conn.execute(
                         """INSERT INTO sync_outbox (tabla, registro_pk, operacion, payload_json, creado_en)
                            VALUES (?, ?, 'UPSERT', ?, datetime('now', 'localtime'))
                            ON CONFLICT(tabla, registro_pk) DO UPDATE SET
                                operacion = 'UPSERT',
-                               payload_json = excluded.payload_json;""",
+                               payload_json = excluded.payload_json,
+                               intentos = 0,
+                               ultimo_error = NULL;""",
                         (t, val_pk, json.dumps(d, ensure_ascii=False, default=str)),
                     )
                     total += 1
-                conn.execute(f"UPDATE {t} SET sync_status = 'pending';")
+                try:
+                    conn.execute(f"UPDATE {t} SET sync_status = 'pending';")
+                except Exception:
+                    pass
         return total

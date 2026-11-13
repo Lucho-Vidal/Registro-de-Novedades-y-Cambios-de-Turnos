@@ -33,10 +33,31 @@ def normalizar_valor_fecha(valor: Any) -> str | None:
     s = str(valor).strip()
     if s in ("", "-", "None", "null", "undefined"):
         return None
-    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", s)
+    s_limpio = re.sub(r"[^\d/-]", "", s)
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", s_limpio)
     if m:
         dia, mes, anio = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
         return f"{anio}-{mes}-{dia}"
+    m_iso = re.match(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})", s_limpio)
+    if m_iso:
+        anio, mes, dia = m_iso.group(1), m_iso.group(2).zfill(2), m_iso.group(3).zfill(2)
+        return f"{anio}-{mes}-{dia}"
+    return None
+
+
+def normalizar_valor_timestamp(valor: Any) -> str | None:
+    if valor is None:
+        return None
+    s = str(valor).strip()
+    if s in ("", "-", "None", "null", "undefined"):
+        return None
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}:\d{1,2}(?::\d{1,2})?))?$", s)
+    if m:
+        dia, mes, anio = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+        hora = m.group(4) or "00:00:00"
+        if len(hora) == 5:
+            hora += ":00"
+        return f"{anio}-{mes}-{dia}T{hora}"
     return s
 
 
@@ -124,8 +145,13 @@ class SupabaseSyncEngine:
 
         # --- 1. PUSH DE OUTBOX ---
         if not solo_pull:
-            pendientes = self.outbox.obtener_pendientes(limite=200)
-            if pendientes:
+            iteracion = 0
+            while iteracion < 100:
+                iteracion += 1
+                pendientes = self.outbox.obtener_pendientes(limite=200)
+                if not pendientes:
+                    break
+
                 por_tabla: dict[str, list[Any]] = {}
                 for item in pendientes:
                     por_tabla.setdefault(item.tabla, []).append(item)
@@ -235,9 +261,27 @@ class SupabaseSyncEngine:
                         p_limpio = dict(p)
                         p_limpio.pop("sync_status", None)
                         p_limpio.pop("tramos_count", None)
+
+                        # En tablas de catálogo donde la clave remota es nombre o username, evitar colisiones de pkey
+                        if t in ("tipos_novedad", "roles", "usuarios"):
+                            p_limpio.pop("id", None)
+
                         for col_f in ("fecha_inicio", "fecha_fin", "fecha_cambio", "fecha"):
                             if col_f in p_limpio:
                                 p_limpio[col_f] = normalizar_valor_fecha(p_limpio[col_f])
+
+                        for col_ts in ("registrado_en", "creado_en", "actualizado_en"):
+                            if col_ts in p_limpio and p_limpio[col_ts]:
+                                p_limpio[col_ts] = normalizar_valor_timestamp(p_limpio[col_ts])
+
+                        if t == "auditoria":
+                            for jcol in ("datos_anteriores", "datos_nuevos"):
+                                if p_limpio.get(jcol) and isinstance(p_limpio[jcol], str):
+                                    try:
+                                        p_limpio[jcol] = json.loads(p_limpio[jcol])
+                                    except Exception:
+                                        p_limpio[jcol] = {"raw": p_limpio[jcol]}
+
                         if "created_at" in p_limpio and not p_limpio["created_at"]:
                             p_limpio["created_at"] = p_limpio.get("registrado_en") or p_limpio.get("creado_en") or datetime.now().isoformat()
                         if "updated_at" in p_limpio and not p_limpio["updated_at"]:
@@ -310,6 +354,10 @@ class SupabaseSyncEngine:
                                 self.outbox.registrar_fallo(outbox_id, str(ex))
 
                 self.outbox.eliminar_procesados(ids_a_eliminar)
+
+                if not ids_a_eliminar:
+                    # Si no hubo progreso en esta tanda, detener para evitar bucle
+                    break
 
                 # Marcar sync_status local como synced
                 if registros_sincronizados:

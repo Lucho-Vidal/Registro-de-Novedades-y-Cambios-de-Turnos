@@ -2219,12 +2219,18 @@ class AdminConfigWidget(QWidget):
         self.cmb_proxy_mode.currentIndexChanged.connect(self._actualizar_visibilidad_proxy)
         lay_card_sync.addWidget(self.box_proxy)
 
-        # Botón de prueba
+        # Botones de prueba y sincronización total
         btn_test_box = QHBoxLayout()
         self.btn_probar_supa = QPushButton("🔌 Probar Conexión Ahora (Testear Modo Seleccionado)")
         self.btn_probar_supa.setObjectName("btnSecondary")
         self.btn_probar_supa.clicked.connect(self._probar_conexion_supa)
         btn_test_box.addWidget(self.btn_probar_supa)
+
+        self.btn_sync_total = QPushButton("⬆️ Forzar Sincronización Total (Subir Toda la Base a Supabase)")
+        self.btn_sync_total.setObjectName("btnPrimary")
+        self.btn_sync_total.clicked.connect(self._forzar_sincronizacion_total)
+        btn_test_box.addWidget(self.btn_sync_total)
+
         btn_test_box.addStretch()
         lay_card_sync.addLayout(btn_test_box)
         lay_card_sync.addStretch()
@@ -2574,6 +2580,51 @@ class AdminConfigWidget(QWidget):
         finally:
             self.btn_probar_supa.setEnabled(True)
             self.btn_probar_supa.setText("🔌 Probar Conexión Ahora (Testear Modo Seleccionado)")
+
+    def _forzar_sincronizacion_total(self) -> None:
+        resp = QMessageBox.question(
+            self,
+            "Sincronización Total a Supabase",
+            "¿Desea marcar todas las tablas locales como pendientes y subirlas completamente a Supabase?\n\n"
+            "Esta operación asegura que toda la base de datos histórica quede respaldada en la nube.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if resp != QMessageBox.Yes:
+            return
+
+        from src.data.sync.outbox_queue import OutboxQueue
+        from src.data.sync.supabase_sync import SupabaseSyncEngine
+        from PySide6.QtWidgets import QApplication
+
+        self.btn_sync_total.setEnabled(False)
+        self.btn_sync_total.setText("⏳ Encolando registros locales...")
+        QApplication.processEvents()
+
+        try:
+            outbox = OutboxQueue(self.db)
+            total_encolados = outbox.forzar_resincronizacion_total()
+            self.btn_sync_total.setText(f"⏳ Subiendo {total_encolados} registros a Supabase...")
+            QApplication.processEvents()
+
+            engine = SupabaseSyncEngine(self.db)
+            enviados, recibidos = engine._ejecutar_sync(solo_push=True)
+            pendientes = outbox.contar_pendientes()
+
+            QMessageBox.information(
+                self,
+                "Sincronización Total Finalizada",
+                f"<b>Sincronización Total Completada:</b><br><br>"
+                f"• Registros encolados: {total_encolados}<br>"
+                f"• Registros procesados y enviados: {enviados}<br>"
+                f"• Pendientes restantes en cola: {pendientes}<br><br>"
+                f"{'🟢 La base de datos está completamente sincronizada con Supabase.' if pendientes == 0 else '🟡 Quedan registros pendientes en cola.'}",
+            )
+        except Exception as ex:
+            QMessageBox.critical(self, "Error de Sincronización", f"Ocurrió un error al sincronizar:\n\n{ex}")
+        finally:
+            self.btn_sync_total.setEnabled(True)
+            self.btn_sync_total.setText("⬆️ Forzar Sincronización Total (Subir Toda la Base a Supabase)")
 
     def _guardar(self) -> None:
         with self.db.write_transaction() as conn:
