@@ -84,6 +84,18 @@ def obtener_ruta_base_datos() -> tuple[Path, Path | None]:
         except Exception:
             pass
 
+    # Si no había config.json pero existe el archivo legado path_base, migrarlo y eliminarlo
+    legacy_file = APP_DATA_DIR / "path_base"
+    if not ruta_txt and legacy_file.exists():
+        try:
+            leg_val = legacy_file.read_text(encoding="utf-8").strip()
+            if leg_val:
+                ruta_txt = leg_val
+                guardar_ruta_base_datos(leg_val)
+            legacy_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     if not ruta_txt and CONFIG_JSON_PATH.exists():
         try:
             with open(CONFIG_JSON_PATH, "r", encoding="utf-8") as f:
@@ -126,6 +138,7 @@ def guardar_ruta_base_datos(nueva_ruta: str | Path) -> bool:
         data["database_path"] = ruta_str
         with open(PATH_BASE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        (APP_DATA_DIR / "path_base").unlink(missing_ok=True)
     except Exception:
         exito = False
 

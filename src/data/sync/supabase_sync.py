@@ -123,6 +123,49 @@ class SupabaseSyncEngine:
         finally:
             self._lock.release()
 
+    def vaciar_tablas_remotas(self) -> int:
+        """Elimina todos los registros de las tablas reno_* en Supabase en orden seguro."""
+        cfg = cargar_configuracion_app()
+        url_base = sanitizar_supabase_url(self.supabase_url or cfg.get("supabase_url"))
+        anon_key = (self.supabase_key or cfg.get("supabase_anon_key") or "").strip()
+        if not url_base or not anon_key:
+            raise ValueError("Credenciales de Supabase no configuradas.")
+
+        from ...core.proxy import construir_headers_supabase
+        headers = construir_headers_supabase(anon_key)
+
+        tablas_a_vaciar = [
+            ("reno_auditoria", "id=gte.0"),
+            ("reno_ordenamiento_tramos", "id=gte.0"),
+            ("reno_ordenamientos", "id=gte.0"),
+            ("reno_tren_paradas", "id=gte.0"),
+            ("reno_ciclo_jornadas", "id=gte.0"),
+            ("reno_cambios_turno", "id=gte.0"),
+            ("reno_novedad_reemplazos", "id=gte.0"),
+            ("reno_novedades", "id=gte.0"),
+            ("reno_empleados", "id=gte.0"),
+            ("reno_personal_estacion", "id=gte.0"),
+            ("reno_destinatarios_ordenamiento", "id=gte.0"),
+            ("reno_destinatarios_informe", "id=gte.0"),
+            ("reno_tipos_novedad", "id=gte.0"),
+            ("reno_usuarios", "id=gte.0"),
+            ("reno_roles", "id=gte.0"),
+            ("reno_dotaciones", "id=gte.0"),
+        ]
+
+        vaciadas = 0
+        for tabla, filtro in tablas_a_vaciar:
+            endpoint = f"{url_base}/rest/v1/{tabla}?{filtro}"
+            try:
+                status, body, _ = ejecutar_request_http(cfg, endpoint, method="DELETE", headers=headers, timeout_sec=15)
+                if 200 <= status < 300 or status == 404:
+                    vaciadas += 1
+                else:
+                    logger.warning("Fallo al vaciar %s: status %s %s", tabla, status, body.decode("utf-8", "ignore"))
+            except Exception as ex:
+                logger.warning("Excepción al vaciar %s: %s", tabla, ex)
+        return vaciadas
+
     def _ejecutar_sync(self, solo_push: bool = False, solo_pull: bool = False) -> tuple[int, int]:
         cfg = cargar_configuracion_app()
         url_base = sanitizar_supabase_url(self.supabase_url or cfg.get("supabase_url"))

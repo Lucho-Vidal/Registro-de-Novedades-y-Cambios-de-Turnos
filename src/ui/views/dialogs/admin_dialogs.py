@@ -2231,6 +2231,12 @@ class AdminConfigWidget(QWidget):
         self.btn_sync_total.clicked.connect(self._forzar_sincronizacion_total)
         btn_test_box.addWidget(self.btn_sync_total)
 
+        self.btn_vaciar_y_subir = QPushButton("🗑️ Vaciar Supabase y Re-subir Todo")
+        self.btn_vaciar_y_subir.setObjectName("btnDanger")
+        self.btn_vaciar_y_subir.setToolTip("Elimina todos los datos en Supabase y vuelve a subir toda la base local limpia (ideal para pase a producción)")
+        self.btn_vaciar_y_subir.clicked.connect(self._vaciar_y_resubir_supabase)
+        btn_test_box.addWidget(self.btn_vaciar_y_subir)
+
         btn_test_box.addStretch()
         lay_card_sync.addLayout(btn_test_box)
         lay_card_sync.addStretch()
@@ -2625,6 +2631,63 @@ class AdminConfigWidget(QWidget):
         finally:
             self.btn_sync_total.setEnabled(True)
             self.btn_sync_total.setText("⬆️ Forzar Sincronización Total (Subir Toda la Base a Supabase)")
+
+    def _vaciar_y_resubir_supabase(self) -> None:
+        resp = QMessageBox.warning(
+            self,
+            "⚠️ Confirmación de Vaciado Remoto",
+            "<b>¿Está seguro de que desea VACIAR completamente Supabase y volver a subir todo?</b><br><br>"
+            "Esta operación:<br>"
+            "1. Eliminará todos los registros actuales en Supabase (todas las tablas <code>reno_*</code>).<br>"
+            "2. Encolará y subirá el 100% de la base de datos local SQLite de forma limpia e íntegra.<br><br>"
+            "<i>Recomendado para el paso a Producción o para purgar datos de pruebas.</i>",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+
+        from src.data.sync.outbox_queue import OutboxQueue
+        from src.data.sync.supabase_sync import SupabaseSyncEngine
+        from PySide6.QtWidgets import QApplication
+
+        self.btn_vaciar_y_subir.setEnabled(False)
+        self.btn_sync_total.setEnabled(False)
+        self.btn_vaciar_y_subir.setText("⏳ Vaciando tablas en Supabase...")
+        QApplication.processEvents()
+
+        try:
+            engine = SupabaseSyncEngine(self.db)
+            vaciadas = engine.vaciar_tablas_remotas()
+
+            self.btn_vaciar_y_subir.setText("⏳ Encolando registros locales...")
+            QApplication.processEvents()
+
+            outbox = OutboxQueue(self.db)
+            total_encolados = outbox.forzar_resincronizacion_total()
+
+            self.btn_vaciar_y_subir.setText(f"⏳ Subiendo {total_encolados} registros a Supabase...")
+            QApplication.processEvents()
+
+            enviados, recibidos = engine._ejecutar_sync(solo_push=True)
+            pendientes = outbox.contar_pendientes()
+
+            QMessageBox.information(
+                self,
+                "Vaciado y Carga Completada",
+                f"<b>Proceso Finalizado con Éxito:</b><br><br>"
+                f"• Tablas remotas vaciadas: {vaciadas}<br>"
+                f"• Registros locales encolados: {total_encolados}<br>"
+                f"• Registros subidos a Supabase: {enviados}<br>"
+                f"• Pendientes en cola: {pendientes}<br><br>"
+                f"{'🟢 La base remota en Supabase ha quedado 100% sincronizada y limpia.' if pendientes == 0 else '🟡 Quedan registros pendientes en cola.'}",
+            )
+        except Exception as ex:
+            QMessageBox.critical(self, "Error", f"Ocurrió un error durante el vaciado y carga:\n\n{ex}")
+        finally:
+            self.btn_vaciar_y_subir.setEnabled(True)
+            self.btn_sync_total.setEnabled(True)
+            self.btn_vaciar_y_subir.setText("🗑️ Vaciar Supabase y Re-subir Todo")
 
     def _guardar(self) -> None:
         with self.db.write_transaction() as conn:

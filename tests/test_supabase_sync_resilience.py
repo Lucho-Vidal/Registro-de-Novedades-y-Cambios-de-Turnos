@@ -4,7 +4,7 @@ import pytest
 
 from src.data.database import DatabaseManager
 from src.data.migrations import init_database_schema
-from src.data.sync.supabase_sync import SupabaseSyncEngine, normalizar_valor_fecha
+from src.data.sync.supabase_sync import SupabaseSyncEngine, normalizar_valor_fecha, normalizar_valor_timestamp
 from src.services.records_service import RecordsService
 
 
@@ -16,6 +16,27 @@ def test_normalizar_valor_fecha():
     assert normalizar_valor_fecha("22/08/2026") == "2026-08-22"
     assert normalizar_valor_fecha("5/11/2026") == "2026-11-05"
     assert normalizar_valor_fecha("2026-11-05") == "2026-11-05"
+    assert normalizar_valor_fecha("1¡4/08/2025") == "2025-08-14"
+
+
+def test_normalizar_valor_timestamp():
+    assert normalizar_valor_timestamp(None) is None
+    assert normalizar_valor_timestamp("") is None
+    assert normalizar_valor_timestamp("29/07/2026 09:41") == "2026-07-29T09:41:00"
+    assert normalizar_valor_timestamp("2026-07-29 09:41:00") == "2026-07-29 09:41:00"
+
+
+def test_vaciar_tablas_remotas(tmp_path: Path):
+    db_path = tmp_path / "test_vaciar.sqlite"
+    db = DatabaseManager(db_path)
+    init_database_schema(db)
+    engine = SupabaseSyncEngine(db, supabase_url="https://test.supabase.co", supabase_key="test-key")
+
+    with patch("src.data.sync.supabase_sync.ejecutar_request_http") as mock_http:
+        mock_http.return_value = (200, b"", {})
+        vaciadas = engine.vaciar_tablas_remotas()
+        assert vaciadas == 16
+        assert mock_http.call_count == 16
 
 
 def test_sync_outbox_sanitizacion_y_resiliencia(tmp_path: Path):

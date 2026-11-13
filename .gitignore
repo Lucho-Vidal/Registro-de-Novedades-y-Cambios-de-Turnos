@@ -12,6 +12,7 @@ venv/
 recomendacion.md
 /theme
 /config.json
+path_base
 reno_config.json
 backups/
 logs/
