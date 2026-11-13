@@ -27,6 +27,19 @@ from .outbox_queue import OutboxQueue
 logger = logging.getLogger("reno.data.sync")
 
 
+def normalizar_valor_fecha(valor: Any) -> str | None:
+    if valor is None:
+        return None
+    s = str(valor).strip()
+    if s in ("", "-", "None", "null", "undefined"):
+        return None
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", s)
+    if m:
+        dia, mes, anio = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+        return f"{anio}-{mes}-{dia}"
+    return s
+
+
 def sanitizar_supabase_url(url: str | None) -> str:
     if not url:
         return ""
@@ -113,14 +126,9 @@ class SupabaseSyncEngine:
         if not solo_pull:
             pendientes = self.outbox.obtener_pendientes(limite=200)
             if pendientes:
-                # Agrupar por tabla
-                por_tabla: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+                por_tabla: dict[str, list[Any]] = {}
                 for item in pendientes:
-                    try:
-                        d = json.loads(item.payload_json) if item.payload_json else {}
-                        por_tabla.setdefault(item.tabla, []).append((item.id, d))
-                    except Exception:
-                        continue
+                    por_tabla.setdefault(item.tabla, []).append(item)
 
                 # Mapeo tabla local -> tabla remota prefijada y su primary key
                 pks_map = {
@@ -151,6 +159,8 @@ class SupabaseSyncEngine:
                 ]
 
                 ids_a_eliminar = []
+                registros_sincronizados: list[tuple[str, str]] = []
+
                 for t in orden_tablas:
                     if t not in por_tabla:
                         continue
@@ -158,41 +168,163 @@ class SupabaseSyncEngine:
                     if not remota_info:
                         continue
                     tabla_remota, pk_col = remota_info
-                    items_lote = por_tabla[t]
-                    lote_payload = []
-                    for outbox_id, p in items_lote:
+                    items_de_tabla = por_tabla[t]
+
+                    items_validos: list[tuple[int, str, dict[str, Any]]] = []
+                    for item in items_de_tabla:
+                        # 1. Operación DELETE
+                        if item.operacion == "DELETE":
+                            endpoint_del = f"{url_base}/rest/v1/{tabla_remota}?{pk_col}=eq.{urllib.parse.quote(str(item.registro_pk))}"
+                            try:
+                                status_del, body_del, _ = ejecutar_request_http(
+                                    config=cfg,
+                                    url=endpoint_del,
+                                    method="DELETE",
+                                    headers=headers_base,
+                                    timeout_sec=15,
+                                )
+                                if 200 <= status_del < 300 or status_del == 404:
+                                    ids_a_eliminar.append(item.id)
+                                    enviados += 1
+                                else:
+                                    self.outbox.registrar_fallo(item.id, body_del.decode("utf-8", "ignore"))
+                            except Exception as ex_del:
+                                self.outbox.registrar_fallo(item.id, str(ex_del))
+                            continue
+
+                        # 2. Operaciones INSERT / UPDATE / UPSERT
+                        try:
+                            p = json.loads(item.payload_json) if item.payload_json else {}
+                        except Exception:
+                            p = {}
+
+                        # Sanitización específica: novedad_reemplazos con formato legado {"reemplazos": []}
+                        if t == "novedad_reemplazos" and ("reemplazos" in p or "id" not in p):
+                            try:
+                                with self.db.read_connection() as conn:
+                                    row_local = conn.execute("SELECT * FROM novedad_reemplazos WHERE id = ?;", (item.registro_pk,)).fetchone()
+                                    if row_local:
+                                        p = dict(row_local)
+                                    else:
+                                        logger.info("Descartando outbox huérfano en novedad_reemplazos id=%s", item.registro_pk)
+                                        ids_a_eliminar.append(item.id)
+                                        continue
+                            except Exception:
+                                ids_a_eliminar.append(item.id)
+                                continue
+
+                        # Verificación de clave primaria requerida para PostgREST upsert
+                        cols_pk = [c.strip() for c in pk_col.split(",") if c.strip()]
+                        faltan_pks = [c for c in cols_pk if c not in p or p[c] is None]
+                        if faltan_pks:
+                            try:
+                                with self.db.read_connection() as conn:
+                                    pk_check_col = cols_pk[0]
+                                    row_local = conn.execute(f"SELECT * FROM {t} WHERE {pk_check_col} = ?;", (item.registro_pk,)).fetchone()
+                                    if row_local:
+                                        p = dict(row_local)
+                            except Exception:
+                                pass
+
+                        faltan_pks_post = [c for c in cols_pk if c not in p or p[c] is None]
+                        if faltan_pks_post:
+                            logger.warning("Descartando outbox con payload inválido en %s id=%s (falta %s)", t, item.registro_pk, faltan_pks_post)
+                            ids_a_eliminar.append(item.id)
+                            continue
+
                         p_limpio = dict(p)
                         p_limpio.pop("sync_status", None)
-                        lote_payload.append(p_limpio)
+                        p_limpio.pop("tramos_count", None)
+                        for col_f in ("fecha_inicio", "fecha_fin", "fecha_cambio", "fecha"):
+                            if col_f in p_limpio:
+                                p_limpio[col_f] = normalizar_valor_fecha(p_limpio[col_f])
+                        if "created_at" in p_limpio and not p_limpio["created_at"]:
+                            p_limpio["created_at"] = p_limpio.get("registrado_en") or p_limpio.get("creado_en") or datetime.now().isoformat()
+                        if "updated_at" in p_limpio and not p_limpio["updated_at"]:
+                            p_limpio["updated_at"] = p_limpio.get("created_at") or datetime.now().isoformat()
+                        items_validos.append((item.id, item.registro_pk, p_limpio))
 
-                    endpoint = f"{url_base}/rest/v1/{tabla_remota}?on_conflict={pk_col}"
-                    data_bytes = json.dumps(lote_payload, ensure_ascii=False).encode("utf-8")
-                    req_hdrs = dict(headers_base)
-                    req_hdrs["Prefer"] = "resolution=merge-duplicates,return=minimal"
+                    if not items_validos:
+                        continue
 
-                    try:
-                        status, body, _ = ejecutar_request_http(
-                            config=cfg,
-                            url=endpoint,
-                            method="POST",
-                            data=data_bytes,
-                            headers=req_hdrs,
-                            timeout_sec=15,
-                        )
-                        if 200 <= status < 300:
-                            for outbox_id, _ in items_lote:
-                                ids_a_eliminar.append(outbox_id)
-                            enviados += len(items_lote)
-                        else:
-                            msg_err = body.decode("utf-8", "ignore")
-                            for outbox_id, _ in items_lote:
-                                self.outbox.registrar_fallo(outbox_id, msg_err)
-                    except Exception as ex:
-                        for outbox_id, _ in items_lote:
-                            self.outbox.registrar_fallo(outbox_id, str(ex))
-                        raise
+                    # Determinar si todos los payloads tienen exactamente las mismas columnas (requisito PostgREST para lotes)
+                    key_signatures = {frozenset(pl.keys()) for _, _, pl in items_validos}
+                    mismo_esquema = len(key_signatures) == 1
+
+                    exito_batch = False
+                    if mismo_esquema and len(items_validos) > 1:
+                        endpoint = f"{url_base}/rest/v1/{tabla_remota}?on_conflict={pk_col}"
+                        batch_payload = [pl for _, _, pl in items_validos]
+                        data_bytes = json.dumps(batch_payload, ensure_ascii=False).encode("utf-8")
+                        req_hdrs = dict(headers_base)
+                        req_hdrs["Prefer"] = "resolution=merge-duplicates,return=minimal"
+
+                        try:
+                            status, body, _ = ejecutar_request_http(
+                                config=cfg,
+                                url=endpoint,
+                                method="POST",
+                                data=data_bytes,
+                                headers=req_hdrs,
+                                timeout_sec=15,
+                            )
+                            if 200 <= status < 300:
+                                for outbox_id, reg_pk, _ in items_validos:
+                                    ids_a_eliminar.append(outbox_id)
+                                    registros_sincronizados.append((t, reg_pk))
+                                enviados += len(items_validos)
+                                exito_batch = True
+                            else:
+                                logger.warning(
+                                    "Envío en lote de %s falló (status %s): %s. Reintentando individualmente...",
+                                    t, status, body.decode("utf-8", "ignore")
+                                )
+                        except Exception as ex:
+                            logger.warning("Error en petición de lote %s: %s. Reintentando individualmente...", t, ex)
+
+                    # Si no se pudo en lote o los esquemas difieren, enviar individualmente
+                    if not exito_batch:
+                        for outbox_id, reg_pk, pl in items_validos:
+                            item_endpoint = f"{url_base}/rest/v1/{tabla_remota}?on_conflict={pk_col}"
+                            item_bytes = json.dumps([pl], ensure_ascii=False).encode("utf-8")
+                            req_hdrs = dict(headers_base)
+                            req_hdrs["Prefer"] = "resolution=merge-duplicates,return=minimal"
+
+                            try:
+                                status, body, _ = ejecutar_request_http(
+                                    config=cfg,
+                                    url=item_endpoint,
+                                    method="POST",
+                                    data=item_bytes,
+                                    headers=req_hdrs,
+                                    timeout_sec=15,
+                                )
+                                if 200 <= status < 300:
+                                    ids_a_eliminar.append(outbox_id)
+                                    registros_sincronizados.append((t, reg_pk))
+                                    enviados += 1
+                                else:
+                                    msg_err = body.decode("utf-8", "ignore")
+                                    self.outbox.registrar_fallo(outbox_id, msg_err)
+                            except Exception as ex:
+                                self.outbox.registrar_fallo(outbox_id, str(ex))
 
                 self.outbox.eliminar_procesados(ids_a_eliminar)
+
+                # Marcar sync_status local como synced
+                if registros_sincronizados:
+                    try:
+                        with self.db.write_transaction() as conn:
+                            for tab, r_pk in registros_sincronizados:
+                                rem_info = pks_map.get(tab)
+                                if rem_info:
+                                    pk_f = rem_info[1].split(",")[0].strip()
+                                    try:
+                                        conn.execute(f"UPDATE {tab} SET sync_status = 'synced' WHERE {pk_f} = ?;", (r_pk,))
+                                    except Exception:
+                                        pass
+                    except Exception as ex_sync_local:
+                        logger.debug("No se pudo actualizar sync_status local: %s", ex_sync_local)
 
         # --- 2. PULL INCREMENTAL + ANTI-COLISIÓN ---
         if not solo_push:

@@ -510,10 +510,11 @@ class RecordsService:
             if not before:
                 raise ValueError("El empleado no existe.")
             nuevo_estado = 1 - before["activo"]
-            conn.execute("UPDATE empleados SET activo=? WHERE id=?", (nuevo_estado, empleado_id))
+            conn.execute("UPDATE empleados SET activo=?, sync_status='pending' WHERE id=?", (nuevo_estado, empleado_id))
+            after = dict(conn.execute("SELECT * FROM empleados WHERE id=?", (empleado_id,)).fetchone())
             accion = "desactivar" if nuevo_estado == 0 else "reactivar"
             self._audit(conn, user_id, windows_user, accion, "empleado", empleado_id, dict(before), {"activo": nuevo_estado})
-            self._enqueue_sync(conn, "empleados", empleado_id, "UPDATE", {"activo": nuevo_estado})
+            self._enqueue_sync(conn, "empleados", after["legajo"], "UPDATE", after)
             return nuevo_estado
 
     # ---------------------------------------------------------
@@ -908,9 +909,9 @@ class RecordsService:
                 raise ValueError("La novedad no existe.")
             if not bypass_window and not self.dentro_de_ventana(before["registrado_en"], "eliminar_horas"):
                 raise ValueError("El registro superó el tiempo permitido para eliminar.")
-            conn.execute("UPDATE novedades SET activo=0 WHERE id=?", (record_id,))
-            after = {"activo": 0}
-            self._audit(conn, user_id, windows_user, "eliminar", "novedad", record_id, dict(before), after)
+            conn.execute("UPDATE novedades SET activo=0, sync_status='pending' WHERE id=?", (record_id,))
+            after = dict(conn.execute("SELECT * FROM novedades WHERE id=?", (record_id,)).fetchone())
+            self._audit(conn, user_id, windows_user, "eliminar", "novedad", record_id, dict(before), {"activo": 0})
             self._enqueue_sync(conn, "novedades", record_id, "UPDATE", after)
 
     # ---------------------------------------------------------
@@ -1040,9 +1041,9 @@ class RecordsService:
                 raise ValueError("La cambio de turno no existe.")
             if not bypass_window and not self.dentro_de_ventana(before["registrado_en"], "eliminar_horas"):
                 raise ValueError("El registro superó el tiempo permitido para eliminar.")
-            conn.execute("UPDATE cambios_turno SET activo=0 WHERE id=?", (record_id,))
-            after = {"activo": 0}
-            self._audit(conn, user_id, windows_user, "eliminar", "cambio_turno", record_id, dict(before), after)
+            conn.execute("UPDATE cambios_turno SET activo=0, sync_status='pending' WHERE id=?", (record_id,))
+            after = dict(conn.execute("SELECT * FROM cambios_turno WHERE id=?", (record_id,)).fetchone())
+            self._audit(conn, user_id, windows_user, "eliminar", "cambio_turno", record_id, dict(before), {"activo": 0})
             self._enqueue_sync(conn, "cambios_turno", record_id, "UPDATE", after)
 
     # ---------------------------------------------------------
@@ -1246,26 +1247,39 @@ class RecordsService:
                     (novedad_id,),
                 ).fetchall()
             ]
-            conn.execute("UPDATE novedad_reemplazos SET activo = 0 WHERE novedad_id = ? AND activo = 1", (novedad_id,))
+            reemplazos_previos = [
+                r["id"] for r in conn.execute(
+                    "SELECT id FROM novedad_reemplazos WHERE novedad_id=? AND activo=1",
+                    (novedad_id,),
+                ).fetchall()
+            ]
+            conn.execute("UPDATE novedad_reemplazos SET activo = 0, sync_status = 'pending' WHERE novedad_id = ? AND activo = 1", (novedad_id,))
+            for rp_id in reemplazos_previos:
+                rp_row = dict(conn.execute("SELECT * FROM novedad_reemplazos WHERE id=?", (rp_id,)).fetchone())
+                self._enqueue_sync(conn, "novedad_reemplazos", rp_id, "UPDATE", rp_row)
+
             ahora = self.db.now()
             win_usr = (windows_user or "").strip() or obtener_usuario_windows()
             for t in tramos_norm:
-                conn.execute(
+                cur = conn.execute(
                     """INSERT INTO novedad_reemplazos
                        (novedad_id, legajo_reemplazo, apellidos_nombres_reemplazo, turnos_reemplazo,
-                        franco_reemplazo, fecha_inicio, fecha_fin, usuario_windows, usuario_id, creado_en, activo)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                        franco_reemplazo, fecha_inicio, fecha_fin, usuario_windows, usuario_id, creado_en, activo, sync_status)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending')""",
                     (
                         novedad_id, t["legajo_reemplazo"], t["apellidos_nombres_reemplazo"],
                         t["turnos_reemplazo"], t["franco_reemplazo"], t["fecha_inicio"],
                         t["fecha_fin"], win_usr, user_id, ahora,
                     ),
                 )
+                r_id = cur.lastrowid
+                after = dict(conn.execute("SELECT * FROM novedad_reemplazos WHERE id=?", (r_id,)).fetchone())
+                self._enqueue_sync(conn, "novedad_reemplazos", r_id, "INSERT", after)
+
             self._audit(
                 conn, user_id, win_usr, "reemplazos", "novedad", novedad_id,
                 {"reemplazos": anteriores}, {"reemplazos": tramos_norm},
             )
-            self._enqueue_sync(conn, "novedad_reemplazos", novedad_id, "UPDATE", {"reemplazos": tramos_norm})
 
     def desactivar_reemplazo(
         self,
@@ -1278,9 +1292,10 @@ class RecordsService:
             before = conn.execute("SELECT * FROM novedad_reemplazos WHERE id = ?", (int(reemplazo_id),)).fetchone()
             if not before:
                 return
-            conn.execute("UPDATE novedad_reemplazos SET activo = 0 WHERE id = ?", (int(reemplazo_id),))
+            conn.execute("UPDATE novedad_reemplazos SET activo = 0, sync_status = 'pending' WHERE id = ?", (int(reemplazo_id),))
+            after = dict(conn.execute("SELECT * FROM novedad_reemplazos WHERE id = ?", (int(reemplazo_id),)).fetchone())
             self._audit(conn, user_id, windows_user, "eliminar", "novedad_reemplazo", int(reemplazo_id), dict(before), {"activo": 0})
-            self._enqueue_sync(conn, "novedad_reemplazos", int(reemplazo_id), "UPDATE", {"activo": 0})
+            self._enqueue_sync(conn, "novedad_reemplazos", int(reemplazo_id), "UPDATE", after)
 
     def asignar_reemplazo_rapido(
         self,
@@ -2075,13 +2090,12 @@ class RecordsService:
                 raise ValueError("El registro no existe.")
             if table == "ordenamientos":
                 conn.execute(
-                    "UPDATE ordenamientos SET activo=1, estado='activo', deleted_at=NULL, updated_at=datetime('now', 'localtime') WHERE id=?",
+                    "UPDATE ordenamientos SET activo=1, estado='activo', deleted_at=NULL, updated_at=datetime('now', 'localtime'), sync_status='pending' WHERE id=?",
                     (record_id,),
                 )
-                after = {"activo": 1, "estado": "activo", "deleted_at": None}
             else:
-                conn.execute(f"UPDATE {table} SET activo=1 WHERE id=?", (record_id,))
-                after = {"activo": 1}
+                conn.execute(f"UPDATE {table} SET activo=1, sync_status='pending' WHERE id=?", (record_id,))
+            after = dict(conn.execute(f"SELECT * FROM {table} WHERE id=?", (record_id,)).fetchone())
             self._audit(conn, user_id, windows_user, "recuperar", entidad, record_id, dict(before), after)
             self._enqueue_sync(conn, table, record_id, "UPDATE", after)
 
@@ -3459,8 +3473,9 @@ class RecordsService:
                 )
 
             after = dict(conn.execute("SELECT * FROM ordenamientos WHERE id = ?", (ord_id,)).fetchone())
-            after["tramos_count"] = len(tramos)
-            self._audit(conn, user_id, win_usr, "crear", "ordenamiento", ord_id, None, after)
+            audit_after = dict(after)
+            audit_after["tramos_count"] = len(tramos)
+            self._audit(conn, user_id, win_usr, "crear", "ordenamiento", ord_id, None, audit_after)
             self._enqueue_sync(conn, "ordenamientos", ord_id, "INSERT", after)
             return ord_id
 
@@ -3538,8 +3553,9 @@ class RecordsService:
                 )
 
             after = dict(conn.execute("SELECT * FROM ordenamientos WHERE id = ?", (ord_id,)).fetchone())
-            after["tramos_count"] = len(tramos)
-            self._audit(conn, user_id, win_usr, "modificar", "ordenamiento", ord_id, dict(before), after)
+            audit_after = dict(after)
+            audit_after["tramos_count"] = len(tramos)
+            self._audit(conn, user_id, win_usr, "modificar", "ordenamiento", ord_id, dict(before), audit_after)
             self._enqueue_sync(conn, "ordenamientos", ord_id, "UPDATE", after)
 
     def eliminar_ordenamiento(

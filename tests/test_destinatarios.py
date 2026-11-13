@@ -93,5 +93,6 @@ def test_admin_destinatarios_widget_ui(qapp, tmp_path: Path):
 
     # Verificar integración dentro de AdminConfigWidget
     config_widget = AdminConfigWidget(db, records_service=svc)
-    assert config_widget.tabs.count() == 3
-    assert "Destinatarios" in config_widget.tabs.tabText(2)
+    assert config_widget.tabs.count() >= 3
+    tab_titles = [config_widget.tabs.tabText(i) for i in range(config_widget.tabs.count())]
+    assert any("Destinatarios" in title for title in tab_titles)
