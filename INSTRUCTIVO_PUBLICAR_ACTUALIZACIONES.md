@@ -101,13 +101,25 @@ El script:
 - Creará `Instalador/version.json` y `Instalador/reno_version.json`.
 
 ### Paso 5: Subir los archivos a Supabase Storage
-1. Abrir el panel de control de Supabase > **Storage**.
-2. Ingresar al bucket público **`updates`**.
-3. Subir:
-   - `RENO_Setup_v2.0.1.exe` (o los archivos `.part1`, `.part2` si fue dividido).
-   - `version.json` (y `reno_version.json`).
 
-*(Opcional: Si se cuenta con la `service_role` key, se puede usar `python scripts/publicar_actualizacion.py --subir --service-key TU_CLAVE` para subida desatendida).*
+**Opción A — Subida Automática Desatendida con `.env` (Recomendado):**
+Configure sus credenciales en el archivo local `.env`:
+```env
+SUPABASE_URL=https://tu-proyecto.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=tu_service_role_secret_key_aqui
+SUPABASE_STORAGE_BUCKET=updates
+```
+Luego ejecute el comando agregando la bandera `--subir`:
+```bash
+python scripts/publicar_actualizacion.py --version-app 2.0.1 --subir
+```
+El script subirá automáticamente `version.json`, `reno_version.json` y el instalador o partes (`.part1`, `.part2`) a Supabase Storage con soporte de sobreescritura (`x-upsert: true`).
+
+**Opción B — Subida Manual desde Supabase Dashboard:**
+1. Abrir el panel de Supabase > **Storage** > bucket **`updates`**.
+2. Subir manualmente:
+   - `RENO_Setup_v2.0.1.exe` (o los fragmentos `.part*`).
+   - `version.json` y `reno_version.json`.
 
 ---
 

@@ -82,9 +82,19 @@ def parse_args():
         help="Intenta subir automáticamente los archivos a Supabase Storage bucket 'updates'",
     )
     parser.add_argument(
+        "--supabase-url",
+        default=os.environ.get("SUPABASE_URL", ""),
+        help="URL base de Supabase (por defecto lee SUPABASE_URL de .env)",
+    )
+    parser.add_argument(
         "--service-key",
-        default="",
-        help="Clave de servicio (service_role) para subida desatendida a Supabase Storage",
+        default=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or os.environ.get("SUPABASE_SERVICE_KEY", ""),
+        help="Clave de servicio (service_role) para subida desatendida a Supabase Storage (por defecto lee SUPABASE_SERVICE_ROLE_KEY de .env)",
+    )
+    parser.add_argument(
+        "--bucket",
+        default=os.environ.get("SUPABASE_STORAGE_BUCKET", "updates"),
+        help="Bucket de Supabase Storage donde se publicarán los archivos (por defecto: 'updates')",
     )
     return parser.parse_args()
 
@@ -142,6 +152,64 @@ def extraer_novedades_desde_changelog(version: str) -> list[str]:
     ]
 
 
+def subir_archivo_a_supabase(
+    supabase_url: str,
+    bucket: str,
+    api_key: str,
+    archivo_local: Path,
+) -> bool:
+    """Sube un archivo a Supabase Storage con soporte de sobrescritura (x-upsert: true)."""
+    import mimetypes
+
+    nombre_archivo = archivo_local.name
+    endpoint = f"{supabase_url.rstrip('/')}/storage/v1/object/{bucket}/{nombre_archivo}"
+    content_type, _ = mimetypes.guess_type(str(archivo_local))
+    if not content_type:
+        content_type = "application/json" if archivo_local.suffix == ".json" else "application/octet-stream"
+
+    headers = {
+        "apikey": api_key,
+        "Authorization": f"Bearer {api_key}",
+        "x-upsert": "true",
+        "Content-Type": content_type,
+    }
+
+    tamano_bytes = archivo_local.stat().st_size
+    tamano_mb = tamano_bytes / (1024 * 1024)
+    print(f"  -> Subiendo {nombre_archivo} ({tamano_mb:.2f} MB)...", end=" ", flush=True)
+
+    try:
+        try:
+            import httpx
+
+            with open(archivo_local, "rb") as f:
+                contenido = f.read()
+            with httpx.Client(timeout=300.0) as client:
+                resp = client.post(endpoint, headers=headers, content=contenido)
+                if resp.status_code in (200, 201):
+                    print("✅ [OK]")
+                    return True
+                else:
+                    print(f"❌ Error HTTP {resp.status_code}: {resp.text}")
+                    return False
+        except ImportError:
+            import urllib.request
+
+            with open(archivo_local, "rb") as f:
+                contenido = f.read()
+            req = urllib.request.Request(endpoint, data=contenido, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                if resp.status in (200, 201):
+                    print("✅ [OK]")
+                    return True
+                else:
+                    print(f"❌ Error HTTP {resp.status}")
+                    return False
+    except Exception as e:
+        print(f"❌ Falló subida: {e}")
+        return False
+
+
 def main():
     args = parse_args()
     version = args.version_app.strip().lstrip("vV")
@@ -184,12 +252,13 @@ def main():
 
     # 2. Resolver URLs
     cfg = cargar_configuracion_app()
-    sb_url = str(cfg.get("supabase_url", "")).strip().rstrip("/")
+    sb_url = (args.supabase_url or str(cfg.get("supabase_url", ""))).strip().rstrip("/")
+    bucket = (args.bucket or str(cfg.get("supabase_storage_bucket", "updates"))).strip()
 
     base_url = args.base_url.rstrip("/")
     if not base_url:
         if sb_url:
-            base_url = f"{sb_url}/storage/v1/object/public/updates"
+            base_url = f"{sb_url}/storage/v1/object/public/{bucket}"
         else:
             base_url = "https://lucho-vidal.github.io/crono-pct-web/updates"
 
@@ -235,11 +304,19 @@ def main():
     # 5. Subida automática a Supabase Storage (opcional)
     if args.subir:
         if not sb_url:
-            print("❌ Error: No hay supabase_url configurado para la subida.")
+            print("❌ Error: No se especificó SUPABASE_URL ni en argumentos ni en .env.")
             return
 
-        api_key = args.service_key or str(cfg.get("supabase_anon_key", ""))
-        print(f"\nSubiendo archivos a Supabase Storage ({sb_url}/storage/v1/object/updates)...")
+        api_key = (
+            args.service_key
+            or str(cfg.get("supabase_service_role_key", ""))
+            or str(cfg.get("supabase_anon_key", ""))
+        )
+        if not api_key:
+            print("❌ Error: No se configuró SUPABASE_SERVICE_ROLE_KEY ni en .env ni como argumento.")
+            return
+
+        print(f"\nSubiendo archivos a Supabase Storage ({sb_url}/storage/v1/object/{bucket})...")
 
         archivos_a_subir = [ruta_version_json, ruta_reno_version_json]
         if partes_generadas:
@@ -247,13 +324,18 @@ def main():
         elif ruta_instalador and ruta_instalador.exists():
             archivos_a_subir.append(ruta_instalador)
 
+        exitos = 0
         for arch in archivos_a_subir:
-            print(f"  -> Subiendo {arch.name}...")
-            # En producción se puede usar httpx o urllib POST
-            # Dejamos la llamada estructurada
-        print("Subida finalizada con éxito.")
+            if subir_archivo_a_supabase(sb_url, bucket, api_key, arch):
+                exitos += 1
+
+        if exitos == len(archivos_a_subir):
+            print(f"\n✅ Todos los archivos ({exitos}/{len(archivos_a_subir)}) se subieron exitosamente.")
+        else:
+            print(f"\n⚠️ Se subieron {exitos} de {len(archivos_a_subir)} archivos.")
 
     print("\n🎉 ¡Proceso de publicación completado con éxito!")
+
 
 
 if __name__ == "__main__":

@@ -128,11 +128,44 @@ def guardar_ruta_base_datos(nueva_ruta: str | Path) -> bool:
     return exito
 
 
+def cargar_variables_entorno() -> dict[str, str]:
+    """Carga variables desde el archivo .env si existe en APP_DATA_DIR o BASE_DIR."""
+    env_vars: dict[str, str] = {}
+    candidatos = [APP_DATA_DIR / ".env", BASE_DIR / ".env"]
+    for env_file in candidatos:
+        if env_file.exists():
+            try:
+                with open(env_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k:
+                            env_vars[k] = v
+                            if k not in os.environ:
+                                os.environ[k] = v
+                break
+            except Exception:
+                pass
+    return env_vars
+
+
 def cargar_configuracion_app() -> dict[str, Any]:
-    """Carga reno_config.json con valores por defecto."""
+    """Carga reno_config.json con valores por defecto y soporte de .env."""
+    env_vars = cargar_variables_entorno()
+    sb_url_env = os.environ.get("SUPABASE_URL", "") or env_vars.get("SUPABASE_URL", "")
+    sb_anon_env = os.environ.get("SUPABASE_ANON_KEY", "") or env_vars.get("SUPABASE_ANON_KEY", "")
+    sb_serv_env = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or env_vars.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    sb_bucket_env = os.environ.get("SUPABASE_STORAGE_BUCKET", "updates") or env_vars.get("SUPABASE_STORAGE_BUCKET", "updates")
+
     defaults: dict[str, Any] = {
-        "supabase_url": "",
-        "supabase_anon_key": "",
+        "supabase_url": sb_url_env,
+        "supabase_anon_key": sb_anon_env,
+        "supabase_service_role_key": sb_serv_env,
+        "supabase_storage_bucket": sb_bucket_env,
         "sqlite_journal_mode": "WAL",  # 'WAL' o 'DELETE'
         "autosync_habilitado": False,
         "autosync_intervalo_min": 5,
@@ -151,7 +184,9 @@ def cargar_configuracion_app() -> dict[str, Any]:
         try:
             with open(CONFIG_JSON_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                defaults.update(data)
+                for k, v in data.items():
+                    if v or k not in defaults:
+                        defaults[k] = v
         except Exception:
             pass
     return defaults

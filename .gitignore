@@ -15,3 +15,10 @@ recomendacion.md
 reno_config.json
 backups/
 logs/
+.env
+.env.local
+.env.*.local
+!.env.example
+Instalador/*.exe
+Instalador/*.part*
+Instalador/*.json
