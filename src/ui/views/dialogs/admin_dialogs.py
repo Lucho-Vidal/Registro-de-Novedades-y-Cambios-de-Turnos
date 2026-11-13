@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -42,7 +44,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.logger import get_logger
+from src.core.logger import (
+    abrir_carpeta_en_explorador,
+    abrir_en_bloc_de_notas,
+    get_logger,
+    leer_ultimas_lineas_log,
+    obtener_ruta_archivo_log,
+)
 from src.core.proxy import (
     AUTH_MANUAL_FIJO,
     MODO_DIRECTO,

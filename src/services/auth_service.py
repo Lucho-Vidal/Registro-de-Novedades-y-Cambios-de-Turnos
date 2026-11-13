@@ -355,7 +355,9 @@ class AuthService:
         if not row["password_cambiado_en"]:
             return True
         try:
-            cambiado = datetime.fromisoformat(str(row["password_cambiado_en"]))
+            cambiado = datetime.fromisoformat(str(row["password_cambiado_en"]).replace("Z", "+00:00"))
+            if cambiado.tzinfo is not None:
+                cambiado = cambiado.astimezone().replace(tzinfo=None)
         except ValueError:
             return True
         return (datetime.now() - cambiado).days >= dias

@@ -116,7 +116,10 @@ class RecordsService:
 
         if len(texto) >= 10 and texto[4] == "-" and texto[7] == "-":
             try:
-                return datetime.fromisoformat(texto)
+                dt = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone().replace(tzinfo=None)
+                return dt
             except ValueError:
                 pass
         elif len(texto) >= 10 and texto[2] == "/" and texto[5] == "/":
