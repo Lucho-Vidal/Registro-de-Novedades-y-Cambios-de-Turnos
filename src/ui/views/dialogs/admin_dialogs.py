@@ -2348,25 +2348,36 @@ class AdminConfigWidget(QWidget):
         self.txt_updater_url.setText(f"{sb_url}/storage/v1/object/public/updates/version.json")
 
     def _comprobar_actualizaciones_manual(self) -> None:
-        from src.services.updater_service import verificar_actualizacion_disponible
+        from src.services.updater_service import VerificarActualizacionWorker
 
+        self.btn_buscar_updates_cfg.setEnabled(False)
         self.lbl_updater_status.setText("Conectando con el servidor de actualizaciones...")
-        QApplication.processEvents()
-
         cfg_temp = self._recopilar_config_pantalla()
-        hay_nueva, info, err = verificar_actualizacion_disponible(config=cfg_temp)
-        if err:
-            self.lbl_updater_status.setText(f"❌ Error: {err}")
-            QMessageBox.warning(self, "Actualizaciones", f"No se pudo comprobar actualizaciones:\n{err}")
-        elif hay_nueva and info:
+
+        self._worker_cfg_updater = VerificarActualizacionWorker(config=cfg_temp, parent=self)
+
+        def _on_disponible(info, es_obligatoria: bool) -> None:
+            self.btn_buscar_updates_cfg.setEnabled(True)
             self.lbl_updater_status.setText(f"🚀 Nueva versión disponible: v{info.version}")
             from src.ui.views.dialogs.actualizacion_dialog import ActualizacionDialog
 
-            dlg = ActualizacionDialog(info, config=cfg_temp, parent=self)
+            dlg = ActualizacionDialog(info, es_obligatoria=es_obligatoria, parent=self)
             dlg.exec()
-        else:
+
+        def _on_actualizado() -> None:
+            self.btn_buscar_updates_cfg.setEnabled(True)
             self.lbl_updater_status.setText("✅ Ya tienes la última versión instalada.")
             QMessageBox.information(self, "Actualizaciones", "La aplicación está actualizada a la última versión.")
+
+        def _on_error(err: str) -> None:
+            self.btn_buscar_updates_cfg.setEnabled(True)
+            self.lbl_updater_status.setText(f"❌ Error: {err}")
+            QMessageBox.warning(self, "Actualizaciones", f"No se pudo comprobar actualizaciones:\n{err}")
+
+        self._worker_cfg_updater.actualizacion_disponible.connect(_on_disponible)
+        self._worker_cfg_updater.sistema_actualizado.connect(_on_actualizado)
+        self._worker_cfg_updater.error_verificacion.connect(_on_error)
+        self._worker_cfg_updater.start()
 
     def _crear_tab_logs(self) -> QWidget:
         widget = QWidget()
