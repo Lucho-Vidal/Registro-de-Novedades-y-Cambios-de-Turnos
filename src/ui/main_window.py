@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.config import APP_NAME, APP_VERSION
+from src.core.config import APP_NAME, APP_VERSION, cargar_configuracion_app
 from src.core.logger import get_logger
 from src.core.settings import AppSettings
 from src.core.theme import (
@@ -932,14 +932,25 @@ class MainWindow(QMainWindow):
         """Acción al hacer clic en el botón de actualización en la cabecera."""
         if hasattr(self, "_ultima_info_actualizacion") and self._ultima_info_actualizacion:
             es_obligatoria = getattr(self, "_ultima_actualizacion_obligatoria", False)
-            dlg = ActualizacionDialog(self._ultima_info_actualizacion, es_obligatoria=es_obligatoria, parent=self)
+            cfg = cargar_configuracion_app()
+            dlg = ActualizacionDialog(
+                self._ultima_info_actualizacion,
+                es_obligatoria=es_obligatoria,
+                parent=self,
+                config=cfg,
+            )
             dlg.exec()
         else:
             self.buscar_actualizaciones_manual()
 
     def verificar_actualizaciones_silenciosa(self) -> None:
         """Verificación asíncrona no bloqueante de actualizaciones al iniciar la aplicación (Estándar CRONO-PCT)."""
-        self._worker_updater = VerificarActualizacionWorker(parent=self)
+        cfg = cargar_configuracion_app()
+        if not cfg.get("updater_auto_check", True):
+            logger.debug("Verificación automática de actualizaciones deshabilitada por configuración.")
+            return
+        self._ultima_config_updater = cfg
+        self._worker_updater = VerificarActualizacionWorker(config=cfg, parent=self)
         self._worker_updater.actualizacion_disponible.connect(self._on_actualizacion_disponible_silenciosa)
         self._worker_updater.start()
 
@@ -964,7 +975,11 @@ class MainWindow(QMainWindow):
 
         if es_obligatoria:
             # Si es obligatoria, abre el diálogo de actualización sin posponer
-            QTimer.singleShot(600, lambda: ActualizacionDialog(info, es_obligatoria=True, parent=self).exec())
+            def _abrir_obligatoria() -> None:
+                cfg_actual = getattr(self, "_ultima_config_updater", None) or cargar_configuracion_app()
+                ActualizacionDialog(info, es_obligatoria=True, parent=self, config=cfg_actual).exec()
+
+            QTimer.singleShot(600, _abrir_obligatoria)
         else:
             # Aviso no invasivo toast
             try:
@@ -979,7 +994,9 @@ class MainWindow(QMainWindow):
 
     def buscar_actualizaciones_manual(self, parent_dialog=None) -> None:
         """Verificación manual de actualizaciones invocada por el usuario con retroalimentación explícita."""
-        self._worker_manual_updater = VerificarActualizacionWorker(parent=self)
+        cfg = cargar_configuracion_app()
+        self._ultima_config_updater = cfg
+        self._worker_manual_updater = VerificarActualizacionWorker(config=cfg, parent=self)
 
         def _on_disponible(info: InfoActualizacion, es_obligatoria: bool):
             self._ultima_info_actualizacion = info
@@ -990,7 +1007,7 @@ class MainWindow(QMainWindow):
             if parent_dialog and hasattr(parent_dialog, "accept"):
                 parent_dialog.accept()
 
-            dlg = ActualizacionDialog(info, es_obligatoria=es_obligatoria, parent=self)
+            dlg = ActualizacionDialog(info, es_obligatoria=es_obligatoria, parent=self, config=cfg)
             dlg.exec()
 
         def _on_al_dia():

@@ -385,6 +385,228 @@ class TestPublicadorYDotenv(unittest.TestCase):
             self.assertEqual(hdrs["apikey"], "sb_secret_real_token_1234567890")
             self.assertNotIn("Authorization", hdrs)
 
+    def test_subir_archivo_usa_proxy_manual_y_fallback_windows_sso(self):
+        from unittest.mock import MagicMock, patch
+        import scripts.publicar_actualizacion as pub
+        from src.core.proxy import MODO_MANUAL, MODO_WINDOWS_SSO
+
+        archivo = self.temp_dir / "version.json"
+        archivo.write_text('{"version": "2.0.1"}', encoding="utf-8")
+
+        # 1. Proxy Manual pasa URL de proxy con credenciales al cliente httpx
+        init_kwargs = []
+        resp_200 = MagicMock(status_code=200, text="OK")
+
+        class FakeProxyClient:
+            def __init__(self, *args, **kwargs):
+                init_kwargs.append(kwargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, headers=None, content=None, json=None):
+                return resp_200
+
+        cfg_manual = {
+            "proxy_mode": MODO_MANUAL,
+            "proxy_host": "proxy.empresa.local",
+            "proxy_port": 3128,
+            "proxy_user": "usr",
+            "proxy_pass": "pwd",
+        }
+        with patch("httpx.Client", FakeProxyClient):
+            ok_man = pub.subir_archivo_a_supabase(
+                "https://xyiwvzfieualsfaifwfq.supabase.co",
+                "updates",
+                "sb_secret_real_token_1234567890",
+                archivo,
+                proxy_config=cfg_manual,
+            )
+        self.assertTrue(ok_man)
+        self.assertTrue(
+            init_kwargs[0].get("proxy") == "http://usr:pwd@proxy.empresa.local:3128"
+            or init_kwargs[0].get("proxies") == "http://usr:pwd@proxy.empresa.local:3128"
+        )
+
+        # 2. Modo Windows SSO delega a ejecutar_request_supabase (con SSPI/WinHTTP)
+        cfg_sso = {"proxy_mode": MODO_WINDOWS_SSO, "proxy_sso_server": "10.0.0.5:8080"}
+        with patch.object(pub, "ejecutar_request_supabase", return_value=(200, b"{}", {})) as m_req:
+            ok_sso = pub.subir_archivo_a_supabase(
+                "https://xyiwvzfieualsfaifwfq.supabase.co",
+                "updates",
+                "sb_secret_real_token_1234567890",
+                archivo,
+                proxy_config=cfg_sso,
+            )
+        self.assertTrue(ok_sso)
+        self.assertEqual(m_req.call_count, 1)
+        self.assertEqual(m_req.call_args.kwargs["config"], cfg_sso)
+
+
+class TestUpdaterConProxy(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_resolver_url_manifiesto_prefijo_y_bucket(self):
+        urls = resolver_url_manifiesto(
+            {
+                "updater_url": "https://cdn.miempresa.com/reno",
+                "supabase_url": "https://xyz.supabase.co",
+                "supabase_storage_bucket": "reno_updates",
+            }
+        )
+        self.assertIn("https://cdn.miempresa.com/reno/version.json", urls)
+        self.assertIn("https://xyz.supabase.co/storage/v1/object/public/reno_updates/version.json", urls)
+
+    def test_verificar_actualizacion_worker_usa_proxy_configurado_y_maneja_407(self):
+        from unittest.mock import patch
+        from src.core.proxy import MODO_MANUAL, MODO_WINDOWS_SSO, ProxyAuthError
+        from src.services.updater_service import VerificarActualizacionWorker
+
+        cfg_manual = {
+            "proxy_mode": MODO_MANUAL,
+            "proxy_host": "proxy.empresa.ar",
+            "proxy_port": 8080,
+            "proxy_user": "user1",
+            "proxy_pass": "pass1",
+            "supabase_url": "https://xyz.supabase.co",
+        }
+        manifiesto = json.dumps(
+            {
+                "version": "2.1.0",
+                "fecha": "13/11/2026",
+                "titulo": "Release 2.1.0",
+                "novedades": ["Mejora proxy"],
+                "instalador_nombre": "RENO_Setup_v2.1.0.exe",
+                "instalador_url": "https://xyz.supabase.co/storage/v1/object/public/updates/RENO_Setup_v2.1.0.exe",
+            }
+        ).encode("utf-8")
+
+        worker = VerificarActualizacionWorker(version_local="2.0.0", config=cfg_manual)
+        disponible = []
+        errores = []
+        worker.actualizacion_disponible.connect(lambda info, oblig: disponible.append((info, oblig)))
+        worker.error_verificacion.connect(lambda err: errores.append(err))
+
+        calls = []
+
+        def _fake_req(config, url, method="GET", headers=None, timeout_sec=12):
+            calls.append((config, url, headers))
+            return 200, manifiesto, {}
+
+        with patch("src.services.updater_service.ejecutar_request_supabase", side_effect=_fake_req):
+            worker.run()
+
+        self.assertEqual(errores, [])
+        self.assertEqual(len(disponible), 1)
+        self.assertEqual(disponible[0][0].version, "2.1.0")
+        self.assertTrue(disponible[0][1])
+        self.assertEqual(calls[0][0], cfg_manual)
+        self.assertEqual(calls[0][2].get("Cache-Control"), "no-cache")
+
+        # Si el proxy rechaza con HTTP 407 en modo Windows SSO, emite error explícito
+        cfg_sso = {"proxy_mode": MODO_WINDOWS_SSO, "supabase_url": "https://xyz.supabase.co"}
+        worker_407 = VerificarActualizacionWorker(version_local="2.0.0", config=cfg_sso)
+        errores_407 = []
+        worker_407.error_verificacion.connect(lambda err: errores_407.append(err))
+        with patch(
+            "src.services.updater_service.ejecutar_request_supabase",
+            side_effect=ProxyAuthError("HTTP 407: Proxy rechazó credenciales SSO"),
+        ):
+            worker_407.run()
+
+        self.assertEqual(len(errores_407), 1)
+        self.assertIn("407", errores_407[0])
+
+    def test_descargar_actualizacion_worker_multiparte_usa_proxy_y_sha256(self):
+        from unittest.mock import patch
+        from src.core.proxy import MODO_WINDOWS_SSO
+        from src.services.updater_service import DescargarActualizacionWorker
+
+        part1 = b"PARTE_UNO_BINARIA_" * 100
+        part2 = b"PARTE_DOS_BINARIA_" * 100
+        completo = part1 + part2
+        sha_esperado = hashlib.sha256(completo).hexdigest()
+
+        info = InfoActualizacion(
+            version="2.1.0",
+            fecha="13/11/2026",
+            titulo="Release",
+            instalador_nombre="RENO_Setup_v2.1.0_test.exe",
+            partes=[
+                "https://xyz.supabase.co/storage/v1/object/public/updates/RENO.part1",
+                "https://xyz.supabase.co/storage/v1/object/public/updates/RENO.part2",
+            ],
+            sha256=sha_esperado,
+            tamano_bytes=len(completo),
+        )
+        cfg_sso = {"proxy_mode": MODO_WINDOWS_SSO, "proxy_sso_server": "proxy.corp:8080"}
+        worker = DescargarActualizacionWorker(info=info, config=cfg_sso)
+
+        completados = []
+        errores = []
+        progresos = []
+        worker.descarga_completada.connect(lambda ruta: completados.append(ruta))
+        worker.error_descarga.connect(lambda err: errores.append(err))
+        worker.progreso.connect(lambda act, tot, vel, msg: progresos.append((act, tot, msg)))
+
+        dl_calls = []
+
+        def _fake_download(config, url, archivo_out, headers=None, on_chunk=None, should_cancel=None, timeout_sec=60):
+            dl_calls.append((config, url))
+            datos = part1 if url.endswith(".part1") else part2
+            archivo_out.write(datos)
+            if on_chunk:
+                on_chunk(len(datos), len(datos))
+            return len(datos)
+
+        with patch("src.services.updater_service.descargar_archivo_con_proxy", side_effect=_fake_download), \
+             patch("src.services.updater_service.tempfile.gettempdir", return_value=str(self.temp_dir)):
+            worker.run()
+
+        self.assertEqual(errores, [])
+        self.assertEqual(len(completados), 1)
+        self.assertEqual(len(dl_calls), 2)
+        self.assertEqual(dl_calls[0][0], cfg_sso)
+        self.assertEqual(dl_calls[1][0], cfg_sso)
+        self.assertEqual(Path(completados[0]).read_bytes(), completo)
+        self.assertGreaterEqual(len(progresos), 1)
+
+    def test_actualizacion_dialog_reenvia_config_al_worker(self):
+        from unittest.mock import MagicMock, patch
+        from PySide6.QtWidgets import QApplication
+        from src.core.proxy import MODO_MANUAL
+        from src.ui.views.dialogs.actualizacion_dialog import ActualizacionDialog
+
+        app = QApplication.instance() or QApplication([])
+        info = InfoActualizacion(
+            version="2.0.5",
+            fecha="13/11/2026",
+            titulo="Patch",
+            instalador_url="https://xyz.supabase.co/storage/v1/object/public/updates/RENO.exe",
+        )
+        cfg_proxy = {"proxy_mode": MODO_MANUAL, "proxy_host": "10.10.0.1", "proxy_port": 3128}
+        dlg = ActualizacionDialog(info, es_obligatoria=False, config=cfg_proxy)
+        fake_worker = MagicMock()
+        fake_worker.isRunning.return_value = False
+
+        with patch(
+            "src.ui.views.dialogs.actualizacion_dialog.DescargarActualizacionWorker",
+            return_value=fake_worker,
+        ) as mock_worker_cls:
+            dlg._iniciar_descarga()
+
+        mock_worker_cls.assert_called_once()
+        self.assertEqual(mock_worker_cls.call_args.kwargs.get("config"), cfg_proxy)
+        fake_worker.start.assert_called_once()
+        dlg.close()
+
 
 if __name__ == "__main__":
     unittest.main()

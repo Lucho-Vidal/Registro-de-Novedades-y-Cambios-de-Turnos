@@ -60,7 +60,13 @@ except ImportError:
 
 from src.core.config import APP_NAME, APP_VERSION, cargar_configuracion_app
 from src.core.logger import get_logger
-from src.core.proxy import aplicar_configuracion_proxy
+from src.core.proxy import (
+    MODO_DIRECTO,
+    OfflineError,
+    ProxyAuthError,
+    descargar_archivo_con_proxy,
+    ejecutar_request_supabase,
+)
 
 logger = get_logger("UpdaterService")
 
@@ -205,24 +211,28 @@ def calcular_sha256(ruta_archivo: str | Path, chunk_size: int = 65536) -> str:
 
 def resolver_url_manifiesto(config: dict[str, Any] | None = None) -> list[str]:
     """Resuelve la lista de URLs posibles para consultar version.json con prioridad:
-    1. Supabase Storage bucket 'updates' del proyecto configurado.
-    2. Endpoint explícito configurado en reno_config.json ('updater_url').
+    1. Endpoint explícito configurado en reno_config.json ('updater_url').
+    2. Supabase Storage bucket configurado (por defecto 'updates') del proyecto configurado.
     3. Endpoint web público de fallback en GitHub Pages.
     """
-    cfg = config or cargar_configuracion_app()
+    cfg = config if config is not None else cargar_configuracion_app()
     urls: list[str] = []
 
     # 1. URL explícita si el usuario o admin la configuró
     url_custom = str(cfg.get("updater_url", "")).strip()
     if url_custom:
         urls.append(url_custom)
+        if not url_custom.lower().endswith(".json"):
+            base_custom = url_custom.rstrip("/")
+            urls.append(f"{base_custom}/version.json")
+            urls.append(f"{base_custom}/reno_version.json")
 
-    # 2. Supabase Storage bucket 'updates'
+    # 2. Supabase Storage bucket configurado (por defecto 'updates')
     sb_url = str(cfg.get("supabase_url", "")).strip().rstrip("/")
+    bucket = str(cfg.get("supabase_storage_bucket") or "updates").strip().strip("/") or "updates"
     if sb_url:
-        # URL pública del bucket 'updates'
-        urls.append(f"{sb_url}/storage/v1/object/public/updates/version.json")
-        urls.append(f"{sb_url}/storage/v1/object/public/updates/reno_version.json")
+        urls.append(f"{sb_url}/storage/v1/object/public/{bucket}/version.json")
+        urls.append(f"{sb_url}/storage/v1/object/public/{bucket}/reno_version.json")
 
     # 3. Fallback web GitHub Pages
     urls.append("https://lucho-vidal.github.io/crono-pct-web/updates/reno_version.json")
@@ -291,37 +301,56 @@ class VerificarActualizacionWorker(QThread):
     def __init__(self, version_local: str = APP_VERSION, config: dict[str, Any] | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self.version_local = version_local
-        self.config = config or cargar_configuracion_app()
+        self.config = config if config is not None else cargar_configuracion_app()
 
     def run(self) -> None:
         candidatos_url = resolver_url_manifiesto(self.config)
-        aplicar_configuracion_proxy(self.config)
+        headers = {
+            "User-Agent": f"RENO-Updater/{self.version_local} (Windows; Python)",
+            "Accept": "application/json",
+            "Cache-Control": "no-cache",
+        }
 
         ultimo_error = ""
+        error_proxy = ""
         manifiesto_data: dict[str, Any] | None = None
 
         for url in candidatos_url:
             try:
-                logger.debug("Consultando manifiesto de actualización en: %s", url)
-                req = urllib.request.Request(
+                logger.debug(
+                    "Consultando manifiesto de actualización en: %s (proxy_mode=%s)",
                     url,
-                    headers={
-                        "User-Agent": f"RENO-Updater/{self.version_local} (Windows; Python)",
-                        "Accept": "application/json",
-                    },
+                    (self.config or {}).get("proxy_mode", MODO_DIRECTO),
                 )
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    if resp.status == 200:
-                        raw = resp.read().decode("utf-8", errors="ignore")
-                        manifiesto_data = json.loads(raw)
-                        logger.info("Manifiesto obtenido exitosamente desde: %s", url)
-                        break
-            except Exception as e:
+                status, body, _ = ejecutar_request_supabase(
+                    config=self.config,
+                    url=url,
+                    method="GET",
+                    headers=headers,
+                    timeout_sec=12,
+                )
+                if status == 200:
+                    raw = body.decode("utf-8", errors="ignore")
+                    manifiesto_data = json.loads(raw)
+                    logger.info("Manifiesto obtenido exitosamente desde: %s", url)
+                    break
+                if status == 407:
+                    error_proxy = "HTTP 407: El proxy corporativo requiere autenticación válida."
+                    ultimo_error = error_proxy
+                    logger.warning("Proxy rechazó consulta de actualización (%s): HTTP 407", url)
+                else:
+                    ultimo_error = f"HTTP {status} desde {url}"
+                    logger.debug("Respuesta no exitosa al consultar %s: HTTP %s", url, status)
+            except ProxyAuthError as e:
+                error_proxy = str(e)
+                ultimo_error = error_proxy
+                logger.warning("Error de autenticación proxy en %s: %s", url, e)
+            except (OfflineError, Exception) as e:
                 ultimo_error = str(e)
                 logger.debug("Fallo al consultar %s: %s", url, e)
 
         if not manifiesto_data:
-            self.error_verificacion.emit(ultimo_error or "No se pudo obtener el manifiesto de actualización")
+            self.error_verificacion.emit(error_proxy or ultimo_error or "No se pudo obtener el manifiesto de actualización")
             return
 
         try:
@@ -360,15 +389,13 @@ class DescargarActualizacionWorker(QThread):
     def __init__(self, info: InfoActualizacion, config: dict[str, Any] | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self.info = info
-        self.config = config or cargar_configuracion_app()
+        self.config = config if config is not None else cargar_configuracion_app()
         self._cancelado = False
 
     def cancelar(self) -> None:
         self._cancelado = True
 
     def run(self) -> None:
-        aplicar_configuracion_proxy(self.config)
-
         carpeta_temp = Path(tempfile.gettempdir()) / "RENO_Updates"
         carpeta_temp.mkdir(parents=True, exist_ok=True)
 
@@ -384,9 +411,11 @@ class DescargarActualizacionWorker(QThread):
             return
 
         total_esperado = self.info.tamano_bytes or 0
+        bytes_base_segmentos = 0
         bytes_acumulados = 0
         tiempo_inicio = time.time()
         ultimo_reporte = 0.0
+        headers_dl = {"User-Agent": f"RENO-Downloader/{APP_VERSION}"}
 
         try:
             # Abrimos el archivo final en modo escritura binaria
@@ -395,34 +424,42 @@ class DescargarActualizacionWorker(QThread):
                     if self._cancelado:
                         break
 
-                    logger.info("Descargando segmento %d/%d desde: %s", idx + 1, len(lista_urls), url)
-                    req = urllib.request.Request(
+                    logger.info(
+                        "Descargando segmento %d/%d desde: %s (proxy_mode=%s)",
+                        idx + 1,
+                        len(lista_urls),
                         url,
-                        headers={"User-Agent": f"RENO-Downloader/{APP_VERSION}"},
+                        (self.config or {}).get("proxy_mode", MODO_DIRECTO),
                     )
 
-                    with urllib.request.urlopen(req, timeout=30) as resp:
-                        chunk_size = 65536
-                        while not self._cancelado:
-                            chunk = resp.read(chunk_size)
-                            if not chunk:
-                                break
-                            f_out.write(chunk)
-                            bytes_acumulados += len(chunk)
+                    def _on_chunk(segment_bytes: int, _segment_total: int) -> None:
+                        nonlocal bytes_acumulados, ultimo_reporte
+                        bytes_acumulados = bytes_base_segmentos + segment_bytes
+                        ahora = time.time()
+                        if ahora - ultimo_reporte >= 0.15:  # Reporte a ~6 Hz
+                            transcurrido = max(0.001, ahora - tiempo_inicio)
+                            vel_bps = bytes_acumulados / transcurrido
 
-                            ahora = time.time()
-                            if ahora - ultimo_reporte >= 0.15:  # Reporte a ~6 Hz
-                                transcurrido = max(0.001, ahora - tiempo_inicio)
-                                vel_bps = bytes_acumulados / transcurrido
+                            if total_esperado > 0:
+                                pct = min(100.0, (bytes_acumulados / total_esperado) * 100)
+                                msg = f"{bytes_acumulados / (1024*1024):.1f} MB de {total_esperado / (1024*1024):.1f} MB ({pct:.0f}%)"
+                            else:
+                                msg = f"{bytes_acumulados / (1024*1024):.1f} MB descargados"
 
-                                if total_esperado > 0:
-                                    pct = min(100.0, (bytes_acumulados / total_esperado) * 100)
-                                    msg = f"{bytes_acumulados / (1024*1024):.1f} MB de {total_esperado / (1024*1024):.1f} MB ({pct:.0f}%)"
-                                else:
-                                    msg = f"{bytes_acumulados / (1024*1024):.1f} MB descargados"
+                            self.progreso.emit(bytes_acumulados, total_esperado, vel_bps, msg)
+                            ultimo_reporte = ahora
 
-                                self.progreso.emit(bytes_acumulados, total_esperado, vel_bps, msg)
-                                ultimo_reporte = ahora
+                    escrito = descargar_archivo_con_proxy(
+                        config=self.config,
+                        url=url,
+                        archivo_out=f_out,
+                        headers=headers_dl,
+                        on_chunk=_on_chunk,
+                        should_cancel=lambda: self._cancelado,
+                        timeout_sec=60,
+                    )
+                    bytes_base_segmentos += escrito
+                    bytes_acumulados = bytes_base_segmentos
 
             if self._cancelado:
                 try:
@@ -454,6 +491,21 @@ class DescargarActualizacionWorker(QThread):
             self.progreso.emit(bytes_acumulados, bytes_acumulados, 0.0, "Descarga completada e integridad verificada.")
             self.descarga_completada.emit(str(ruta_final))
 
+        except InterruptedError:
+            try:
+                if ruta_final.exists():
+                    ruta_final.unlink()
+            except Exception:
+                pass
+            self.error_descarga.emit("Descarga cancelada por el usuario.")
+        except ProxyAuthError as e:
+            logger.warning("Error de autenticación proxy durante descarga: %s", e)
+            try:
+                if ruta_final.exists():
+                    ruta_final.unlink()
+            except Exception:
+                pass
+            self.error_descarga.emit(f"Error de autenticación del proxy corporativo: {e}")
         except Exception as e:
             logger.exception("Error durante la descarga de la actualización: %s", e)
             try:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Optional
+from typing import Any, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -40,10 +40,12 @@ class ActualizacionDialog(QDialog):
         info: InfoActualizacion,
         es_obligatoria: bool = False,
         parent: Optional[QWidget] = None,
+        config: Optional[dict[str, Any]] = None,
     ):
         super().__init__(parent)
         self.info = info
         self.es_obligatoria = es_obligatoria
+        self.config = config
         self.worker_descarga: Optional[DescargarActualizacionWorker] = None
         self.ruta_instalador_descargado: Optional[str] = None
 
@@ -316,7 +318,7 @@ class ActualizacionDialog(QDialog):
         self.lbl_estado_descarga.setText("Iniciando conexión con el servidor...")
         self.barra_progreso.setValue(0)
 
-        self.worker_descarga = DescargarActualizacionWorker(self.info, parent=self)
+        self.worker_descarga = DescargarActualizacionWorker(self.info, config=self.config, parent=self)
         self.worker_descarga.progreso.connect(self._on_progreso_descarga)
         self.worker_descarga.descarga_completada.connect(self._on_descarga_completada)
         self.worker_descarga.error_descarga.connect(self._on_error_descarga)

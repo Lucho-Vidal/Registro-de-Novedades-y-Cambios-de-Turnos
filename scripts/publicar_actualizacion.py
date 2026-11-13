@@ -49,8 +49,21 @@ def _cargar_dotenv() -> dict[str, str]:
 
 ENV_DOTENV = _cargar_dotenv()
 
+from typing import Any
+
 from src.core.config import APP_VERSION, cargar_configuracion_app
+from src.core.proxy import (
+    AUTH_WINDOWS_SSPI,
+    MODO_DIRECTO,
+    MODO_MANUAL,
+    MODO_WINDOWS_SSO,
+    aplicar_configuracion_proxy,
+    construir_proxy_url_manual,
+    ejecutar_request_supabase,
+)
 from src.services.updater_service import calcular_sha256, dividir_archivo
+
+_PROXY_CONFIG_ACTIVA: dict[str, Any] | None = None
 
 
 def parse_args():
@@ -224,20 +237,87 @@ def construir_headers_storage(api_key: str, content_type: str) -> dict[str, str]
     return headers
 
 
-def _asegurar_bucket_publico(supabase_url: str, bucket: str, api_key: str) -> None:
-    """Intenta crear el bucket público en Supabase Storage si no existiera."""
+def _resolver_proxy_config_efectiva(proxy_config: dict[str, Any] | None = None) -> dict[str, Any]:
+    if proxy_config is not None:
+        return proxy_config
+    if _PROXY_CONFIG_ACTIVA is not None:
+        return _PROXY_CONFIG_ACTIVA
+    return cargar_configuracion_app()
+
+
+def _crear_cliente_httpx(proxy_cfg: dict[str, Any], timeout_sec: float = 300.0):
     import httpx
 
+    modo = proxy_cfg.get("proxy_mode", MODO_DIRECTO)
+    kwargs: dict[str, Any] = {"timeout": timeout_sec, "follow_redirects": True}
+
+    if modo == MODO_MANUAL:
+        auth_mode = str(proxy_cfg.get("proxy_auth") or "")
+        incluir_creds = auth_mode != AUTH_WINDOWS_SSPI
+        proxy_url = construir_proxy_url_manual(proxy_cfg, incluir_credenciales=incluir_creds)
+        if proxy_url:
+            try:
+                return httpx.Client(proxy=proxy_url, **kwargs)
+            except TypeError:
+                return httpx.Client(proxies=proxy_url, **kwargs)
+    elif modo == MODO_WINDOWS_SSO:
+        sso_srv = str(proxy_cfg.get("proxy_sso_server") or "").strip().rstrip("/")
+        if sso_srv:
+            if "://" not in sso_srv:
+                sso_srv = f"http://{sso_srv}"
+            try:
+                return httpx.Client(proxy=sso_srv, **kwargs)
+            except TypeError:
+                return httpx.Client(proxies=sso_srv, **kwargs)
+
+    return httpx.Client(**kwargs)
+
+
+def _asegurar_bucket_publico(
+    supabase_url: str,
+    bucket: str,
+    api_key: str,
+    proxy_config: dict[str, Any] | None = None,
+) -> None:
+    """Intenta crear el bucket público en Supabase Storage si no existiera."""
+    cfg = _resolver_proxy_config_efectiva(proxy_config)
     print(f"     -> Bucket '{bucket}' no encontrado; intentando crearlo público...")
     endpoint = f"{supabase_url.rstrip('/')}/storage/v1/bucket"
     headers = construir_headers_storage(api_key, "application/json")
     headers.pop("x-upsert", None)
     payload = {"id": bucket, "name": bucket, "public": True}
+
+    if cfg.get("proxy_mode") == MODO_WINDOWS_SSO:
+        try:
+            ejecutar_request_supabase(
+                config=cfg,
+                url=endpoint,
+                method="POST",
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                timeout_sec=30,
+            )
+            return
+        except Exception:
+            pass
+
     try:
-        with httpx.Client(timeout=30.0) as client:
-            client.post(endpoint, headers=headers, json=payload)
+        with _crear_cliente_httpx(cfg, timeout_sec=30.0) as client:
+            resp = client.post(endpoint, headers=headers, json=payload)
+            if resp.status_code == 407:
+                raise ConnectionError("HTTP 407")
     except Exception:
-        pass
+        try:
+            ejecutar_request_supabase(
+                config=cfg,
+                url=endpoint,
+                method="POST",
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                timeout_sec=30,
+            )
+        except Exception:
+            pass
 
 
 def _es_url_supabase_valida(url: str) -> bool:
@@ -283,6 +363,11 @@ def _imprimir_tip_error_upload(status_code: int, detalle: str) -> None:
             "     [TIP] El archivo supera el límite de tamaño de Supabase Storage (50 MB en Free Tier). "
             "Usá --split o reducí --tamano-parte-mb."
         )
+    elif status_code == 407:
+        print(
+            "     [TIP] El proxy corporativo devolvió HTTP 407. Configurá el modo de proxy en Administración "
+            "o verificá tus credenciales de red."
+        )
 
 
 def subir_archivo_a_supabase(
@@ -290,10 +375,12 @@ def subir_archivo_a_supabase(
     bucket: str,
     api_key: str,
     archivo_local: Path,
+    proxy_config: dict[str, Any] | None = None,
 ) -> bool:
-    """Sube un archivo a Supabase Storage con soporte de sobrescritura (x-upsert: true)."""
+    """Sube un archivo a Supabase Storage respetando el proxy corporativo y sobrescritura (x-upsert: true)."""
     import mimetypes
 
+    cfg = _resolver_proxy_config_efectiva(proxy_config)
     nombre_archivo = archivo_local.name
     endpoint = f"{supabase_url.rstrip('/')}/storage/v1/object/{bucket}/{nombre_archivo}"
     content_type, _ = mimetypes.guess_type(str(archivo_local))
@@ -305,43 +392,68 @@ def subir_archivo_a_supabase(
     tamano_mb = tamano_bytes / (1024 * 1024)
     print(f"  -> Subiendo {nombre_archivo} ({tamano_mb:.2f} MB)...", end=" ", flush=True)
 
+    with open(archivo_local, "rb") as f:
+        contenido = f.read()
+
+    def _subir_via_multi_tier() -> tuple[int, str]:
+        code, body_b, _ = ejecutar_request_supabase(
+            config=cfg,
+            url=endpoint,
+            method="POST",
+            data=contenido,
+            headers=headers,
+            timeout_sec=300,
+        )
+        txt = body_b.decode("utf-8", errors="ignore")
+        if code in (400, 404) and "bucket not found" in txt.lower():
+            _asegurar_bucket_publico(supabase_url, bucket, api_key, proxy_config=cfg)
+            code, body_b, _ = ejecutar_request_supabase(
+                config=cfg,
+                url=endpoint,
+                method="POST",
+                data=contenido,
+                headers=headers,
+                timeout_sec=300,
+            )
+            txt = body_b.decode("utf-8", errors="ignore")
+        return code, txt
+
     try:
-        try:
-            import httpx
+        modo = cfg.get("proxy_mode", MODO_DIRECTO)
+        status_code = 0
+        resp_text = ""
 
-            with open(archivo_local, "rb") as f:
-                contenido = f.read()
-            with httpx.Client(timeout=300.0, follow_redirects=True) as client:
-                resp = client.post(endpoint, headers=headers, content=contenido)
-                if resp.status_code in (400, 404) and "bucket not found" in resp.text.lower():
-                    _asegurar_bucket_publico(supabase_url, bucket, api_key)
-                    resp = client.post(endpoint, headers=headers, content=contenido)
+        # En modo SSO Windows (o SSPI manual), ir directo al transporte nativo WinHTTP/PowerShell/QNAM si aplica,
+        # o usar httpx y caer al transporte multi-tier en caso de 407 o fallo de proxy.
+        usar_httpx = modo != MODO_WINDOWS_SSO and not (
+            modo == MODO_MANUAL and str(cfg.get("proxy_auth") or "") == AUTH_WINDOWS_SSPI
+        )
 
-                if resp.status_code in (200, 201):
-                    print("✅ [OK]")
-                    return True
-                print(f"❌ Error HTTP {resp.status_code}: {resp.text}")
-                _imprimir_tip_error_upload(resp.status_code, resp.text)
-                return False
-        except ImportError:
-            import urllib.error
-            import urllib.request
-
-            with open(archivo_local, "rb") as f:
-                contenido = f.read()
-            req = urllib.request.Request(endpoint, data=contenido, headers=headers, method="POST")
+        if usar_httpx:
             try:
-                with urllib.request.urlopen(req, timeout=300) as resp:
-                    if resp.status in (200, 201):
-                        print("✅ [OK]")
-                        return True
-                    print(f"❌ Error HTTP {resp.status}")
-                    return False
-            except urllib.error.HTTPError as e:
-                body_txt = e.read().decode("utf-8", errors="ignore")
-                print(f"❌ Error HTTP {e.code}: {body_txt}")
-                _imprimir_tip_error_upload(e.code, body_txt)
-                return False
+                with _crear_cliente_httpx(cfg, timeout_sec=300.0) as client:
+                    resp = client.post(endpoint, headers=headers, content=contenido)
+                    if resp.status_code in (400, 404) and "bucket not found" in resp.text.lower():
+                        _asegurar_bucket_publico(supabase_url, bucket, api_key, proxy_config=cfg)
+                        resp = client.post(endpoint, headers=headers, content=contenido)
+                    status_code = resp.status_code
+                    resp_text = resp.text
+            except ImportError:
+                status_code, resp_text = _subir_via_multi_tier()
+            except Exception:
+                status_code, resp_text = _subir_via_multi_tier()
+
+            if status_code == 407:
+                status_code, resp_text = _subir_via_multi_tier()
+        else:
+            status_code, resp_text = _subir_via_multi_tier()
+
+        if status_code in (200, 201):
+            print("✅ [OK]")
+            return True
+        print(f"❌ Error HTTP {status_code}: {resp_text}")
+        _imprimir_tip_error_upload(status_code, resp_text)
+        return False
     except Exception as e:
         print(f"❌ Falló subida: {e}")
         return False
@@ -485,8 +597,10 @@ def main():
             print("\n❌ Error: Falta configurar SUPABASE_SERVICE_KEY (sb_secret_... o JWT service_role) en .env o --service-key.")
             sys.exit(1)
 
+        global _PROXY_CONFIG_ACTIVA
         prefijo = f"{api_key[:12]}..." if len(api_key) > 12 else "***"
-        print(f"\n[*] Conectando con Supabase Storage ({sb_url}, bucket: {bucket}, key: {prefijo})...")
+        modo_proxy = cfg.get("proxy_mode", MODO_DIRECTO)
+        print(f"\n[*] Conectando con Supabase Storage ({sb_url}, bucket: {bucket}, key: {prefijo}, proxy: {modo_proxy})...")
 
         archivos_a_subir = [ruta_version_json, ruta_reno_version_json]
         if partes_generadas:
@@ -495,9 +609,14 @@ def main():
             archivos_a_subir.append(ruta_instalador)
 
         exitos = 0
-        for arch in archivos_a_subir:
-            if subir_archivo_a_supabase(sb_url, bucket, api_key, arch):
-                exitos += 1
+        prev_proxy_cfg = _PROXY_CONFIG_ACTIVA
+        _PROXY_CONFIG_ACTIVA = cfg
+        try:
+            for arch in archivos_a_subir:
+                if subir_archivo_a_supabase(sb_url, bucket, api_key, arch):
+                    exitos += 1
+        finally:
+            _PROXY_CONFIG_ACTIVA = prev_proxy_cfg
 
         if exitos == len(archivos_a_subir):
             base_public = f"{sb_url}/storage/v1/object/public/{bucket}"

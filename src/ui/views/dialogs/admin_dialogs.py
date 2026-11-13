@@ -2357,7 +2357,10 @@ class AdminConfigWidget(QWidget):
                 "Ingrese primero la 'Supabase URL' en la pestaña Sincronización y Red.",
             )
             return
-        self.txt_updater_url.setText(f"{sb_url}/storage/v1/object/public/updates/version.json")
+        from src.core.config import cargar_configuracion_json
+
+        bucket = str(cargar_configuracion_json().get("supabase_storage_bucket") or "updates").strip().strip("/") or "updates"
+        self.txt_updater_url.setText(f"{sb_url}/storage/v1/object/public/{bucket}/version.json")
 
     def _comprobar_actualizaciones_manual(self) -> None:
         from src.services.updater_service import VerificarActualizacionWorker
@@ -2373,7 +2376,7 @@ class AdminConfigWidget(QWidget):
             self.lbl_updater_status.setText(f"🚀 Nueva versión disponible: v{info.version}")
             from src.ui.views.dialogs.actualizacion_dialog import ActualizacionDialog
 
-            dlg = ActualizacionDialog(info, es_obligatoria=es_obligatoria, parent=self)
+            dlg = ActualizacionDialog(info, es_obligatoria=es_obligatoria, parent=self, config=cfg_temp)
             dlg.exec()
 
         def _on_actualizado() -> None:
@@ -2491,9 +2494,13 @@ class AdminConfigWidget(QWidget):
             self.btn_toggle_pass.setText("👁️")
 
     def _recopilar_config_pantalla(self) -> dict[str, Any]:
+        from src.core.config import cargar_configuracion_json
+
+        base_cfg = cargar_configuracion_json()
         return {
             "supabase_url": self.txt_supa_url.text().strip(),
             "supabase_anon_key": self.txt_supa_key.text().strip(),
+            "supabase_storage_bucket": str(base_cfg.get("supabase_storage_bucket") or "updates").strip() or "updates",
             "updater_url": self.txt_updater_url.text().strip(),
             "updater_auto_check": self.chk_updater_auto.isChecked(),
             "proxy_mode": self.cmb_proxy_mode.currentData() or MODO_DIRECTO,

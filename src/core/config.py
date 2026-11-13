@@ -226,7 +226,7 @@ def cargar_configuracion_app() -> dict[str, Any]:
             with open(CONFIG_JSON_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for k, v in data.items():
-                    if v or k not in defaults:
+                    if isinstance(v, (bool, int, float)) or v or k not in defaults:
                         defaults[k] = v
         except Exception:
             pass
