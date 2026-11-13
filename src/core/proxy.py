@@ -490,12 +490,12 @@ def ejecutar_request_supabase(
 
 
 def construir_headers_supabase(api_key: str, extra: dict[str, str] | None = None) -> dict[str, str]:
-    """Construye cabeceras HTTP compatibles con Publishable keys (sb_publishable_*) y JWT legacy."""
-    key = (api_key or "").strip()
+    """Construye cabeceras HTTP compatibles con Publishable/Secret keys (sb_*) y JWT legacy."""
+    key = (api_key or "").strip().strip('"').strip("'")
     headers: dict[str, str] = {"apikey": key}
-    # Las Publishable keys de Supabase no deben enviarse como Authorization: Bearer
-    # porque el API Gateway las rechaza con HTTP 401 ('Secret API key required').
-    if key and not key.startswith("sb_publishable_"):
+    # Las Publishable y Secret keys modernas no deben enviarse como Authorization: Bearer
+    # porque el API Gateway las rechaza ('Secret API key required' / 'Invalid Compact JWS').
+    if key and not (key.startswith("sb_publishable_") or key.startswith("sb_secret_")):
         headers["Authorization"] = f"Bearer {key}"
     if extra:
         headers.update(extra)

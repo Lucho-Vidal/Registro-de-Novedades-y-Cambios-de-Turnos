@@ -180,5 +180,211 @@ class TestUpdaterService(unittest.TestCase):
         self.assertIn("https://lucho-vidal.github.io/crono-pct-web/updates/reno_version.json", urls)
 
 
+class TestPublicadorYDotenv(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_construir_headers_storage_sb_secret_sin_bearer(self):
+        import scripts.publicar_actualizacion as pub
+
+        hdrs = pub.construir_headers_storage('  "sb_secret_abc1234567890xyz"  ', "application/octet-stream")
+        self.assertEqual(hdrs["apikey"], "sb_secret_abc1234567890xyz")
+        self.assertEqual(hdrs["x-upsert"], "true")
+        self.assertEqual(hdrs["Content-Type"], "application/octet-stream")
+        self.assertNotIn("Authorization", hdrs)
+
+    def test_construir_headers_storage_jwt_con_bearer(self):
+        import scripts.publicar_actualizacion as pub
+
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig"
+        hdrs = pub.construir_headers_storage(jwt, "application/json")
+        self.assertEqual(hdrs["apikey"], jwt)
+        self.assertEqual(hdrs["Authorization"], f"Bearer {jwt}")
+
+    def test_construir_headers_supabase_proxy(self):
+        from src.core.proxy import construir_headers_supabase
+
+        h_pub = construir_headers_supabase("sb_publishable_12345")
+        self.assertEqual(h_pub["apikey"], "sb_publishable_12345")
+        self.assertNotIn("Authorization", h_pub)
+
+        h_sec = construir_headers_supabase("sb_secret_12345")
+        self.assertEqual(h_sec["apikey"], "sb_secret_12345")
+        self.assertNotIn("Authorization", h_sec)
+
+        h_jwt = construir_headers_supabase("eyJabc.def.ghi")
+        self.assertEqual(h_jwt["Authorization"], "Bearer eyJabc.def.ghi")
+
+    def test_es_credencial_real(self):
+        import scripts.publicar_actualizacion as pub
+
+        self.assertFalse(pub._es_credencial_real("https://tu-proyecto.supabase.co", "sb_secret_123456789012345"))
+        self.assertFalse(pub._es_credencial_real("https://xyiwvzfieualsfaifwfq.supabase.co", "sb_secret_pega_tu_clave_secreta_aqui"))
+        self.assertFalse(pub._es_credencial_real("https://xyiwvzfieualsfaifwfq.supabase.co", "sb_secret_tu_clave_secreta_aqui"))
+        self.assertFalse(pub._es_credencial_real("https://xyiwvzfieualsfaifwfq.supabase.co", "sb_secret_..."))
+        self.assertTrue(pub._es_credencial_real("https://xyiwvzfieualsfaifwfq.supabase.co", "sb_secret_real_token_1234567890"))
+        self.assertTrue(pub._es_credencial_real("https://xyiwvzfieualsfaifwfq.supabase.co", "sb_secret_randomaqui1234567890"))
+
+    def test_cargar_variables_entorno_prioriza_dotenv_y_bom(self):
+        from unittest.mock import patch
+        import src.core.config as cfg_mod
+
+        env_file = self.temp_dir / ".env"
+        # Escribir con BOM UTF-8 y comillas
+        env_file.write_bytes(
+            "\ufeffSUPABASE_URL=\"https://miapp.supabase.co\"\nSUPABASE_SERVICE_KEY='sb_secret_desde_dotenv_12345'\n".encode("utf-8")
+        )
+
+        old_url = os.environ.get("SUPABASE_URL")
+        old_key = os.environ.get("SUPABASE_SERVICE_KEY")
+        try:
+            os.environ["SUPABASE_URL"] = "https://viejo.supabase.co"
+            os.environ["SUPABASE_SERVICE_KEY"] = "sb_secret_vieja_sesion"
+            with patch.object(cfg_mod, "APP_DATA_DIR", self.temp_dir), patch.object(cfg_mod, "BASE_DIR", self.temp_dir):
+                cargadas = cfg_mod.cargar_variables_entorno()
+            self.assertEqual(cargadas["SUPABASE_URL"], "https://miapp.supabase.co")
+            self.assertEqual(cargadas["SUPABASE_SERVICE_KEY"], "sb_secret_desde_dotenv_12345")
+            self.assertEqual(os.environ["SUPABASE_URL"], "https://miapp.supabase.co")
+            self.assertEqual(os.environ["SUPABASE_SERVICE_KEY"], "sb_secret_desde_dotenv_12345")
+        finally:
+            if old_url is None:
+                os.environ.pop("SUPABASE_URL", None)
+            else:
+                os.environ["SUPABASE_URL"] = old_url
+            if old_key is None:
+                os.environ.pop("SUPABASE_SERVICE_KEY", None)
+            else:
+                os.environ["SUPABASE_SERVICE_KEY"] = old_key
+
+    def test_main_dispara_subida_automatica_con_args_cli_o_dotenv(self):
+        import sys
+        from unittest.mock import patch
+        import scripts.publicar_actualizacion as pub
+        import src.core.config as cfg_mod
+
+        exe_falso = self.temp_dir / "RENO_Setup_v2.0.0.exe"
+        exe_falso.write_bytes(b"MZ_DUMMY_INSTALLER" * 100)
+        salida_dir = self.temp_dir / "out"
+        salida_dir.mkdir()
+
+        # .env de prueba en carpeta temporal aislada
+        env_temp = self.temp_dir / ".env"
+        env_temp.write_text(
+            "SUPABASE_URL=https://xyiwvzfieualsfaifwfq.supabase.co\n"
+            "SUPABASE_SERVICE_KEY=sb_secret_real_env_key_1234567890\n",
+            encoding="utf-8",
+        )
+
+        old_env = {k: os.environ.get(k) for k in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY")}
+        try:
+            # Caso 1: usuario pasa --supabase-url y --service-key SIN --subir
+            subidos_cli = []
+            argv_cli = [
+                "publicar_actualizacion.py",
+                "--instalador", str(exe_falso),
+                "--salida-dir", str(salida_dir),
+                "--supabase-url", "https://xyiwvzfieualsfaifwfq.supabase.co",
+                "--service-key", "sb_secret_real_cli_key_1234567890",
+            ]
+            with patch.object(sys, "argv", argv_cli), \
+                 patch.object(pub, "ROOT_DIR", self.temp_dir), \
+                 patch.object(cfg_mod, "APP_DATA_DIR", self.temp_dir), \
+                 patch.object(cfg_mod, "BASE_DIR", self.temp_dir), \
+                 patch.object(pub, "subir_archivo_a_supabase", side_effect=lambda u, b, k, a: subidos_cli.append((u, b, k, a.name)) or True):
+                pub.main()
+
+            nombres_cli = [x[3] for x in subidos_cli]
+            self.assertIn("version.json", nombres_cli)
+            self.assertIn("reno_version.json", nombres_cli)
+            self.assertIn("RENO_Setup_v2.0.0.exe", nombres_cli)
+            self.assertEqual(subidos_cli[0][2], "sb_secret_real_cli_key_1234567890")
+
+            # Caso 2: credenciales reales desde archivo .env sin flags CLI -> también sube automáticamente
+            subidos_env = []
+            argv_env = [
+                "publicar_actualizacion.py",
+                "--instalador", str(exe_falso),
+                "--salida-dir", str(salida_dir),
+            ]
+            # Simular variable previa vieja en sesión que DEBE ser sobreescrita por .env
+            os.environ["SUPABASE_SERVICE_KEY"] = "sb_secret_vieja_sesion_override"
+            with patch.object(sys, "argv", argv_env), \
+                 patch.object(pub, "ROOT_DIR", self.temp_dir), \
+                 patch.object(cfg_mod, "APP_DATA_DIR", self.temp_dir), \
+                 patch.object(cfg_mod, "BASE_DIR", self.temp_dir), \
+                 patch.object(pub, "subir_archivo_a_supabase", side_effect=lambda u, b, k, a: subidos_env.append((u, b, k, a.name)) or True):
+                pub.main()
+
+            self.assertEqual(len(subidos_env), 3)
+            self.assertEqual(subidos_env[0][2], "sb_secret_real_env_key_1234567890")
+
+            # Caso 3: --no-subir impide subida aunque existan credenciales reales en .env
+            subidos_no = []
+            argv_no = argv_env + ["--no-subir"]
+            with patch.object(sys, "argv", argv_no), \
+                 patch.object(pub, "ROOT_DIR", self.temp_dir), \
+                 patch.object(cfg_mod, "APP_DATA_DIR", self.temp_dir), \
+                 patch.object(cfg_mod, "BASE_DIR", self.temp_dir), \
+                 patch.object(pub, "subir_archivo_a_supabase", side_effect=lambda u, b, k, a: subidos_no.append(a.name) or True):
+                pub.main()
+
+            self.assertEqual(subidos_no, [])
+        finally:
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_subir_archivo_httpx_sb_secret_omite_bearer_y_crea_bucket(self):
+        from unittest.mock import MagicMock, patch
+        import scripts.publicar_actualizacion as pub
+
+        archivo = self.temp_dir / "version.json"
+        archivo.write_text('{"version": "2.0.0"}', encoding="utf-8")
+
+        resp_404 = MagicMock(status_code=404, text='{"statusCode":"404","error":"Bucket not found"}')
+        resp_bucket = MagicMock(status_code=200, text='{"name":"updates"}')
+        resp_200 = MagicMock(status_code=200, text='{"Key":"updates/version.json"}')
+
+        post_calls = []
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, headers=None, content=None, json=None):
+                post_calls.append((url, dict(headers or {})))
+                if url.endswith("/storage/v1/bucket"):
+                    return resp_bucket
+                if len([c for c in post_calls if "/object/" in c[0]]) == 1:
+                    return resp_404
+                return resp_200
+
+        with patch("httpx.Client", FakeClient):
+            ok = pub.subir_archivo_a_supabase(
+                "https://xyiwvzfieualsfaifwfq.supabase.co",
+                "updates",
+                "sb_secret_real_token_1234567890",
+                archivo,
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(len(post_calls), 3)
+        self.assertTrue(post_calls[1][0].endswith("/storage/v1/bucket"))
+        for _, hdrs in post_calls:
+            self.assertEqual(hdrs["apikey"], "sb_secret_real_token_1234567890")
+            self.assertNotIn("Authorization", hdrs)
+
+
 if __name__ == "__main__":
     unittest.main()

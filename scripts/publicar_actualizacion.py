@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 """Script CLI para empaquetado, cálculo de checksums, división multi-parte y publicación de actualizaciones para RENO.
 
-Adopta el estándar de CRONO-PCT:
-1. Detecta la versión actual de la aplicación.
-2. Localiza el instalador generado por Inno Setup (o el ejecutable compilado).
+Adopta el estándar de CRONO-PCT y Horos:
+1. Carga automáticamente variables desde .env en la raíz (priorizando .env sobre sesión).
+2. Localiza el instalador generado por Inno Setup en Instalador/ (o parámetro --instalador).
 3. Calcula el hash criptográfico SHA-256 y el tamaño exacto en bytes.
 4. Si el archivo excede los 48 MB (o flag --split), lo divide automáticamente en partes
-   de ~25 MB (.part1, .part2) para eludir el límite estricto de 50 MB de Supabase Storage (Free Tier).
-5. Genera el manifiesto version.json (y reno_version.json).
-6. Opcionalmente sube los binarios y el manifiesto a Supabase Storage (bucket 'updates').
+   de ~25 MB (.part1, .part2, ...) para cumplir con el límite de 50 MB de Supabase Storage (Free Tier).
+5. Genera los manifiestos version.json y reno_version.json.
+6. Sube los binarios/fragmentos y manifiestos a Supabase Storage (bucket 'updates') soportando
+   tanto claves modernas (sb_secret_* / sb_publishable_*) sin Bearer como JWT legacy (eyJ...).
 """
 
 import argparse
 import datetime
-import hashlib
 import json
 import os
 import sys
@@ -24,19 +24,48 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from src.core.config import APP_NAME, APP_VERSION, cargar_configuracion_app
+
+def _cargar_dotenv() -> dict[str, str]:
+    """Carga variables desde .env en la raíz del proyecto priorizando sobre variables de sesión."""
+    env_path = ROOT_DIR / ".env"
+    cargadas: dict[str, str] = {}
+    if not env_path.exists():
+        return cargadas
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8-sig").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            clave, valor = line.split("=", 1)
+            clave = clave.strip()
+            valor = valor.strip().strip('"').strip("'")
+            if clave:
+                cargadas[clave] = valor
+                os.environ[clave] = valor
+    except Exception:
+        pass
+    return cargadas
+
+
+ENV_DOTENV = _cargar_dotenv()
+
+from src.core.config import APP_VERSION, cargar_configuracion_app
 from src.services.updater_service import calcular_sha256, dividir_archivo
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Publicador y empaquetador de actualizaciones para RENO")
+    parser = argparse.ArgumentParser(description="Publicador y empaquetador de actualizaciones OTA para RENO")
     parser.add_argument(
         "--version-app",
+        "--version",
+        dest="version_app",
         default=APP_VERSION,
         help=f"Versión de la aplicación a publicar (por defecto: {APP_VERSION})",
     )
     parser.add_argument(
         "--instalador",
+        "--installer",
+        dest="instalador",
         default="",
         help="Ruta al ejecutable o instalador generado (ej. Instalador/RENO_Setup_v2.0.0.exe)",
     )
@@ -68,8 +97,10 @@ def parse_args():
     )
     parser.add_argument(
         "--base-url",
+        "--url",
+        dest="base_url",
         default="",
-        help="URL base pública donde se alojarán los archivos (ej. https://.../storage/v1/object/public/updates)",
+        help="URL base pública donde se alojarán los archivos (también lee RENO_UPDATES_URL de .env)",
     )
     parser.add_argument(
         "--salida-dir",
@@ -78,22 +109,31 @@ def parse_args():
     )
     parser.add_argument(
         "--subir",
+        "--supabase",
+        dest="subir",
         action="store_true",
-        help="Intenta subir automáticamente los archivos a Supabase Storage bucket 'updates'",
+        help="Fuerza la subida automática a Supabase Storage bucket 'updates' (también automático si .env tiene credenciales válidas)",
+    )
+    parser.add_argument(
+        "--no-subir",
+        "--solo-manifiesto",
+        dest="no_subir",
+        action="store_true",
+        help="Solo genera los archivos locales (version.json y partes) sin subir a Supabase",
     )
     parser.add_argument(
         "--supabase-url",
-        default=os.environ.get("SUPABASE_URL", ""),
+        default=None,
         help="URL base de Supabase (por defecto lee SUPABASE_URL de .env)",
     )
     parser.add_argument(
         "--service-key",
-        default=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or os.environ.get("SUPABASE_SERVICE_KEY", ""),
-        help="Clave de servicio (service_role) para subida desatendida a Supabase Storage (por defecto lee SUPABASE_SERVICE_ROLE_KEY de .env)",
+        default=None,
+        help="Secret Key (sb_secret_...) o Service Role JWT de Supabase Storage (por defecto lee SUPABASE_SERVICE_KEY / SUPABASE_SERVICE_ROLE_KEY de .env)",
     )
     parser.add_argument(
         "--bucket",
-        default=os.environ.get("SUPABASE_STORAGE_BUCKET", "updates"),
+        default=None,
         help="Bucket de Supabase Storage donde se publicarán los archivos (por defecto: 'updates')",
     )
     return parser.parse_args()
@@ -103,13 +143,30 @@ def buscar_instalador_candidato(version: str, carpeta_salida: Path) -> Path | No
     """Busca automáticamente el instalador más probable según convenciones."""
     candidatos = [
         carpeta_salida / f"RENO_Setup_v{version}.exe",
-        carpeta_salida / "RENO.exe",
-        carpeta_salida / f"RENO_Setup.exe",
-        ROOT_DIR / "dist" / "RENO.exe",
+        carpeta_salida / "RENO_Setup.exe",
     ]
     for c in candidatos:
         if c.exists():
             return c
+
+    if carpeta_salida.exists():
+        setups = sorted(
+            carpeta_salida.glob("RENO_Setup*.exe"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if setups:
+            return setups[0]
+
+    for c in (carpeta_salida / "RENO.exe", ROOT_DIR / "dist" / "RENO.exe"):
+        if c.exists():
+            return c
+
+    if carpeta_salida.exists():
+        exes = sorted(carpeta_salida.glob("*.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if exes:
+            return exes[0]
+
     return None
 
 
@@ -152,6 +209,82 @@ def extraer_novedades_desde_changelog(version: str) -> list[str]:
     ]
 
 
+def construir_headers_storage(api_key: str, content_type: str) -> dict[str, str]:
+    """Construye cabeceras compatibles con sb_secret_*/sb_publishable_* (sin Bearer) y JWT legacy."""
+    key = (api_key or "").strip().strip('"').strip("'")
+    headers = {
+        "apikey": key,
+        "x-upsert": "true",
+        "Content-Type": content_type,
+    }
+    # Las claves modernas (sb_secret_... / sb_publishable_...) NO deben llevar Authorization: Bearer
+    # porque Supabase Storage las rechaza con HTTP 400/401 ('Invalid Compact JWS').
+    if key and not (key.startswith("sb_secret_") or key.startswith("sb_publishable_")):
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
+def _asegurar_bucket_publico(supabase_url: str, bucket: str, api_key: str) -> None:
+    """Intenta crear el bucket público en Supabase Storage si no existiera."""
+    import httpx
+
+    print(f"     -> Bucket '{bucket}' no encontrado; intentando crearlo público...")
+    endpoint = f"{supabase_url.rstrip('/')}/storage/v1/bucket"
+    headers = construir_headers_storage(api_key, "application/json")
+    headers.pop("x-upsert", None)
+    payload = {"id": bucket, "name": bucket, "public": True}
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            client.post(endpoint, headers=headers, json=payload)
+    except Exception:
+        pass
+
+
+def _es_url_supabase_valida(url: str) -> bool:
+    """Determina si una URL de Supabase es real y no un valor de ejemplo."""
+    u = (url or "").strip().lower()
+    if not u:
+        return False
+    if any(p in u for p in ("tu-proyecto", "ejemplo.supabase", "xxxx.supabase")):
+        return False
+    return u.startswith(("http://", "https://"))
+
+
+def _es_credencial_real(url: str, key: str) -> bool:
+    """Determina si URL y Key corresponden a credenciales reales y no a valores de ejemplo."""
+    if not _es_url_supabase_valida(url):
+        return False
+    k = (key or "").strip().lower()
+    if not k:
+        return False
+    if k.endswith("...") or any(
+        p in k
+        for p in (
+            "tu_clave",
+            "tu_service_role",
+            "pega_tu_clave",
+            "clave_secreta_aqui",
+            "key_aqui",
+            "placeholder",
+        )
+    ):
+        return False
+    return len(k) > 15
+
+
+def _imprimir_tip_error_upload(status_code: int, detalle: str) -> None:
+    if "Invalid Compact JWS" in detalle:
+        print(
+            "     [TIP] Verificá que la clave en SUPABASE_SERVICE_KEY sea 'sb_secret_...' "
+            "o el JWT legacy 'service_role' (eyJhbGci...)."
+        )
+    elif status_code == 413:
+        print(
+            "     [TIP] El archivo supera el límite de tamaño de Supabase Storage (50 MB en Free Tier). "
+            "Usá --split o reducí --tamano-parte-mb."
+        )
+
+
 def subir_archivo_a_supabase(
     supabase_url: str,
     bucket: str,
@@ -167,13 +300,7 @@ def subir_archivo_a_supabase(
     if not content_type:
         content_type = "application/json" if archivo_local.suffix == ".json" else "application/octet-stream"
 
-    headers = {
-        "apikey": api_key,
-        "Authorization": f"Bearer {api_key}",
-        "x-upsert": "true",
-        "Content-Type": content_type,
-    }
-
+    headers = construir_headers_storage(api_key, content_type)
     tamano_bytes = archivo_local.stat().st_size
     tamano_mb = tamano_bytes / (1024 * 1024)
     print(f"  -> Subiendo {nombre_archivo} ({tamano_mb:.2f} MB)...", end=" ", flush=True)
@@ -184,27 +311,37 @@ def subir_archivo_a_supabase(
 
             with open(archivo_local, "rb") as f:
                 contenido = f.read()
-            with httpx.Client(timeout=300.0) as client:
+            with httpx.Client(timeout=300.0, follow_redirects=True) as client:
                 resp = client.post(endpoint, headers=headers, content=contenido)
+                if resp.status_code in (400, 404) and "bucket not found" in resp.text.lower():
+                    _asegurar_bucket_publico(supabase_url, bucket, api_key)
+                    resp = client.post(endpoint, headers=headers, content=contenido)
+
                 if resp.status_code in (200, 201):
                     print("✅ [OK]")
                     return True
-                else:
-                    print(f"❌ Error HTTP {resp.status_code}: {resp.text}")
-                    return False
+                print(f"❌ Error HTTP {resp.status_code}: {resp.text}")
+                _imprimir_tip_error_upload(resp.status_code, resp.text)
+                return False
         except ImportError:
+            import urllib.error
             import urllib.request
 
             with open(archivo_local, "rb") as f:
                 contenido = f.read()
             req = urllib.request.Request(endpoint, data=contenido, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                if resp.status in (200, 201):
-                    print("✅ [OK]")
-                    return True
-                else:
+            try:
+                with urllib.request.urlopen(req, timeout=300) as resp:
+                    if resp.status in (200, 201):
+                        print("✅ [OK]")
+                        return True
                     print(f"❌ Error HTTP {resp.status}")
                     return False
+            except urllib.error.HTTPError as e:
+                body_txt = e.read().decode("utf-8", errors="ignore")
+                print(f"❌ Error HTTP {e.code}: {body_txt}")
+                _imprimir_tip_error_upload(e.code, body_txt)
+                return False
     except Exception as e:
         print(f"❌ Falló subida: {e}")
         return False
@@ -250,12 +387,39 @@ def main():
     else:
         print("⚠️ Advertencia: No se encontró un binario de instalador. Se generará un manifiesto preliminar.")
 
-    # 2. Resolver URLs
+    # 2. Resolver URLs y credenciales (prioridad: CLI > .env > reno_config.json)
+    env_dotenv = _cargar_dotenv() or ENV_DOTENV
     cfg = cargar_configuracion_app()
-    sb_url = (args.supabase_url or str(cfg.get("supabase_url", ""))).strip().rstrip("/")
-    bucket = (args.bucket or str(cfg.get("supabase_storage_bucket", "updates"))).strip()
+    sb_url = (
+        args.supabase_url
+        or os.environ.get("SUPABASE_URL")
+        or env_dotenv.get("SUPABASE_URL")
+        or str(cfg.get("supabase_url", ""))
+    ).strip().strip('"').strip("'").rstrip("/")
 
-    base_url = args.base_url.rstrip("/")
+    bucket = (
+        args.bucket
+        or os.environ.get("SUPABASE_STORAGE_BUCKET")
+        or env_dotenv.get("SUPABASE_STORAGE_BUCKET")
+        or str(cfg.get("supabase_storage_bucket", "updates"))
+    ).strip() or "updates"
+
+    api_key = (
+        args.service_key
+        or os.environ.get("SUPABASE_SERVICE_KEY")
+        or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        or env_dotenv.get("SUPABASE_SERVICE_KEY")
+        or env_dotenv.get("SUPABASE_SERVICE_ROLE_KEY")
+        or str(cfg.get("supabase_service_role_key", ""))
+        or str(cfg.get("supabase_anon_key", ""))
+    ).strip().strip('"').strip("'")
+
+    base_url = (
+        args.base_url
+        or os.environ.get("RENO_UPDATES_URL")
+        or env_dotenv.get("RENO_UPDATES_URL")
+        or ""
+    ).strip().rstrip("/")
     if not base_url:
         if sb_url:
             base_url = f"{sb_url}/storage/v1/object/public/{bucket}"
@@ -301,22 +465,28 @@ def main():
     print(f"✅ Manifiesto alternativo en: {ruta_reno_version_json}")
     print(json.dumps(manifiesto, indent=2, ensure_ascii=False))
 
-    # 5. Subida automática a Supabase Storage (opcional)
-    if args.subir:
-        if not sb_url:
-            print("❌ Error: No se especificó SUPABASE_URL ni en argumentos ni en .env.")
-            return
+    # 5. Subida automática a Supabase Storage
+    creds_cli = bool(args.supabase_url or args.service_key)
+    service_env_presente = bool(
+        os.environ.get("SUPABASE_SERVICE_KEY")
+        or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        or env_dotenv.get("SUPABASE_SERVICE_KEY")
+        or env_dotenv.get("SUPABASE_SERVICE_ROLE_KEY")
+    )
+    creds_env_reales = _es_credencial_real(sb_url, api_key) and service_env_presente
+    debe_subir = (args.subir or creds_cli or creds_env_reales) and not args.no_subir
 
-        api_key = (
-            args.service_key
-            or str(cfg.get("supabase_service_role_key", ""))
-            or str(cfg.get("supabase_anon_key", ""))
-        )
-        if not api_key:
-            print("❌ Error: No se configuró SUPABASE_SERVICE_ROLE_KEY ni en .env ni como argumento.")
-            return
+    if debe_subir:
+        if not _es_url_supabase_valida(sb_url):
+            print("\n❌ Error: No se especificó una SUPABASE_URL válida ni en .env ni por --supabase-url.")
+            sys.exit(1)
 
-        print(f"\nSubiendo archivos a Supabase Storage ({sb_url}/storage/v1/object/{bucket})...")
+        if not _es_credencial_real(sb_url, api_key):
+            print("\n❌ Error: Falta configurar SUPABASE_SERVICE_KEY (sb_secret_... o JWT service_role) en .env o --service-key.")
+            sys.exit(1)
+
+        prefijo = f"{api_key[:12]}..." if len(api_key) > 12 else "***"
+        print(f"\n[*] Conectando con Supabase Storage ({sb_url}, bucket: {bucket}, key: {prefijo})...")
 
         archivos_a_subir = [ruta_version_json, ruta_reno_version_json]
         if partes_generadas:
@@ -330,12 +500,23 @@ def main():
                 exitos += 1
 
         if exitos == len(archivos_a_subir):
+            base_public = f"{sb_url}/storage/v1/object/public/{bucket}"
             print(f"\n✅ Todos los archivos ({exitos}/{len(archivos_a_subir)}) se subieron exitosamente.")
+            print(f"   - URL pública JSON: {base_public}/version.json")
+            if partes_generadas:
+                print(f"   - Partes subidas:   {len(partes_generadas)} fragmentos en {base_public}/")
+            elif ruta_instalador and ruta_instalador.exists():
+                print(f"   - URL pública EXE:  {base_public}/{ruta_instalador.name}")
         else:
-            print(f"\n⚠️ Se subieron {exitos} de {len(archivos_a_subir)} archivos.")
+            print(f"\n❌ Falló la subida completa ({exitos}/{len(archivos_a_subir)} subidos).")
+            sys.exit(1)
+    elif not args.no_subir:
+        print(
+            "\nℹ️  Nota: No se subió a Supabase porque no se detectaron credenciales reales en .env "
+            "(SUPABASE_URL y SUPABASE_SERVICE_KEY)."
+        )
 
     print("\n🎉 ¡Proceso de publicación completado con éxito!")
-
 
 
 if __name__ == "__main__":

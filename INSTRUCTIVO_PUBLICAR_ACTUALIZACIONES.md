@@ -102,18 +102,18 @@ El script:
 
 ### Paso 5: Subir los archivos a Supabase Storage
 
-**Opción A — Subida Automática Desatendida con `.env` (Recomendado):**
-Configure sus credenciales en el archivo local `.env`:
+**Opción A — Subida Automática Desatendida con `.env` (Estándar Horos / Recomendado):**
+Configure sus credenciales en el archivo local `.env` (puede copiar `.env.example` como `.env`):
 ```env
 SUPABASE_URL=https://tu-proyecto.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=tu_service_role_secret_key_aqui
+SUPABASE_SERVICE_KEY=sb_secret_tu_clave_secreta_aqui
 SUPABASE_STORAGE_BUCKET=updates
 ```
-Luego ejecute el comando agregando la bandera `--subir`:
+Luego ejecute el script sin necesidad de pasar claves en la consola (subirá automáticamente si detecta credenciales reales en `.env`, o puede forzar `--subir` / `--supabase`):
 ```bash
-python scripts/publicar_actualizacion.py --version-app 2.0.1 --subir
+python scripts/publicar_actualizacion.py --version-app 2.0.1
 ```
-El script subirá automáticamente `version.json`, `reno_version.json` y el instalador o partes (`.part1`, `.part2`) a Supabase Storage con soporte de sobreescritura (`x-upsert: true`).
+El script soporta tanto claves modernas (`sb_secret_...`) como JWT legacy (`service_role`), creará el bucket si hace falta y subirá automáticamente `version.json`, `reno_version.json` y el instalador o partes (`.part1`, `.part2`, ...) a Supabase Storage con soporte de sobreescritura (`x-upsert: true`). Si solo desea generar los archivos localmente sin subir, agregue `--no-subir`.
 
 **Opción B — Subida Manual desde Supabase Dashboard:**
 1. Abrir el panel de Supabase > **Storage** > bucket **`updates`**.

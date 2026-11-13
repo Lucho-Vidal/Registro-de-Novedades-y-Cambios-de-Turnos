@@ -153,25 +153,28 @@ def guardar_ruta_base_datos(nueva_ruta: str | Path) -> bool:
     return exito
 
 
-def cargar_variables_entorno() -> dict[str, str]:
+def cargar_variables_entorno(sobreescribir: bool = True) -> dict[str, str]:
     """Carga variables desde el archivo .env si existe en APP_DATA_DIR o BASE_DIR."""
     env_vars: dict[str, str] = {}
-    candidatos = [APP_DATA_DIR / ".env", BASE_DIR / ".env"]
+    candidatos: list[Path] = []
+    for p in (APP_DATA_DIR / ".env", BASE_DIR / ".env"):
+        if p not in candidatos:
+            candidatos.append(p)
+
     for env_file in candidatos:
         if env_file.exists():
             try:
-                with open(env_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("#") or "=" not in line:
-                            continue
-                        k, v = line.split("=", 1)
-                        k = k.strip()
-                        v = v.strip().strip("'\"")
-                        if k:
-                            env_vars[k] = v
-                            if k not in os.environ:
-                                os.environ[k] = v
+                for raw_line in env_file.read_text(encoding="utf-8-sig").splitlines():
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip('"').strip("'")
+                    if k:
+                        env_vars[k] = v
+                        if sobreescribir or not os.environ.get(k):
+                            os.environ[k] = v
                 break
             except Exception:
                 pass
@@ -181,17 +184,28 @@ def cargar_variables_entorno() -> dict[str, str]:
 def cargar_configuracion_app() -> dict[str, Any]:
     """Carga reno_config.json con valores por defecto y soporte de .env."""
     env_vars = cargar_variables_entorno()
-    sb_url_env = os.environ.get("SUPABASE_URL", "") or env_vars.get("SUPABASE_URL", "")
-    sb_anon_env = os.environ.get("SUPABASE_ANON_KEY", "") or env_vars.get("SUPABASE_ANON_KEY", "")
-    sb_serv_env = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or env_vars.get("SUPABASE_SERVICE_ROLE_KEY", "")
-    sb_bucket_env = os.environ.get("SUPABASE_STORAGE_BUCKET", "updates") or env_vars.get("SUPABASE_STORAGE_BUCKET", "updates")
+    sb_url_env = (env_vars.get("SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+    sb_anon_env = (env_vars.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY") or "").strip()
+    sb_serv_env = (
+        env_vars.get("SUPABASE_SERVICE_KEY")
+        or env_vars.get("SUPABASE_SERVICE_ROLE_KEY")
+        or os.environ.get("SUPABASE_SERVICE_KEY")
+        or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        or ""
+    ).strip()
+    sb_bucket_env = (
+        env_vars.get("SUPABASE_STORAGE_BUCKET")
+        or os.environ.get("SUPABASE_STORAGE_BUCKET")
+        or "updates"
+    ).strip() or "updates"
+    updater_url_env = (env_vars.get("RENO_UPDATES_URL") or os.environ.get("RENO_UPDATES_URL") or "").strip()
 
     defaults: dict[str, Any] = {
         "supabase_url": sb_url_env,
         "supabase_anon_key": sb_anon_env,
         "supabase_service_role_key": sb_serv_env,
         "supabase_storage_bucket": sb_bucket_env,
-        "updater_url": "",
+        "updater_url": updater_url_env,
         "updater_auto_check": True,
         "sqlite_journal_mode": "WAL",  # 'WAL' o 'DELETE'
         "autosync_habilitado": False,
