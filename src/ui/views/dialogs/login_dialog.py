@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.logger import get_logger
-from src.core.theme import obtener_tema_visual
+from src.core.theme import aplicar_icono_aplicacion, cargar_pixmap_icono, obtener_tema_visual
 from src.services.auth_service import AuthService, CuentaBloqueadaError
 from src.services.mail_service import MailService
 
@@ -34,6 +34,7 @@ class CambioPasswordObligatorioDialog(QDialog):
         self.setWindowTitle("Actualización Obligatoria de Contraseña")
         self.setMinimumWidth(420)
         self.setWindowFlags((self.windowFlags() & ~Qt.WindowContextHelpButtonHint) | Qt.WindowCloseButtonHint)
+        aplicar_icono_aplicacion(self)
 
         es_oscuro = obtener_tema_visual() == "oscuro"
         color_info = "#CBD5E1" if es_oscuro else "#4B5563"
@@ -137,6 +138,7 @@ class LoginDialog(QDialog):
         self.setWindowTitle("Acceso a RENO v2.0")
         self.setFixedSize(380, 360)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        aplicar_icono_aplicacion(self)
 
         self._es_primer_inicio = len(self.auth_service.listar_usuarios()) == 0
         self._init_ui()
@@ -152,10 +154,25 @@ class LoginDialog(QDialog):
         layout.setSpacing(12)
 
         # Logotipo / Título
+        hdr_row = QHBoxLayout()
+        hdr_row.setContentsMargins(0, 0, 0, 0)
+        hdr_row.setSpacing(10)
+        hdr_row.addStretch()
+
+        pix_logo = cargar_pixmap_icono(40)
+        if pix_logo is not None:
+            lbl_icon = QLabel()
+            lbl_icon.setPixmap(pix_logo)
+            lbl_icon.setFixedSize(40, 40)
+            lbl_icon.setAlignment(Qt.AlignCenter)
+            hdr_row.addWidget(lbl_icon)
+
         lbl_logo = QLabel("RENO")
-        lbl_logo.setAlignment(Qt.AlignCenter)
+        lbl_logo.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         lbl_logo.setStyleSheet(f"font-size: 26pt; font-weight: bold; color: {color_logo}; letter-spacing: 2px;")
-        layout.addWidget(lbl_logo)
+        hdr_row.addWidget(lbl_logo)
+        hdr_row.addStretch()
+        layout.addLayout(hdr_row)
 
         lbl_sub = QLabel("Registro de Novedades y Cambios de Turnos")
         lbl_sub.setAlignment(Qt.AlignCenter)

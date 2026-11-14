@@ -35,6 +35,8 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=Instalador
 OutputBaseFilename=RENO_Setup_v{#MyAppVersion}
+SetupIconFile=assets\reno_icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 ; --- COMPRESIÓN ULTRA64 (DICCIONARIO 64 MB) ESTÁNDAR CRONO ---
 ; Reduce el binario final a ~38-42 MB para respetar el límite de 50 MB de Supabase Storage

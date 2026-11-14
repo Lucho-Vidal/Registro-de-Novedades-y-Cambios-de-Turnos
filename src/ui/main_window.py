@@ -34,6 +34,7 @@ from src.core.settings import AppSettings
 from src.core.theme import (
     TEMA_CLARO,
     TEMA_OSCURO,
+    aplicar_icono_aplicacion,
     aplicar_tema_visual,
     guardar_tema_visual,
     obtener_tema_visual,
@@ -125,6 +126,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} - Operaciones")
         self.resize(1280, 800)
+        aplicar_icono_aplicacion(self)
 
         # Configurar UI
         self._init_menu_bar()
@@ -1073,6 +1075,16 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.settings.set_window_geometry("MainWindow", self.saveGeometry())
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        for timer_attr in ("timer_refresh", "timer_sync", "timer_inactividad"):
+            timer = getattr(self, timer_attr, None)
+            if timer is not None:
+                timer.stop()
+        toast = getattr(self, "toast", None)
+        if toast is not None:
+            toast.close()
         super().closeEvent(event)
 
     def _restaurar_geometria(self) -> None:

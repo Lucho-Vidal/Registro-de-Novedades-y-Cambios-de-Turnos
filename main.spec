@@ -1,8 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
+BASE_DIR = Path(SPECPATH).resolve()
 bcrypt_datas, bcrypt_binaries, bcrypt_hiddenimports = collect_all("bcrypt")
+
+icon_path = BASE_DIR / "assets" / "reno_icon.ico"
+app_icon = str(icon_path) if icon_path.exists() else None
 
 # Exclusiones de módulos no utilizados para optimizar peso del ejecutable
 excludes = [
@@ -29,6 +34,7 @@ excludes = [
 datas = bcrypt_datas + [
     ('src/ui/theme/crono_style.qss', 'src/ui/theme'),
     ('src/ui/theme/crono_dark.qss', 'src/ui/theme'),
+    ('assets', 'assets'),
 ]
 
 hiddenimports = bcrypt_hiddenimports + [
@@ -48,7 +54,7 @@ hiddenimports = bcrypt_hiddenimports + [
 
 a = Analysis(
     ['main.py'],
-    pathex=['.'],
+    pathex=[str(BASE_DIR)],
     binaries=bcrypt_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -81,4 +87,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=app_icon,
 )

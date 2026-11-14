@@ -8,9 +8,17 @@ import os
 from pathlib import Path
 from typing import Any
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from .config import CONFIG_JSON_PATH, cargar_configuracion_json, guardar_configuracion_json, resource_path
+from .config import (
+    CONFIG_JSON_PATH,
+    cargar_configuracion_json,
+    guardar_configuracion_json,
+    obtener_rutas_icono_candidatas,
+    resource_path,
+)
 from .settings import AppSettings
 
 logger = logging.getLogger("reno.theme")
@@ -159,3 +167,56 @@ def aplicar_tema_visual(tema: str | None = None, db: Any = None) -> str:
             logger.warning("No se pudo cargar la hoja de estilos QSS '%s': %s", qss_path, e)
 
     return tema
+
+
+def cargar_icono_aplicacion(prefer_ico: bool = False) -> QIcon:
+    """Carga el QIcon de RENO verificando candidatos reales y pixmap no nulo."""
+    for candidato in obtener_rutas_icono_candidatas(prefer_ico=prefer_ico):
+        try:
+            if not candidato.is_file():
+                continue
+            icono = QIcon(str(candidato))
+            if not icono.isNull() and not icono.pixmap(32, 32).isNull():
+                return icono
+        except Exception as e:
+            logger.debug("No se pudo cargar el icono '%s': %s", candidato, e)
+    return QIcon()
+
+
+def cargar_pixmap_icono(size: int = 48) -> QPixmap | None:
+    """Carga el logotipo oficial de RENO escalado suavemente como QPixmap."""
+    for candidato in obtener_rutas_icono_candidatas(prefer_ico=False):
+        try:
+            if not candidato.is_file():
+                continue
+            pix = QPixmap(str(candidato))
+            if not pix.isNull():
+                return pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        except Exception as e:
+            logger.debug("No se pudo cargar el pixmap '%s': %s", candidato, e)
+    return None
+
+
+def aplicar_icono_aplicacion(target: Any = None, prefer_ico: bool = False) -> bool:
+    """Asigna el icono oficial de RENO a QApplication y/o a una ventana o diálogo."""
+    icono = cargar_icono_aplicacion(prefer_ico=prefer_ico)
+    if icono.isNull():
+        return False
+
+    app = QApplication.instance()
+    if target is None:
+        if app is not None:
+            app.setWindowIcon(icono)
+            return True
+        return False
+
+    try:
+        if hasattr(target, "setWindowIcon"):
+            target.setWindowIcon(icono)
+        if app is not None and app.windowIcon().isNull():
+            app.setWindowIcon(icono)
+        return True
+    except Exception as e:
+        logger.debug("No se pudo aplicar icono al objetivo '%s': %s", target, e)
+        return False
+

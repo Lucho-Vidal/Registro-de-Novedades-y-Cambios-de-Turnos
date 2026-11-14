@@ -62,7 +62,7 @@ from src.core.proxy import (
     detectar_proxy_sistema,
     probar_conexion_supabase,
 )
-from src.core.theme import TEMA_CLARO, TEMA_OSCURO, obtener_tema_visual
+from src.core.theme import TEMA_CLARO, TEMA_OSCURO, aplicar_icono_aplicacion, obtener_tema_visual
 from src.domain.enums import (
     PERMISOS_BASE,
     PERMISOS_METADATA,
@@ -85,6 +85,7 @@ class BaseMaximizedDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        aplicar_icono_aplicacion(self)
 
     def closeEvent(self, event) -> None:
         self.reject()

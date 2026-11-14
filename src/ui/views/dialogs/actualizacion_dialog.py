@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from src.core.config import APP_VERSION
 from src.core.logger import get_logger
+from src.core.theme import aplicar_icono_aplicacion
 from src.services.updater_service import (
     DescargarActualizacionWorker,
     InfoActualizacion,
@@ -52,6 +53,7 @@ class ActualizacionDialog(QDialog):
         self.setWindowTitle(f"Actualización Disponible — RENO v{self.info.version}")
         self.resize(640, 520)
         self.setMinimumSize(560, 460)
+        aplicar_icono_aplicacion(self)
 
         # Si es obligatoria, no permitimos cerrar con la cruz de la ventana sin actualizar
         if self.es_obligatoria:

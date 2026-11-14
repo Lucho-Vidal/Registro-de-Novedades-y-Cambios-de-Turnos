@@ -65,6 +65,43 @@ def resource_path(rel_path: str | Path) -> Path:
     return base / rel_path
 
 
+def obtener_rutas_icono_candidatas(prefer_ico: bool = False) -> list[Path]:
+    """Devuelve rutas candidatas ordenadas para localizar el icono oficial de RENO.
+
+    Prioriza archivos externos junto al ejecutable/directorio activo y luego
+    los recursos empaquetados mediante ``resource_path`` (desarrollo y ``_MEIPASS``).
+    """
+    nombres = (
+        ("assets/reno_icon.ico", "assets/reno_icon.png", "assets/icon.ico", "assets/icon.png", "reno_icon.ico", "reno_icon.png")
+        if prefer_ico
+        else ("assets/reno_icon.png", "assets/reno_icon.ico", "assets/icon.png", "assets/icon.ico", "reno_icon.png", "reno_icon.ico")
+    )
+
+    app_dir = obtener_directorio_aplicacion()
+    candidatos: list[Path] = []
+    vistos: set[str] = set()
+
+    for rel in nombres:
+        for ruta in (app_dir / rel, resource_path(rel)):
+            clave = str(ruta)
+            if clave not in vistos:
+                vistos.add(clave)
+                candidatos.append(ruta)
+    return candidatos
+
+
+def obtener_ruta_icono(prefer_ico: bool = False) -> Path | None:
+    """Retorna la ruta del primer archivo de icono existente o None si no se encuentra."""
+    for candidato in obtener_rutas_icono_candidatas(prefer_ico=prefer_ico):
+        try:
+            if candidato.is_file():
+                return candidato
+        except OSError:
+            continue
+    return None
+
+
+
 def obtener_ruta_base_datos() -> tuple[Path, Path | None]:
     """Obtiene la ruta a la base de datos SQLite y opcionalmente el XLSX asociado.
     

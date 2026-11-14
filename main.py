@@ -21,6 +21,7 @@ from src.core.config import (
 )
 from src.core.logger import get_logger, inicializar_logging
 from src.core.proxy import aplicar_configuracion_proxy
+from src.core.theme import aplicar_icono_aplicacion, aplicar_tema_visual
 from src.data.database import DatabaseManager
 from src.data.migrations import init_database_schema
 from src.data.sync.supabase_sync import SupabaseSyncClient
@@ -37,16 +38,30 @@ from src.ui.views.dialogs.login_dialog import LoginDialog
 logger = get_logger("App")
 
 
+def _configurar_app_user_model_id() -> None:
+    """Asigna AppUserModelID en Windows para mostrar el icono propio en barra de tareas."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("TrenesArgentinos.RENO.Operaciones.v2")
+    except Exception:
+        pass
+
+
 def main() -> int:
     # 1. Inicializar sistema de logging rotativo y captura de excepciones
     log_file = inicializar_logging()
     logger.info("Iniciando %s v%s...", APP_NAME, APP_VERSION)
+    _configurar_app_user_model_id()
 
     # 2. Inicializar QApplication
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("Trenes Argentinos Operaciones")
+    if not aplicar_icono_aplicacion(app):
+        logger.warning("No se pudo cargar el icono de aplicación RENO.")
 
     # 3. Cargar configuración y determinar ruta de base de datos
     config_data = cargar_configuracion_json()

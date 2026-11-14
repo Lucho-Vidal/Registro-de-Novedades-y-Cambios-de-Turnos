@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.logger import exportar_logs_diagnostico, obtener_ruta_log
+from src.core.theme import aplicar_icono_aplicacion, cargar_pixmap_icono
 
 
 class AcercaDialog(QDialog):
@@ -30,6 +31,7 @@ class AcercaDialog(QDialog):
         self.setWindowTitle("Acerca de RENO")
         self.resize(680, 520)
         self.setWindowFlags((self.windowFlags() & ~Qt.WindowContextHelpButtonHint) | Qt.WindowCloseButtonHint)
+        aplicar_icono_aplicacion(self)
 
         self._init_ui()
 
@@ -44,8 +46,15 @@ class AcercaDialog(QDialog):
         header_layout = QHBoxLayout(header_frame)
         header_layout.setContentsMargins(16, 12, 16, 12)
 
-        lbl_icon = QLabel("🚆")
-        lbl_icon.setStyleSheet("font-size: 34pt;")
+        lbl_icon = QLabel()
+        pix_logo = cargar_pixmap_icono(56)
+        if pix_logo is not None:
+            lbl_icon.setPixmap(pix_logo)
+            lbl_icon.setFixedSize(56, 56)
+        else:
+            lbl_icon.setText("🚆")
+            lbl_icon.setStyleSheet("font-size: 34pt;")
+        lbl_icon.setAlignment(Qt.AlignCenter)
         header_layout.addWidget(lbl_icon)
 
         title_layout = QVBoxLayout()
